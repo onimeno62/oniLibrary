@@ -591,7 +591,7 @@ function WorkGridCard({
           onLongPress();
         }}
         {...longPressProps}
-        className="group block w-full text-start"
+        className="group block w-full text-start transition-transform active:scale-[0.96]"
       >
         <div className={cn("relative", selected && "opacity-80")}>
           <WorkCover

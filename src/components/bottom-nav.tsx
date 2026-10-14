@@ -41,7 +41,7 @@ export function BottomNav() {
               aria-current={active ? "page" : undefined}
               aria-label={meta[lang]}
               className={cn(
-                "relative flex min-w-[52px] flex-1 flex-col items-center gap-0.5 rounded-2xl px-1 py-1.5 transition-colors",
+                "relative flex min-w-[52px] flex-1 flex-col items-center gap-0.5 rounded-2xl px-1 py-1.5 transition-all active:scale-90",
                 active ? "text-primary" : "text-muted-foreground hover:text-foreground"
               )}
             >

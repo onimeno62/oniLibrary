@@ -2,9 +2,9 @@
 
 import { useMemo } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, Tooltip } from "recharts";
-import { Clock3, BookOpen, LibraryBig, CheckCircle2, Flame } from "lucide-react";
+import { Clock3, BookOpen, LibraryBig, CheckCircle2, Flame, History } from "lucide-react";
 import { OverlayHeader } from "@/components/shared";
-import { useApp } from "@/lib/store";
+import { useApp, useNav } from "@/lib/store";
 import { toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import type { WorkType } from "@/lib/types";
@@ -65,6 +65,7 @@ export function StatisticsScreen() {
   const { t, lang } = useT();
   const works = useApp((s) => s.works);
   const sessions = useApp((s) => s.sessions);
+  const historyCount = useApp((s) => s.history.length);
 
   const fa = lang === "fa";
   const num = (n: number | string) => (fa ? toFa(n) : String(n));
@@ -129,6 +130,23 @@ export function StatisticsScreen() {
   return (
     <div className="min-h-full px-5 pb-8">
       <OverlayHeader title={t("stat.title")} />
+
+      {/* history entry point (TRK-002) */}
+      <button
+        onClick={() => useNav.getState().push({ kind: "history" })}
+        className="mt-1 flex w-full items-center gap-3 rounded-3xl border border-border bg-card p-3 text-start shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)] transition-all hover:shadow-[0_12px_26px_-16px_rgba(43,36,29,0.5)] active:scale-[0.99]"
+      >
+        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-coral-soft text-primary">
+          <History className="h-5 w-5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[14px] font-extrabold">{t("stat.viewHistory")}</span>
+          <span className="block text-[11px] font-semibold text-muted-foreground">
+            {t("hist.entries", { n: historyCount })}
+          </span>
+        </span>
+        <span className="h-2 w-2 rounded-full bg-coral-gradient" />
+      </button>
 
       {/* summary 2x2 */}
       <div className="mt-2 grid grid-cols-2 gap-2.5">

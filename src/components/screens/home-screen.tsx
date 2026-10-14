@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Image from "next/image";
 import {
   Search,
@@ -9,6 +10,7 @@ import {
   BookOpen,
   Clock3,
   CheckCircle2,
+  Flame,
 } from "lucide-react";
 import { SectionHeader, WorkCover } from "@/components/shared";
 import { useApp, useNav, continueReading, timeAgo } from "@/lib/store";
@@ -54,6 +56,18 @@ export function HomeScreen() {
   const recentlyAdded = [...publicWorks].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).slice(0, 8);
 
   const unreadNtf = useApp((s) => s.notifications.filter((n) => !n.read).length);
+  const sessions = useApp((s) => s.sessions);
+  const streak = useMemo(() => {
+    const active = new Set(sessions.filter((x) => x.minutes > 0).map((x) => x.date));
+    let n = 0;
+    const d = new Date();
+    if (!active.has(d.toISOString().slice(0, 10))) d.setDate(d.getDate() - 1);
+    while (active.has(d.toISOString().slice(0, 10))) {
+      n++;
+      d.setDate(d.getDate() - 1);
+    }
+    return n;
+  }, [sessions]);
 
   return (
     <div className="min-h-full px-5 pb-6">
@@ -191,13 +205,19 @@ export function HomeScreen() {
       <section className="mt-7">
         <button
           onClick={() => push({ kind: "statistics" })}
-          className="w-full rounded-3xl border border-border bg-card p-4 text-start shadow-[0_10px_26px_-18px_rgba(43,36,29,0.4)] transition-all hover:shadow-[0_14px_30px_-16px_rgba(43,36,29,0.5)]"
+          className="w-full rounded-3xl border border-border bg-card p-4 text-start shadow-[0_10px_26px_-18px_rgba(43,36,29,0.4)] transition-all hover:shadow-[0_14px_30px_-16px_rgba(43,36,29,0.5)] active:scale-[0.99]"
         >
           <div className="flex items-center gap-2.5">
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-coral-soft text-primary">
               <BarChart3 className="h-5 w-5" />
             </span>
             <p className="text-[15px] font-extrabold">{t("home.readingStats")}</p>
+            {streak > 1 && (
+              <span className="flex items-center gap-1 rounded-full bg-coral-soft px-2 py-0.5 text-[10px] font-black text-primary">
+                <Flame className="h-3 w-3" />
+                {streak} {lang === "fa" ? "روز" : "days"}
+              </span>
+            )}
             <ChevronRight className="ms-auto h-5 w-5 text-muted-foreground rtl:rotate-180" />
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2 ps-1">

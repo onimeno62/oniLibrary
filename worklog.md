@@ -134,3 +134,26 @@ Stage Summary:
 - All PRD MVP flows implemented & browser-verified; visuals match the 3 reference mockups closely
 - APK delivered at /home/z/my-project/download/oniLibrary-v1.0.0.apk
 - Remaining ideas for next iterations: EPUB/PDF real rendering engines, extension repo fetch, OPDS live browsing, cloud sync
+
+---
+Task ID: cron-review-1 (round 2)
+Agent: webDevReview agent
+Task: QA sweep + new features (History / Bookmarks / real EPUB reading) + styling polish + APK rebuild
+
+Work Log:
+- QA sweep (agent-browser): reader mode logic confirmed correct (WEBTOON seeds render vertical strip; paged chrome is shared across modes), onboarding/library/discover/downloads re-verified.
+- FIXED — dark theme coverage: `dark` class was applied below the phone container so the status-bar strip stayed cream; restructured app-shell (dark class on min-h-dvh wrapper → backdrop, SideBranding, phone, status bar all theme-aware). SideBranding got dark: color variants.
+- FIXED — details title readability regression verified OK (banner fix held; "The Quiet Hours" + alt-title render).
+- FIXED — EPUB list markers (Tailwind preflight reset) → .epub-content ul/ol/li list-style restored.
+- NEW — Reading History screen (TRK-002): overlay `history` (statistics → "Reading history" entry card with count), rows = cover/title/ch/page/time + coral Resume (reopens reader at stored page), vault entries masked, trash = clear-all with confirm. store: Overlay+"history", openReader gains optional page.
+- NEW — Bookmarks viewer (RDR-013): details bookmark icon now opens a bottom sheet (count badge) listing that work's bookmarks (Chapter · Page, chapter title), Resume jumps into reader at exact page via reader `startPage` prop (navKey includes it so chapter reset honors it); per-row delete.
+- NEW — Real EPUB reading (FMT-002 upgraded from "demo"): importer parses .epub via fflate (container.xml → OPF → manifest+spine), sanitizes XHTML (strips scripts/styles/images/attrs), stores chapters JSON in IDB (`{id}::epub`), creates work with spine-mirrored chapters + epubChapters meta; new EpubBookView (typographic serif reader, justify/lists/blockquote styles, scroll-ratio progress + auto-mark-read ≥95%, position restore, IDB-missing fallback text); reader integrates: content branch, slider = chapter nav (label Ch x/y), Prev/Next = chapter nav, Text-size button (Aa, 14→22px cycle → settings.readerDefaults.epubFontSize), chrome toggle via top strip (doesn't block scroll), generic page-progress effect skipped in epub mode.
+- NEW — Built-in sample book (src/lib/sample-epub.ts, 4 original chapters incl. one Persian RTL chapter) attached to seeded "The Quiet Hours" during store hydration (IDB write + localPages:["epub"]) so the book reader is demonstrable without importing a file.
+- STYLING — Home stats card: streak Flame badge (consecutive active days, fa/en label); press states: bottom-nav items active:scale-90, library work cards active:scale-[0.96], stats card active:scale-[0.99].
+- Verified: tsc --noEmit CLEAN (app files), eslint CLEAN, /api 200, dev.log 200s, browser-verified: EPUB book reading + chapter slider, history resume entry, bookmark add→details badge→sheet→jump, dark mode full-coverage.
+- APK rebuilt: download/oniLibrary-v1.0.0.apk (3.24MB, signed) — includes all round-2 features; api route intact after export.
+
+Stage Summary:
+- Current status: stable + feature-complete for MVP scope; round-2 adds History/Bookmarks/EPUB engines (PRD TRK-002, RDR-013, FMT-002 acceptance now genuinely met for text EPUBs).
+- Risks/notes: (1) EPUB images inside books are stripped (text-only v1); (2) PDF still demo-mode (pdfjs-dist planned); (3) "1 entries" plural string edge case (cosmetic); (4) imported EPUB persistence depends on IDB — clearing site data loses book text (metadata persists in localStorage).
+- Next-round priorities: 1) real PDF rendering via pdfjs-dist (canvas pages, reuse reader chrome); 2) EPUB images + cover extraction from OPF cover-item; 3) saved/synced filters (LIB-011) + smart categories (LIB-008); 4) PWA service worker for web install; 5) EPUB font-family choice + per-work reader defaults inheritance audit.

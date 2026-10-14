@@ -35,12 +35,13 @@ export type Tab = "home" | "library" | "discover" | "updates" | "downloads" | "m
 
 export type Overlay =
   | { kind: "details"; workId: string }
-  | { kind: "reader"; workId: string; chapterId: string }
+  | { kind: "reader"; workId: string; chapterId: string; page?: number }
   | { kind: "search" }
   | { kind: "source"; sourceId: string }
   | { kind: "vault" }
   | { kind: "extensions" }
   | { kind: "statistics" }
+  | { kind: "history" }
   | { kind: "settings" }
   | { kind: "categories" }
   | { kind: "backup" }
@@ -56,7 +57,7 @@ interface NavState {
   pop: () => void;
   popToTab: () => void;
   openWork: (workId: string) => void;
-  openReader: (workId: string, chapterId: string) => void;
+  openReader: (workId: string, chapterId: string, page?: number) => void;
 }
 
 export const useNav = create<NavState>((set) => ({
@@ -67,8 +68,8 @@ export const useNav = create<NavState>((set) => ({
   pop: () => set((s) => ({ stack: s.stack.slice(0, -1) })),
   popToTab: () => set({ stack: [] }),
   openWork: (workId) => set((s) => ({ stack: [...s.stack, { kind: "details", workId }] })),
-  openReader: (workId, chapterId) =>
-    set((s) => ({ stack: [...s.stack, { kind: "reader", workId, chapterId }] })),
+  openReader: (workId, chapterId, page) =>
+    set((s) => ({ stack: [...s.stack, { kind: "reader", workId, chapterId, page }] })),
 }));
 
 /* ============================================================
@@ -198,6 +199,52 @@ export const useApp = create<AppState>()(
                 const w = works.find((x) => x.id === d.workId);
                 const c = w?.chapters.find((x) => x.id === d.chapterId);
                 if (c && d.status === "DONE") c.download = "DONE";
+              }
+              // attach the built-in sample book to the seeded EPUB work (FMT-002 demo)
+              const sample = works.find((w) => w.id === "w-silentbook");
+              if (sample) {
+                import("./sample-epub").then(({ SAMPLE_EPUB }) => {
+                  void (async () => {
+                    try {
+                      const { putFile } = await import("./local-files");
+                      await putFile(
+                        `${sample.id}::epub`,
+                        new Blob([JSON.stringify(SAMPLE_EPUB)], { type: "application/json" })
+                      );
+                      useApp.setState((st2) => ({
+                        works: st2.works.map((w) =>
+                          w.id === sample.id
+                            ? {
+                                ...w,
+                                localPages: ["epub"],
+                                epubChapters: SAMPLE_EPUB.chapters.map((c) => ({
+                                  id: c.id,
+                                  title: c.title,
+                                })),
+                                chapters: SAMPLE_EPUB.chapters.map((c, i) => ({
+                                  id: c.id,
+                                  number: i + 1,
+                                  title: c.title,
+                                  pages: Math.max(
+                                    1,
+                                    Math.round(
+                                      c.html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length / 220
+                                    )
+                                  ),
+                                  releaseDate: w.chapters[i]?.releaseDate ?? new Date().toISOString(),
+                                  isRead: false,
+                                  download: "DONE" as const,
+                                  sizeMb: 0.2,
+                                })),
+                              }
+                            : w
+                        ),
+                      }));
+                    } catch {
+                      /* IDB unavailable — work stays as generated-page demo */
+                    }
+                  })();
+                });
               }
               return {
                 hydrated: true,

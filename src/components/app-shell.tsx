@@ -17,6 +17,7 @@ import { SourceScreen } from "@/components/screens/source-screen";
 import { VaultScreen, VaultLockScreen } from "@/components/screens/vault-screen";
 import { ExtensionsScreen } from "@/components/screens/extensions-screen";
 import { StatisticsScreen } from "@/components/screens/statistics-screen";
+import { HistoryScreen } from "@/components/screens/history-screen";
 import { SettingsScreen } from "@/components/screens/settings-screen";
 import { CategoriesScreen } from "@/components/screens/categories-screen";
 import { BackupScreen } from "@/components/screens/backup-screen";
@@ -68,25 +69,25 @@ function SideBranding() {
       <div className="flex items-center gap-4">
         <OniLogo size={72} className="drop-shadow-[0_18px_36px_rgba(248,105,76,0.4)]" />
         <div>
-          <p className="text-[40px] font-black leading-none tracking-tight text-[#2b241d]">
+          <p className="text-[40px] font-black leading-none tracking-tight text-[#2b241d] dark:text-[#f3efe9]">
             oni<span className="text-primary">Library</span>
           </p>
-          <p className="mt-2 text-[17px] font-semibold text-[#8a7a68]">
+          <p className="mt-2 text-[17px] font-semibold text-[#8a7a68] dark:text-[#a19077]">
             {lang === "fa" ? "داستان‌های شما. همه در یک‌جا." : "Your stories.\nIn one place."}
           </p>
         </div>
       </div>
       <ul className="mt-12 space-y-5">
         {items.map(({ Icon, en, fa }) => (
-          <li key={en} className="flex items-center gap-4 text-[#6d5f50]">
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/70 shadow-[0_8px_20px_-10px_rgba(43,36,29,0.25)]">
+          <li key={en} className="flex items-center gap-4 text-[#6d5f50] dark:text-[#c8bca9]">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/70 shadow-[0_8px_20px_-10px_rgba(43,36,29,0.25)] dark:bg-white/[0.07] dark:shadow-none">
               <Icon className="h-5 w-5 text-primary" />
             </span>
             <span className="text-[16px] font-bold">{lang === "fa" ? fa : en}</span>
           </li>
         ))}
       </ul>
-      <p className="mt-14 text-[13px] font-bold text-[#a59784]">
+      <p className="mt-14 text-[13px] font-bold text-[#a59784] dark:text-[#857867]">
         {lang === "fa" ? "بیشتر فقط یک خواننده." : "More than just a reader."}
       </p>
     </aside>
@@ -130,7 +131,7 @@ function OverlayRenderer({ overlay }: { overlay: Overlay }) {
     case "details":
       return <DetailsScreen workId={overlay.workId} />;
     case "reader":
-      return <ReaderScreen workId={overlay.workId} chapterId={overlay.chapterId} />;
+      return <ReaderScreen workId={overlay.workId} chapterId={overlay.chapterId} startPage={overlay.page} />;
     case "search":
       return <SearchScreen />;
     case "source":
@@ -141,6 +142,8 @@ function OverlayRenderer({ overlay }: { overlay: Overlay }) {
       return <ExtensionsScreen />;
     case "statistics":
       return <StatisticsScreen />;
+    case "history":
+      return <HistoryScreen />;
     case "settings":
       return <SettingsScreen />;
     case "categories":
@@ -215,18 +218,21 @@ export function AppShell() {
   const showChrome = !overlay || overlay.kind === "details" || overlay.kind === "vault";
 
   return (
-    <div className="relative flex min-h-dvh items-center justify-center bg-[#f3ebdf] lg:gap-6 lg:p-8 dark:bg-[#0f0d0b]">
-      <SideBranding />
+    <div className={cn("relative min-h-dvh", dark && "dark")}>
+      <div className="relative flex min-h-dvh items-center justify-center bg-[#f3ebdf] dark:bg-[#0f0d0b] lg:gap-6 lg:p-8">
+        <SideBranding />
 
       {/* phone */}
-      <div className="relative h-dvh w-full overflow-hidden bg-background shadow-[0_40px_90px_-30px_rgba(43,36,29,0.45)] max-lg:shadow-none lg:h-[860px] lg:max-h-[92dvh] lg:w-[412px] lg:rounded-[3rem] lg:border-[10px] lg:border-black lg:ring-1 lg:ring-black/60">
+      <div className={cn(
+        "relative h-dvh w-full overflow-hidden bg-background shadow-[0_40px_90px_-30px_rgba(43,36,29,0.45)] max-lg:shadow-none lg:h-[860px] lg:max-h-[92dvh] lg:w-[412px] lg:rounded-[3rem] lg:border-[10px] lg:border-black lg:ring-1 lg:ring-black/60",
+        dark && "dark"
+      )}>
         <Petals />
         <div
           dir={lang === "fa" ? "rtl" : "ltr"}
           lang={lang}
           className={cn(
-            "relative z-10 flex h-full flex-col font-fa text-foreground",
-            dark && "dark"
+            "relative z-10 flex h-full flex-col font-fa text-foreground"
           )}
         >
           <StatusBar dark={dark} />
@@ -270,6 +276,7 @@ export function AppShell() {
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );

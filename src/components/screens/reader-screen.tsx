@@ -12,6 +12,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ALargeSmall,
   Bookmark,
   CheckCircle2,
   ChevronLeft,
@@ -37,6 +38,7 @@ import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { Slider } from "@/components/ui/slider";
+import { EpubBookView } from "@/components/screens/epub-view";
 import {
   Dialog,
   DialogContent,
@@ -218,7 +220,15 @@ function LocalPageImage({ storageKey, className }: { storageKey: string; classNa
 /* ReaderScreen                                                        */
 /* ------------------------------------------------------------------ */
 
-export function ReaderScreen({ workId, chapterId }: { workId: string; chapterId: string }) {
+export function ReaderScreen({
+  workId,
+  chapterId,
+  startPage,
+}: {
+  workId: string;
+  chapterId: string;
+  startPage?: number;
+}) {
   const { t } = useT();
 
   /* ----- store ----- */
@@ -280,6 +290,8 @@ export function ReaderScreen({ workId, chapterId }: { workId: string; chapterId:
   const rtl = direction === "RTL";
   const vertical = direction === "VERTICAL";
   const requestedMode: ReaderMode = work?.readerMode ?? readerDefaults.mode;
+  const isEpub = work?.type === "EPUB" && work?.localPages?.[0] === "epub";
+  const epubFontSize = readerDefaults.epubFontSize ?? 16;
 
   const [landscape, setLandscape] = useState(false);
   useEffect(() => {
@@ -318,13 +330,15 @@ export function ReaderScreen({ workId, chapterId }: { workId: string; chapterId:
 
   /* ----- reset per-chapter state when the chapter changes -----
      (React "adjust state when props change" pattern — runs during render) */
-  const navKey = `${workId}#${chapterId}`;
+  const navKey = `${workId}#${chapterId}${typeof startPage === "number" ? `#p${startPage}` : ""}`;
   const [stateKey, setStateKey] = useState(navKey);
   if (stateKey !== navKey) {
     setStateKey(navKey);
     const t = chapter?.pages ?? 0;
     let p = 0;
-    if (typeof chapter?.lastPage === "number" && chapter.lastPage > 0) {
+    if (typeof startPage === "number" && startPage > 0) {
+      p = startPage;
+    } else if (typeof chapter?.lastPage === "number" && chapter.lastPage > 0) {
       p = chapter.lastPage <= 1 ? Math.round(chapter.lastPage * t) : Math.round(chapter.lastPage);
     }
     p = Math.max(0, Math.min(Math.max(0, t - 1), p));
@@ -337,11 +351,11 @@ export function ReaderScreen({ workId, chapterId }: { workId: string; chapterId:
     setScrollCmd({ page: p });
   }
 
-  /* ----- progress persistence: page ratio on every page change ----- */
+  /* ----- progress persistence: page ratio on every page change (manga modes) ----- */
   useEffect(() => {
-    if (total <= 0) return;
+    if (total <= 0 || isEpub) return; // epub view manages its own scroll-ratio progress
     useApp.getState().setChapterProgress(workId, chapterId, Math.min(1, page / total));
-  }, [page, total, workId, chapterId]);
+  }, [page, total, workId, chapterId, isEpub]);
 
   /* ----- history entry per opened chapter ----- */
   useEffect(() => {
@@ -744,7 +758,24 @@ export function ReaderScreen({ workId, chapterId }: { workId: string; chapterId:
         className="relative flex-1 overflow-hidden"
         style={{ backgroundColor: BG_HEX[readerDefaults.bg] }}
       >
-        {scrollable ? scrollView : pagedView}
+        {/* ============ content ============ */}
+        {isEpub ? (
+          <EpubBookView work={work!} chapterId={chapterId} fontSize={epubFontSize} />
+        ) : scrollable ? (
+          scrollView
+        ) : (
+          pagedView
+        )}
+
+        {/* epub: top strip toggles chrome without blocking text scrolling */}
+        {isEpub && (
+          <button
+            type="button"
+            aria-label={t("common.more")}
+            className="absolute inset-x-0 top-0 z-10 h-[16%]"
+            onClick={() => setControlsVisible((v) => !v)}
+          />
+        )}
 
         {/* tap zones (none in webtoon; sides disabled while panning) */}
         {!vertical && !scrollable && (
@@ -879,50 +910,104 @@ export function ReaderScreen({ workId, chapterId }: { workId: string; chapterId:
         )}
         style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
       >
-        {/* slider row */}
+        {/* slider row (EPUB: chapter navigation) */}
         <div className="flex items-center gap-3">
-          {total > 0 && (
-            <Slider
-              value={[Math.min(page, sliderMax)]}
-              min={0}
-              max={sliderMax}
-              step={1}
-              aria-label={t("rdr.slider")}
-              onValueChange={(v) => {
-                const p = v[0] ?? 0;
-                goToPage(p);
-                if (scrollable) setScrollCmd({ page: p });
-              }}
-              className={cn(
-                "flex-1",
-                "[&_[data-slot=slider-track]]:bg-white/15",
-                "[&_[data-slot=slider-range]]:bg-[#f8694c]",
-                "[&_[data-slot=slider-thumb]]:size-4 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
+          {isEpub && work ? (
+            <>
+              <Slider
+                value={[curIdx]}
+                min={0}
+                max={Math.max(0, chaptersAsc.length - 1)}
+                step={1}
+                aria-label={t("rdr.chapterList")}
+                onValueChange={(v) => {
+                  const idx = v[0] ?? 0;
+                  const target = chaptersAsc[idx];
+                  if (target && target.id !== chapterId) openChapter(target.id);
+                }}
+                className={cn(
+                  "flex-1",
+                  "[&_[data-slot=slider-track]]:bg-white/15",
+                  "[&_[data-slot=slider-range]]:bg-[#f8694c]",
+                  "[&_[data-slot=slider-thumb]]:size-4 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
+                )}
+              />
+              <span className="min-w-14 text-end text-[13px] font-extrabold text-white">
+                {t("rdr.pageOf", { p: Math.max(1, curIdx + 1), t: chaptersAsc.length })}
+              </span>
+            </>
+          ) : (
+            <>
+              {total > 0 && (
+                <Slider
+                  value={[Math.min(page, sliderMax)]}
+                  min={0}
+                  max={sliderMax}
+                  step={1}
+                  aria-label={t("rdr.slider")}
+                  onValueChange={(v) => {
+                    const p = v[0] ?? 0;
+                    goToPage(p);
+                    if (scrollable) setScrollCmd({ page: p });
+                  }}
+                  className={cn(
+                    "flex-1",
+                    "[&_[data-slot=slider-track]]:bg-white/15",
+                    "[&_[data-slot=slider-range]]:bg-[#f8694c]",
+                    "[&_[data-slot=slider-thumb]]:size-4 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
+                  )}
+                />
               )}
-            />
+              <span className="min-w-14 text-end text-[13px] font-extrabold text-white">
+                {t("rdr.pageOf", { p: page + 1, t: total })}
+              </span>
+            </>
           )}
-          <span className="min-w-14 text-end text-[13px] font-extrabold text-white">
-            {t("rdr.pageOf", { p: page + 1, t: total })}
-          </span>
         </div>
 
         {/* controls row */}
         <div className="mt-2 grid grid-cols-4 justify-items-center">
-          <CtrlBtn icon={SkipBack} label={t("rdr.previous")} onClick={prev} aria-label={t("rdr.previous")} />
           <CtrlBtn
-            icon={CirclePlay}
-            label={t("rdr.auto")}
-            active={autoPlay}
-            onClick={() => setAutoPlay((v) => !v)}
-            aria-label={t("rdr.auto")}
+            icon={SkipBack}
+            label={t("rdr.previous")}
+            onClick={() => (isEpub ? prevChapter && openChapter(prevChapter.id) : prev())}
+            aria-label={t("rdr.previous")}
+            disabled={isEpub && !prevChapter}
           />
+          {!isEpub && (
+            <CtrlBtn
+              icon={CirclePlay}
+              label={t("rdr.auto")}
+              active={autoPlay}
+              onClick={() => setAutoPlay((v) => !v)}
+              aria-label={t("rdr.auto")}
+            />
+          )}
+          {isEpub && (
+            <CtrlBtn
+              icon={ALargeSmall}
+              label={t("rdr.textSize")}
+              onClick={() => {
+                const next = epubFontSize >= 22 ? 14 : epubFontSize + 2;
+                useApp.getState().setReaderDefaults({ epubFontSize: next });
+                toast({ title: `${t("rdr.textSize")}: ${next}px` });
+              }}
+              aria-label={t("rdr.textSize")}
+            />
+          )}
           <CtrlBtn
             icon={List}
             label={t("rdr.chapterList")}
             onClick={() => setChapterSheet(true)}
             aria-label={t("rdr.chapterList")}
           />
-          <CtrlBtn icon={SkipForward} label={t("rdr.next")} onClick={() => next(true)} aria-label={t("rdr.next")} />
+          <CtrlBtn
+            icon={SkipForward}
+            label={t("rdr.next")}
+            onClick={() => (isEpub ? nextChapter && openChapter(nextChapter.id) : next(true))}
+            aria-label={t("rdr.next")}
+            disabled={isEpub && !nextChapter}
+          />
         </div>
 
         {/* toolbar row */}

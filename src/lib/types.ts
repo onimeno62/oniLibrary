@@ -62,6 +62,7 @@ export interface Work {
   isLocal?: boolean;
   language: string; // content language
   localPages?: string[]; // imported image data urls
+  epubChapters?: { id: string; title: string }[]; // parsed EPUB spine metadata
 }
 
 export interface DownloadItem {
@@ -179,6 +180,7 @@ export interface Settings {
     autoNext: boolean;
     cropBorders: boolean;
     keepAwake: boolean;
+    epubFontSize?: number; // 14..22 for book reading
   };
 }
 

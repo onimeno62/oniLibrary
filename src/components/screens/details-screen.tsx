@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   Loader2,
   ArrowUpDown,
+  Trash2,
 } from "lucide-react";
 import { WorkCover } from "@/components/shared";
 import { WorkMenu } from "@/components/screens/library-screen";
@@ -54,6 +55,10 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const [sortNewest, setSortNewest] = useState(true);
   const [expanded, setExpanded] = useState(false);
   const [readerSettings, setReaderSettings] = useState(false);
+  const [bookmarksOpen, setBookmarksOpen] = useState(false);
+
+  const bookmarks = useApp((s) => s.bookmarks);
+  const workBookmarkCount = bookmarks.filter((b) => b.workId === workId).length;
 
   const chapters = useMemo(() => {
     if (!work) return [];
@@ -133,11 +138,16 @@ export function DetailsScreen({ workId }: { workId: string }) {
                 <Search className="h-5 w-5" />
               </button>
               <button
-                onClick={() => toast({ title: t("rdr.bookmarkAdded") })}
-                aria-label={t("rdr.zoom")}
-                className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
+                onClick={() => setBookmarksOpen(true)}
+                aria-label={t("bm.title")}
+                className="relative flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
               >
                 <Bookmark className="h-5 w-5" />
+                {workBookmarkCount > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-coral-gradient px-1 text-[9px] font-black text-white">
+                    {workBookmarkCount}
+                  </span>
+                )}
               </button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -309,7 +319,100 @@ export function DetailsScreen({ workId }: { workId: string }) {
           <p className="text-[11px] font-semibold text-muted-foreground">{t("rdr.savePerSeries")}</p>
         </DialogContent>
       </Dialog>
+
+      {/* bookmarks list (RDR-013) */}
+      <BookmarksSheet
+        workId={work.id}
+        open={bookmarksOpen}
+        onOpenChange={setBookmarksOpen}
+        onJump={(chapterId, page) => {
+          setBookmarksOpen(false);
+          openReader(work.id, chapterId, page);
+        }}
+      />
     </div>
+  );
+}
+
+function BookmarksSheet({
+  workId,
+  open,
+  onOpenChange,
+  onJump,
+}: {
+  workId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onJump: (chapterId: string, page: number) => void;
+}) {
+  const { t } = useT();
+  const bookmarks = useApp((s) => s.bookmarks);
+  const works = useApp((s) => s.works);
+  const removeBookmark = useApp((s) => s.removeBookmark);
+  const mine = useMemo(() => bookmarks.filter((b) => b.workId === workId), [bookmarks, workId]);
+  const work = works.find((w) => w.id === workId);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="top-auto bottom-0 translate-y-0 rounded-t-[2rem] border-0 bg-card p-5 max-w-[412px] mx-auto" style={{ maxWidth: 412 }}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-[18px] font-extrabold">
+            <Bookmark className="h-5 w-5 text-primary" />
+            {t("bm.title")}
+            {mine.length > 0 && (
+              <span className="ms-auto rounded-full bg-secondary px-2.5 py-0.5 text-[11px] font-bold text-secondary-foreground">
+                {mine.length}
+              </span>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+        {mine.length === 0 ? (
+          <div className="py-6 text-center">
+            <p className="text-[14px] font-bold">{t("bm.empty")}</p>
+            <p className="mx-auto mt-1 max-w-[260px] text-[12px] leading-relaxed text-muted-foreground">{t("bm.emptyHint")}</p>
+          </div>
+        ) : (
+          <div className="max-h-[320px] space-y-2 overflow-y-auto thin-scrollbar">
+            {mine.map((b) => {
+              const ch = work?.chapters.find((c) => c.id === b.chapterId);
+              return (
+                <div
+                  key={b.id}
+                  className="flex items-center gap-3 rounded-2xl border border-border/70 bg-secondary/40 p-2.5"
+                >
+                  <button
+                    onClick={() => ch && onJump(ch.id, b.page)}
+                    className="min-w-0 flex-1 text-start"
+                  >
+                    <p className="truncate text-[13px] font-extrabold">
+                      {t("common.chapter")} {ch?.number ?? "—"}
+                      {" · "}
+                      {t("common.page")} {b.page + 1}
+                    </p>
+                    <p className="truncate text-[11px] font-semibold text-muted-foreground">
+                      {ch?.title}
+                    </p>
+                  </button>
+                  <button
+                    onClick={() => ch && onJump(ch.id, b.page)}
+                    className="flex h-8 items-center rounded-full bg-coral-soft px-3 text-[11px] font-extrabold text-primary"
+                  >
+                    {t("hist.resume")}
+                  </button>
+                  <button
+                    onClick={() => removeBookmark(b.id)}
+                    aria-label={t("bm.remove")}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
