@@ -105,6 +105,13 @@ const en = {
   "lib.filterUnread": "Unread",
   "lib.filters": "Filters",
   "lib.clearFilters": "Clear filters",
+  "lib.myFilters": "My filters",
+  "lib.saveFilter": "Save current filters",
+  "lib.saveFilterName": "Filter name",
+  "lib.saveFilterHint": "Save this combination to reapply it with one tap.",
+  "lib.filterSaved": "Filter saved",
+  "lib.filterDeleted": "Filter deleted",
+  "lib.noFiltersToSave": "Set at least one filter first",
 
   // reading statuses
   "status.PLANNED": "Planned",
@@ -151,6 +158,8 @@ const en = {
 
   // downloads
   "dl.title": "Downloads",
+  "dl.otherApps": "Other apps & files",
+  "dl.freeSpace": "Free space",
   "dl.active": "Active",
   "dl.completed": "Completed",
   "dl.failed": "Failed",
@@ -339,6 +348,11 @@ const en = {
   "stat.hoursShort": "h",
   "stat.byType": "By content type",
   "stat.thisWeekTime": "This week",
+  "stat.dailyGoal": "Daily goal",
+  "stat.goalReached": "Goal reached — nice pace!",
+  "stat.goalOff": "Goal off — tap to set one",
+  "stat.goalToday": "Today",
+  "stat.minutesUnit": "min",
 
   // more / settings
   "more.title": "More",
@@ -480,6 +494,8 @@ const en = {
   "lib.deleteCategoryConfirm": "Delete this category? Works stay in your library.",
   "rdr.localMissing": "Pages need re-import",
   "rdr.localMissingHint": "Reopen the original file to restore pages.",
+  "rdr.pdfRendering": "Rendering page…",
+  "rdr.pdfMissing": "PDF needs re-import",
   "rdr.slider": "Page slider",
   "set.profile": "Reader",
   "set.navHint": "Pick up to 5 shortcuts",
@@ -595,6 +611,13 @@ const fa: Record<TranslationKey, string> = {
   "lib.filterUnread": "خوانده‌نشده",
   "lib.filters": "فیلترها",
   "lib.clearFilters": "پاک کردن فیلترها",
+  "lib.myFilters": "فیلترهای من",
+  "lib.saveFilter": "ذخیره فیلترهای فعلی",
+  "lib.saveFilterName": "نام فیلتر",
+  "lib.saveFilterHint": "این ترکیب را ذخیره کنید تا با یک لمس دوباره اعمال شود.",
+  "lib.filterSaved": "فیلتر ذخیره شد",
+  "lib.filterDeleted": "فیلتر حذف شد",
+  "lib.noFiltersToSave": "اول حداقل یک فیلتر تنظیم کنید",
 
   // reading statuses
   "status.PLANNED": "برنامه‌ریزی‌شده",
@@ -641,6 +664,8 @@ const fa: Record<TranslationKey, string> = {
 
   // downloads
   "dl.title": "دانلودها",
+  "dl.otherApps": "سایر برنامه‌ها و فایل‌ها",
+  "dl.freeSpace": "فضای خالی",
   "dl.active": "فعال",
   "dl.completed": "کامل‌شده",
   "dl.failed": "ناموفق",
@@ -829,6 +854,11 @@ const fa: Record<TranslationKey, string> = {
   "stat.hoursShort": "ساعت",
   "stat.byType": "بر اساس نوع",
   "stat.thisWeekTime": "این هفته",
+  "stat.dailyGoal": "هدف روزانه",
+  "stat.goalReached": "هدف امروز انجام شد — عالی!",
+  "stat.goalOff": "هدفی تعیین نشده — برای تنظیم بزنید",
+  "stat.goalToday": "امروز",
+  "stat.minutesUnit": "دقیقه",
 
   // more / settings
   "more.title": "بیشتر",
@@ -968,6 +998,8 @@ const fa: Record<TranslationKey, string> = {
   "lib.deleteCategoryConfirm": "این دسته‌بندی حذف شود؟ آثار در کتابخانه می‌مانند.",
   "rdr.localMissing": "صفحه‌ها نیاز به درون‌ریزی دوباره دارند",
   "rdr.localMissingHint": "برای بازیابی صفحه‌ها، فایل اصلی را دوباره باز کنید.",
+  "rdr.pdfRendering": "در حال رندر صفحه…",
+  "rdr.pdfMissing": "PDF نیاز به درون‌ریزی دوباره دارد",
   "rdr.slider": "لغزنده صفحه",
   "set.profile": "خواننده",
   "set.navHint": "حداکثر ۵ میان‌بر انتخاب کنید",

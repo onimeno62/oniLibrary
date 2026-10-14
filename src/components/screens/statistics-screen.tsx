@@ -2,13 +2,14 @@
 
 import { useMemo } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, Tooltip } from "recharts";
-import { Clock3, BookOpen, LibraryBig, CheckCircle2, Flame, History } from "lucide-react";
+import { Clock3, BookOpen, LibraryBig, CheckCircle2, Flame, History, Target, Minus, Plus } from "lucide-react";
 import { OverlayHeader } from "@/components/shared";
 import { useApp, useNav } from "@/lib/store";
 import { toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import type { WorkType } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
+import { toast } from "@/hooks/use-toast";
 
 /* ============================================================
    StatisticsScreen — totals, 14-day chart, streak, by type
@@ -127,6 +128,23 @@ export function StatisticsScreen() {
   );
   const maxType = Math.max(1, ...typeGroups.map((g) => g.count));
 
+  /* daily goal */
+  const dailyGoalMin = useApp((s) => s.settings.dailyGoalMin ?? 0);
+  const todayMinutes = useMemo(() => {
+    const key = utcDay(new Date());
+    return sessions.find((x) => x.date === key)?.minutes ?? 0;
+  }, [sessions]);
+  const goalPct = dailyGoalMin > 0 ? Math.min(1, todayMinutes / dailyGoalMin) : 0;
+  const bumpGoal = (delta: number) => {
+    // read fresh state so rapid taps accumulate correctly
+    const cur = useApp.getState().settings.dailyGoalMin ?? 0;
+    const next = Math.max(0, Math.min(180, Math.round((cur + delta) / 5) * 5));
+    useApp.getState().setSettings({ dailyGoalMin: next });
+    if (next === 0 && cur > 0) toast({ title: t("stat.goalOff") });
+  };
+  const R = 26;
+  const C = 2 * Math.PI * R;
+
   return (
     <div className="min-h-full px-5 pb-8">
       <OverlayHeader title={t("stat.title")} />
@@ -155,6 +173,65 @@ export function StatisticsScreen() {
         <SummaryCard Icon={LibraryBig} value={num(publicWorks.length)} label={t("stat.totalWorks")} />
         <SummaryCard Icon={CheckCircle2} value={num(finished)} label={t("stat.finishedWorks")} />
       </div>
+
+      {/* daily goal */}
+      <section className="mt-3 rounded-3xl border border-border bg-card p-4">
+        <div className="flex items-center gap-4">
+          <div className="relative h-[68px] w-[68px] shrink-0">
+            <svg viewBox="0 0 68 68" className="h-full w-full -rotate-90">
+              <circle cx="34" cy="34" r={R} fill="none" strokeWidth="7" className="stroke-secondary" />
+              <circle
+                cx="34"
+                cy="34"
+                r={R}
+                fill="none"
+                strokeWidth="7"
+                strokeLinecap="round"
+                stroke={dailyGoalMin > 0 && goalPct >= 1 ? "#2f9e6e" : "#f8694c"}
+                strokeDasharray={C}
+                strokeDashoffset={C * (1 - goalPct)}
+                style={{ transition: "stroke-dashoffset 600ms ease" }}
+              />
+            </svg>
+            <span className="absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-[13px] font-black leading-none text-foreground">{num(Math.round(goalPct * 100))}%</span>
+              <span className="mt-0.5 text-[8px] font-bold uppercase tracking-wider text-muted-foreground">{t("stat.goalToday")}</span>
+            </span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 text-[14px] font-extrabold">
+              <Target className="h-4 w-4 text-primary" />
+              {t("stat.dailyGoal")}
+            </p>
+            <p className="mt-0.5 text-[11px] font-semibold text-muted-foreground">
+              {dailyGoalMin > 0
+                ? `${num(todayMinutes)} / ${num(dailyGoalMin)} ${t("stat.minutesUnit")} — ${
+                    goalPct >= 1 ? t("stat.goalReached") : t("stat.goalToday")
+                  }`
+                : t("stat.goalOff")}
+            </p>
+            <div className="mt-2.5 flex items-center gap-2">
+              <button
+                aria-label="-5 min"
+                onClick={() => bumpGoal(-5)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-accent"
+              >
+                <Minus className="h-4 w-4" />
+              </button>
+              <div className="flex-1 rounded-full bg-secondary px-3 py-1.5 text-center text-[12px] font-black text-secondary-foreground" dir="ltr">
+                {dailyGoalMin === 0 ? "—" : `${num(dailyGoalMin)} ${t("stat.minutesUnit")}`}
+              </div>
+              <button
+                aria-label="+5 min"
+                onClick={() => bumpGoal(5)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-coral-gradient text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.8)] transition-transform hover:scale-105"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* reading time chart */}
       <section className="mt-3 rounded-3xl border border-border bg-card p-4">

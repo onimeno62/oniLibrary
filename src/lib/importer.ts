@@ -38,7 +38,9 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
       continue;
     }
     if (/\.pdf$/i.test(name)) {
-      created.push(makeMetaWork(f, "PDF"));
+      const w = await importPdf(f);
+      if (w) created.push(w);
+      else created.push(makeMetaWork(f, "PDF"));
       continue;
     }
     if (/\.epub$/i.test(name)) {
@@ -180,6 +182,54 @@ async function importArchive(f: File): Promise<Work | null> {
   }
 }
 
+/** Parse a real .pdf into a single-chapter work with canvas-rendered pages (FMT-003). */
+async function importPdf(f: File): Promise<Work | null> {
+  try {
+    const { readPdfMeta } = await import("./pdf-engine");
+    const meta = await readPdfMeta(f);
+    if (!meta.pages) return null;
+    const id = "w-pdf-" + Date.now().toString(36);
+    await putFile(`${id}::pdf`, f);
+    return {
+      id,
+      title: meta.title?.slice(0, 120) || stripExt(f.name),
+      author: meta.author?.slice(0, 80) || "Local",
+      cover: meta.coverDataUrl ?? "",
+      coverColor: meta.coverDataUrl ? undefined : "from-red-500 to-rose-900",
+      type: "PDF",
+      description: `PDF document · ${meta.pages} pages · fully readable offline`,
+      workStatus: "COMPLETED",
+      readingStatus: "PLANNED",
+      isFavorite: false,
+      inVault: false,
+      tags: ["Local", "PDF"],
+      rating: 0,
+      ratingCount: 0,
+      direction: "LTR",
+      readerMode: "PAGED",
+      fitMode: "WIDTH",
+      chapters: [
+        {
+          id: `${id}-c1`,
+          number: 1,
+          title: meta.title?.slice(0, 60) || "Document",
+          pages: meta.pages,
+          releaseDate: new Date().toISOString(),
+          isRead: false,
+          download: "DONE",
+          sizeMb: Math.round((f.size / 1_048_576) * 10) / 10,
+        },
+      ],
+      addedAt: new Date().toISOString(),
+      language: "—",
+      isLocal: true,
+      localPages: ["pdf"],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export interface EpubDoc {
   chapters: { id: string; title: string; html: string }[];
 }
@@ -200,9 +250,11 @@ export async function loadEpub(workId: string): Promise<EpubDoc | null> {
 function sanitizeEpubHtml(html: string): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc
-    .querySelectorAll("script,style,link,meta,iframe,object,embed,video,audio,img,svg")
+    .querySelectorAll("script,style,link,meta,iframe,object,embed,video,audio,svg")
     .forEach((e) => e.remove());
   doc.body.querySelectorAll("*").forEach((el) => {
+    // images are pre-rewritten to `oni-img:` keys by the importer — keep them
+    if (el.tagName === "IMG" && el.getAttribute("src")?.startsWith("oni-img:")) return;
     for (const a of [...el.attributes]) el.removeAttribute(a.name);
   });
   return doc.body.innerHTML;
@@ -263,10 +315,35 @@ async function importEpub(f: File): Promise<Work | null> {
     });
     if (spineIds.length === 0) return null;
 
-    // 3) extract + sanitize chapters
+    // 3) cover image (OPF cover-item / meta[name=cover] / cover-named image)
     const id = "w-epub-" + Date.now().toString(36);
+    let cover = "";
+    {
+      const coverMeta = opf.querySelector('metadata meta[name="cover"]')?.getAttribute("content");
+      let coverHref =
+        (coverMeta ? manifest.get(coverMeta)?.href : undefined) ??
+        [...manifest.values()].find(
+          (m) => /^image\/(jpe?g|png|webp)$/.test(m.type) && /cover/i.test(m.href)
+        )?.href ??
+        [...manifest.values()].find((m) => m.type.startsWith("image/") && /cover/i.test(m.href))?.href;
+      const coverIdFromProps = opf.querySelector('manifest item[properties~="cover-item"]')?.getAttribute("id");
+      if (!coverHref && coverIdFromProps) coverHref = manifest.get(coverIdFromProps)?.href;
+      if (coverHref) {
+        const data = entries[resolvePath(opfDir, coverHref)];
+        if (data) {
+          try {
+            cover = await blobToThumbDataUrl(new Blob([data as unknown as BlobPart]));
+          } catch {
+            cover = "";
+          }
+        }
+      }
+    }
+
+    // 4) extract + sanitize chapters (embedded images are stored in IDB)
     const chapters: { id: string; title: string; html: string }[] = [];
     const meta: { id: string; title: string }[] = [];
+    let imgSeq = 0;
     for (let i = 0; i < spineIds.length; i++) {
       const item = manifest.get(spineIds[i]);
       if (!item || !/x?html/.test(item.type)) continue;
@@ -274,7 +351,28 @@ async function importEpub(f: File): Promise<Work | null> {
       const raw = entries[path];
       if (!raw) continue;
       const doc = new DOMParser().parseFromString(xmlText(raw), "text/html");
-      doc.querySelectorAll("script,style,link,meta,iframe,object,embed,img,svg").forEach((e) => e.remove());
+      doc.querySelectorAll("script,style,link,meta,iframe,object,embed,svg").forEach((e) => e.remove());
+      // rewrite <img src> to oni-img:<idb-key> (resolved to object URLs at render time)
+      for (const img of [...doc.querySelectorAll("img")]) {
+        const src = img.getAttribute("src");
+        if (!src || src.startsWith("data:")) {
+          if (!src) img.remove();
+          continue;
+        }
+        const imgPath = resolvePath(dirname(path), src);
+        const data = entries[imgPath];
+        if (!data) {
+          img.remove();
+          continue;
+        }
+        const key = `${id}::i${imgSeq++}`;
+        await putFile(key, new Blob([data as unknown as BlobPart]));
+        for (const a of [...img.attributes]) img.removeAttribute(a.name);
+        const alt = imgPath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "";
+        img.setAttribute("src", `oni-img:${key}`);
+        img.setAttribute("alt", alt);
+        img.setAttribute("loading", "lazy");
+      }
       const title =
         doc.querySelector("h1,h2,h3")?.textContent?.trim() ||
         doc.querySelector("title")?.textContent?.trim() ||
@@ -288,18 +386,26 @@ async function importEpub(f: File): Promise<Work | null> {
     }
     if (chapters.length === 0) return null;
 
-    // 4) store doc in IDB
+    // 5) store doc in IDB
     await putFile(`${id}::epub`, new Blob([JSON.stringify({ chapters })], { type: "application/json" }));
 
-    // 5) build work (chapters mirror the spine for list/progress/read state)
+    // 6) build work (chapters mirror the spine for list/progress/read state)
     const chapterWords = (html: string) => html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length;
     const wordCount = chapters.reduce((a, c) => a + chapterWords(c.html), 0);
+    const DC_NS = "http://purl.org/dc/elements/1.1/";
+    const bookTitle =
+      opf.getElementsByTagNameNS(DC_NS, "title")[0]?.textContent?.trim() ||
+      opf.querySelector("metadata title")?.textContent?.trim() ||
+      stripExt(f.name);
+    const bookAuthor =
+      opf.getElementsByTagNameNS(DC_NS, "creator")[0]?.textContent?.trim() ||
+      "Local";
     return {
       id,
-      title: stripExt(f.name),
-      author: opf.querySelector("creator")?.textContent?.trim() || "Local",
-      cover: "",
-      coverColor: "from-amber-500 to-orange-900",
+      title: bookTitle.slice(0, 120),
+      author: bookAuthor.slice(0, 80),
+      cover,
+      coverColor: cover ? undefined : "from-amber-500 to-orange-900",
       type: "EPUB",
       description: `EPUB book \u00b7 ${chapters.length} chapters \u00b7 ~${Math.round(wordCount / 220)} pages \u00b7 fully readable offline`,
       workStatus: "COMPLETED",

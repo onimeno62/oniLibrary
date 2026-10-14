@@ -198,14 +198,28 @@ export function DownloadsScreen() {
             <p className="text-[14px] font-extrabold">{t("dl.storageUsage")}</p>
             <span className="ms-auto text-[11px] font-bold text-muted-foreground">{usedPct}%</span>
           </div>
-          <div className="mt-3 flex items-center gap-2.5">
-            <ProgressBar value={usedPct} className="h-1.5 flex-1" />
-            <span className="shrink-0 text-[11px] font-bold text-muted-foreground">
-              {totalUsedGb.toFixed(1)} GB / {STORAGE.totalGb} GB
-            </span>
+          <div className="mt-3 flex items-center gap-4">
+            {/* segmented donut: downloads / other apps / free */}
+            <StorageDonut
+              segments={[
+                { value: downloadedMb / 1024, color: "#f8694c" },
+                { value: STORAGE.usedOtherGb, color: "#a0917f" },
+              ]}
+              free={Math.max(0, STORAGE.totalGb - totalUsedGb)}
+              center={`${usedPct}%`}
+              sub={totalUsedGb.toFixed(1) + " GB"}
+            />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <LegendRow color="#f8694c" label={t("dl.title")} value={`${(downloadedMb / 1024).toFixed(1)} GB`} />
+              <LegendRow color="#a0917f" label={t("dl.otherApps")} value={`${STORAGE.usedOtherGb.toFixed(1)} GB`} />
+              <LegendRow
+                color="var(--secondary)"
+                label={t("dl.freeSpace")}
+                value={`${Math.max(0, STORAGE.totalGb - totalUsedGb).toFixed(1)} GB`}
+              />
+            </div>
           </div>
-          <div className="mt-3 flex items-center justify-between rounded-2xl bg-secondary/50 px-3.5 py-2.5">
-            <span className="text-[12px] font-bold text-secondary-foreground">{t("dl.wifiOnly")}</span>
+          <div className="mt-3 rounded-2xl bg-secondary/50 px-3.5 py-2.5">
             <WifiSwitch />
           </div>
           <button
@@ -221,13 +235,75 @@ export function DownloadsScreen() {
   );
 }
 
+function LegendRow({ color, label, value }: { color: string; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
+      <span className="min-w-0 flex-1 truncate text-[12px] font-bold text-secondary-foreground">{label}</span>
+      <span className="text-[11px] font-extrabold text-muted-foreground" dir="ltr">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/** donut with proportional segments + free remainder */
+function StorageDonut({
+  segments,
+  free,
+  center,
+  sub,
+}: {
+  segments: { value: number; color: string }[];
+  free: number;
+  center: string;
+  sub: string;
+}) {
+  const total = Math.max(0.001, free + segments.reduce((a, s) => a + Math.max(0, s.value), 0));
+  const R = 30;
+  const C = 2 * Math.PI * R;
+  // pure precompute of (fraction, startOffset) per segment
+  const arcs = segments.reduce<{ frac: number; start: number }[]>((list, s) => {
+    const start = list.length === 0 ? 0 : list[list.length - 1].start + list[list.length - 1].frac;
+    list.push({ frac: Math.max(0, s.value) / total, start });
+    return list;
+  }, []);
+  return (
+    <div className="relative h-[76px] w-[76px] shrink-0">
+      <svg viewBox="0 0 76 76" className="h-full w-full -rotate-90">
+        <circle cx="38" cy="38" r={R} fill="none" strokeWidth="10" className="stroke-secondary" />
+        {arcs.map((a, i) => (
+          <circle
+            key={i}
+            cx={38}
+            cy={38}
+            r={R}
+            fill="none"
+            strokeWidth={10}
+            stroke={segments[i].color}
+            strokeDasharray={`${C * a.frac} ${C}`}
+            strokeDashoffset={-C * a.start}
+          />
+        ))}
+      </svg>
+      <span className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-[13px] font-black leading-none text-foreground">{center}</span>
+        <span className="mt-0.5 text-[9px] font-bold text-muted-foreground">{sub}</span>
+      </span>
+    </div>
+  );
+}
+
 function WifiSwitch() {
   const { t } = useT();
   const wifiOnly = useApp((s) => s.settings.wifiOnly);
   const setSettings = useApp((s) => s.setSettings);
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-[10px] font-semibold text-muted-foreground">{t("dl.wifiOnlyHint")}</span>
+    <div className="flex items-center justify-between gap-3">
+      <span className="min-w-0">
+        <span className="block text-[12px] font-bold text-secondary-foreground">{t("dl.wifiOnly")}</span>
+        <span className="block text-[10px] font-semibold text-muted-foreground">{t("dl.wifiOnlyHint")}</span>
+      </span>
       <Switch checked={wifiOnly} onCheckedChange={(v) => setSettings({ wifiOnly: v })} className="data-[state=checked]:bg-primary" />
     </div>
   );

@@ -155,6 +155,22 @@ export interface ServerEntry {
   status: "UNKNOWN" | "OK" | "FAIL";
 }
 
+/** saved library filter (LIB-011) — a named snapshot of filter chips + sort */
+export interface LibraryFilterSnapshot {
+  type: "ALL" | "MANGA" | "COMIC" | "BOOK" | "PDF";
+  status: ReadingStatus | null;
+  source: string | null;
+  downloadedOnly: boolean;
+  unreadOnly: boolean;
+  sort: "lastRead" | "title" | "added" | "progress" | "latest";
+}
+
+export interface SavedFilter {
+  id: string;
+  name: string;
+  filter: LibraryFilterSnapshot;
+}
+
 export interface Settings {
   lang: "en" | "fa";
   theme: ThemeMode;
@@ -168,6 +184,7 @@ export interface Settings {
   ntfErrors: boolean;
   hideSensitiveNtf: boolean;
   offlineMode: boolean;
+  dailyGoalMin: number; // reading goal per day, minutes (0 = off)
   vaultPinHash: string | null;
   vaultBiometric: boolean;
   vaultAutoLock: boolean;

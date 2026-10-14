@@ -33,6 +33,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { MangaPage, hashStr } from "@/lib/manga-page";
+import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
@@ -291,6 +292,7 @@ export function ReaderScreen({
   const vertical = direction === "VERTICAL";
   const requestedMode: ReaderMode = work?.readerMode ?? readerDefaults.mode;
   const isEpub = work?.type === "EPUB" && work?.localPages?.[0] === "epub";
+  const isPdf = work?.type === "PDF" && work?.localPages?.[0] === "pdf";
   const epubFontSize = readerDefaults.epubFontSize ?? 16;
 
   const [landscape, setLandscape] = useState(false);
@@ -645,9 +647,12 @@ export function ReaderScreen({
   const dim = ((100 - readerDefaults.brightness) / 100) * 0.7;
   const fit = work.fitMode;
 
-  /* ----- single page element (generated SVG or local image) ----- */
+  /* ----- single page element (generated SVG, local image or pdf canvas) ----- */
   const renderPageEl = (i: number, fitOverride?: string) => {
     const cls = fitOverride ?? FIT_CLASS[fit];
+    if (isPdf) {
+      return <PdfCanvas workId={work.id} page={i + 1} className={cls} />;
+    }
     if (isLocal && work.localPages?.[i]) {
       return <LocalPageImage storageKey={work.localPages[i]} className={cls} />;
     }
@@ -761,8 +766,26 @@ export function ReaderScreen({
         {/* ============ content ============ */}
         {isEpub ? (
           <EpubBookView work={work!} chapterId={chapterId} fontSize={epubFontSize} />
-        ) : scrollable ? (
+        ) : scrollable && !isPdf ? (
           scrollView
+        ) : scrollable && isPdf ? (
+          /* PDF vertical scroll: same anchors but sized canvases */
+          <div
+            ref={scrollRef}
+            onScroll={onScroll}
+            className={cn("absolute inset-0 overflow-y-auto no-scrollbar", mode === "CONTINUOUS" && "space-y-2.5 bg-[#151312] py-2.5")}
+          >
+            {Array.from({ length: total }, (_, i) => (
+              <div
+                key={i}
+                ref={(el) => {
+                  anchorsRef.current[i] = el;
+                }}
+              >
+                <PdfCanvas workId={work.id} page={i + 1} className="block w-full" />
+              </div>
+            ))}
+          </div>
         ) : (
           pagedView
         )}

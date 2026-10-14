@@ -55,6 +55,8 @@ public class MainActivity extends Activity {
         MIME.put("woff2", "font/woff2");
         MIME.put("ttf", "font/ttf");
         MIME.put("map", "application/json");
+        MIME.put("pdf", "application/pdf");
+        MIME.put("wasm", "application/wasm");
     }
 
     @SuppressLint("SetJavaScriptEnabled")

@@ -44,7 +44,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import type { Work, ReadingStatus } from "@/lib/types";
+import type { Work, ReadingStatus, LibraryFilterSnapshot } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
 
 type TypeFilter = "ALL" | "MANGA" | "COMIC" | "BOOK" | "PDF";
@@ -72,7 +72,45 @@ export function LibraryScreen() {
   const [selection, setSelection] = useState<string[] | null>(null);
   const [newCatOpen, setNewCatOpen] = useState(false);
   const [newCatName, setNewCatName] = useState("");
+  const [saveFilterOpen, setSaveFilterOpen] = useState(false);
+  const [filterName, setFilterName] = useState("");
+  const savedFilters = useApp((s) => s.savedFilters);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /** snapshot of every chip/checkbox that a saved filter restores */
+  const snapshotFilters = (): LibraryFilterSnapshot => ({
+    type: typeFilter,
+    status: statusFilter,
+    source: sourceFilter,
+    downloadedOnly,
+    unreadOnly,
+    sort,
+  });
+
+  const applySnapshot = (f: LibraryFilterSnapshot) => {
+    setTypeFilter(f.type);
+    setStatusFilter(f.status);
+    setSourceFilter(f.source);
+    setDownloadedOnly(f.downloadedOnly);
+    setUnreadOnly(f.unreadOnly);
+    setSort(f.sort);
+  };
+
+  const anyFilterActive =
+    typeFilter !== "ALL" || statusFilter !== null || sourceFilter !== null || downloadedOnly || unreadOnly;
+
+  /** current filters equal to a saved filter? (highlight chip) */
+  const sameFilter = (a: LibraryFilterSnapshot, b: LibraryFilterSnapshot) =>
+    a.type === b.type &&
+    a.status === b.status &&
+    a.source === b.source &&
+    a.downloadedOnly === b.downloadedOnly &&
+    a.unreadOnly === b.unreadOnly &&
+    a.sort === b.sort;
+
+  // highlight follows live state (also when the user tweaks chips manually)
+  const liveSnapshot = snapshotFilters();
+  const activeSaved = savedFilters.find((f) => sameFilter(f.filter, liveSnapshot)) ?? null;
 
   const publicWorks = useMemo(() => works.filter((w) => !w.inVault), [works]);
 
@@ -216,6 +254,47 @@ export function LibraryScreen() {
           <Plus className="h-4 w-4" />
         </button>
       </div>
+
+      {/* my filters (LIB-011) */}
+      {savedFilters.length > 0 && (
+        <div className="-mx-5 mt-2.5 flex items-center gap-2 overflow-x-auto px-5 no-scrollbar">
+          <span className="flex shrink-0 items-center gap-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted-foreground">
+            <Bookmark className="h-3 w-3 text-primary" />
+            {t("lib.myFilters")}
+          </span>
+          {savedFilters.map((f) => {
+            const active = activeSaved?.id === f.id;
+            return (
+              <span key={f.id} className="relative shrink-0">
+                <button
+                  onClick={() => applySnapshot(f.filter)}
+                  className={cn(
+                    "rounded-full py-1.5 ps-3.5 pe-7 text-[12px] font-bold transition-all",
+                    active
+                      ? "bg-ink text-cream shadow-[0_6px_16px_-6px_rgba(43,36,29,0.6)]"
+                      : "border border-primary/25 bg-coral-soft text-primary hover:bg-primary/15"
+                  )}
+                >
+                  {f.name}
+                </button>
+                <button
+                  aria-label={`${t("lib.filterDeleted")}: ${f.name}`}
+                  onClick={() => {
+                    useApp.getState().deleteSavedFilter(f.id);
+                    toast({ title: t("lib.filterDeleted") });
+                  }}
+                  className={cn(
+                    "absolute end-1.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 transition-colors",
+                    active ? "text-cream/70 hover:text-cream" : "text-primary/60 hover:text-primary"
+                  )}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       {/* categories */}
       <section className="mt-6">
@@ -476,6 +555,30 @@ export function LibraryScreen() {
                 <Checkbox checked={unreadOnly} onCheckedChange={(v) => setUnreadOnly(!!v)} className="data-[state=checked]:bg-primary data-[state=checked]:border-primary" />
               </label>
             </div>
+
+            {/* save current filters (LIB-011) */}
+            <div className="rounded-2xl border border-primary/25 bg-coral-soft/60 p-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-extrabold">{t("lib.saveFilter")}</p>
+                  <p className="truncate text-[11px] font-semibold text-muted-foreground">{t("lib.saveFilterHint")}</p>
+                </div>
+                <Button
+                  size="sm"
+                  disabled={!anyFilterActive}
+                  onClick={() => {
+                    setFilterName("");
+                    setSaveFilterOpen(true);
+                  }}
+                  className="shrink-0 rounded-full bg-coral-gradient px-4 text-white hover:opacity-90"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              {!anyFilterActive && (
+                <p className="mt-2 text-[11px] font-bold text-primary/80">{t("lib.noFiltersToSave")}</p>
+              )}
+            </div>
           </div>
           <DialogFooter className="mt-2 gap-2">
             <Button
@@ -491,6 +594,46 @@ export function LibraryScreen() {
               {t("lib.clearFilters")}
             </Button>
             <Button className="flex-1 rounded-full bg-coral-gradient text-white hover:opacity-90" onClick={() => setShowFilters(false)}>
+              {t("common.done")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* save filter name */}
+      <Dialog open={saveFilterOpen} onOpenChange={setSaveFilterOpen}>
+        <DialogContent className="rounded-3xl bg-card p-5 max-w-[360px] mx-auto" style={{ maxWidth: 360 }}>
+          <DialogHeader>
+            <DialogTitle className="text-[18px] font-extrabold">{t("lib.saveFilter")}</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={filterName}
+            onChange={(e) => setFilterName(e.target.value)}
+            placeholder={t("lib.saveFilterName")}
+            className="rounded-2xl border-border bg-secondary/50"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && filterName.trim()) {
+                useApp.getState().saveFilter(filterName.trim(), snapshotFilters());
+                toast({ title: t("lib.filterSaved") });
+                setSaveFilterOpen(false);
+                setShowFilters(false);
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button variant="secondary" className="rounded-full" onClick={() => setSaveFilterOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              disabled={!filterName.trim()}
+              className="rounded-full bg-coral-gradient text-white hover:opacity-90"
+              onClick={() => {
+                useApp.getState().saveFilter(filterName.trim(), snapshotFilters());
+                toast({ title: t("lib.filterSaved") });
+                setSaveFilterOpen(false);
+                setShowFilters(false);
+              }}
+            >
               {t("common.done")}
             </Button>
           </DialogFooter>

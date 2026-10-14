@@ -13,8 +13,8 @@ import type { TranslationKey } from "@/lib/i18n";
 type BadgeKind = "full" | "demo" | "no";
 
 const ROWS: { key: TranslationKey; Icon: typeof FileText; badge: BadgeKind }[] = [
-  { key: "fmt.PDF", Icon: FileText, badge: "demo" },
-  { key: "fmt.EPUB", Icon: BookOpen, badge: "demo" },
+  { key: "fmt.PDF", Icon: FileText, badge: "full" },
+  { key: "fmt.EPUB", Icon: BookOpen, badge: "full" },
   { key: "fmt.CBZ", Icon: FileArchive, badge: "full" },
   { key: "fmt.CBR", Icon: FileArchive, badge: "no" },
   { key: "fmt.images", Icon: Image, badge: "full" },

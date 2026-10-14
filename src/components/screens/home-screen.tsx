@@ -57,6 +57,11 @@ export function HomeScreen() {
 
   const unreadNtf = useApp((s) => s.notifications.filter((n) => !n.read).length);
   const sessions = useApp((s) => s.sessions);
+  const dailyGoalMin = useApp((s) => s.settings.dailyGoalMin ?? 30);
+  const todayMinutes = useMemo(() => {
+    const key = new Date().toISOString().slice(0, 10);
+    return sessions.find((x) => x.date === key)?.minutes ?? 0;
+  }, [sessions]);
   const streak = useMemo(() => {
     const active = new Set(sessions.filter((x) => x.minutes > 0).map((x) => x.date));
     let n = 0;
@@ -220,10 +225,15 @@ export function HomeScreen() {
             )}
             <ChevronRight className="ms-auto h-5 w-5 text-muted-foreground rtl:rotate-180" />
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2 ps-1">
-            <StatCell icon={<Clock3 className="h-3.5 w-3.5" />} value={stats.label} label={t("home.thisWeek")} />
-            <StatCell icon={<BookOpen className="h-3.5 w-3.5" />} value={String(stats.chapters)} label={t("home.chaptersRead")} />
-            <StatCell icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={String(stats.finished)} label={t("home.finished")} />
+          <div className="mt-3 flex items-center gap-4 ps-1">
+            <div className="grid flex-1 grid-cols-3 gap-2">
+              <StatCell icon={<Clock3 className="h-3.5 w-3.5" />} value={stats.label} label={t("home.thisWeek")} />
+              <StatCell icon={<BookOpen className="h-3.5 w-3.5" />} value={String(stats.chapters)} label={t("home.chaptersRead")} />
+              <StatCell icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={String(stats.finished)} label={t("home.finished")} />
+            </div>
+            {dailyGoalMin > 0 && (
+              <GoalRing done={todayMinutes} total={dailyGoalMin} />
+            )}
           </div>
         </button>
       </section>
@@ -239,6 +249,39 @@ function StatCell({ icon, value, label }: { icon: React.ReactNode; value: string
         {icon}
         {label}
       </span>
+    </div>
+  );
+}
+
+/** small progress ring for the daily reading goal */
+function GoalRing({ done, total }: { done: number; total: number }) {
+  const pct = total > 0 ? Math.min(1, done / total) : 0;
+  const R = 17;
+  const C = 2 * Math.PI * R;
+  const reached = pct >= 1;
+  return (
+    <div className="flex w-[52px] shrink-0 flex-col items-center gap-1" aria-label={`Daily goal ${Math.round(pct * 100)}%`}>
+      <div className="relative h-11 w-11">
+        <svg viewBox="0 0 44 44" className="h-11 w-11 -rotate-90">
+          <circle cx="22" cy="22" r={R} fill="none" strokeWidth="5" className="stroke-border" />
+          <circle
+            cx="22"
+            cy="22"
+            r={R}
+            fill="none"
+            strokeWidth="5"
+            strokeLinecap="round"
+            stroke={reached ? "#2f9e6e" : "#f8694c"}
+            strokeDasharray={C}
+            strokeDashoffset={C * (1 - pct)}
+            style={{ transition: "stroke-dashoffset 600ms ease" }}
+          />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-foreground">
+          {Math.round(pct * 100)}%
+        </span>
+      </div>
+      <span className="text-[9px] font-bold text-muted-foreground">{done}/{total}m</span>
     </div>
   );
 }

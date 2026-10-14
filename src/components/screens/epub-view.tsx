@@ -78,6 +78,43 @@ export function EpubBookView({
     });
   };
 
+  /* resolve oni-img: sources (embedded book images) to object URLs */
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (html === null) return;
+    const root = contentRef.current;
+    if (!root) return;
+    let alive = true;
+    const made: string[] = [];
+    const imgs = [...root.querySelectorAll<HTMLImageElement>("img[src^='oni-img:']")];
+    for (const img of imgs) {
+      const key = decodeURIComponent((img.getAttribute("src") ?? "").slice("oni-img:".length));
+      if (!key) continue;
+      void (async () => {
+        try {
+          const { loadPageUrl } = await import("@/lib/importer");
+          const url = await loadPageUrl(key);
+          if (!alive) {
+            if (url) URL.revokeObjectURL(url);
+            return;
+          }
+          if (url) {
+            made.push(url);
+            img.src = url;
+          } else {
+            img.remove();
+          }
+        } catch {
+          if (alive) img.remove();
+        }
+      })();
+    }
+    return () => {
+      alive = false;
+      for (const u of made) URL.revokeObjectURL(u);
+    };
+  }, [html, chapterId]);
+
   if (missing) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
@@ -127,6 +164,7 @@ export function EpubBookView({
 
         {/* sanitized book content */}
         <div
+          ref={contentRef}
           className="epub-content"
           style={{ fontFamily: "var(--font-vazirmatn), Georgia, serif" }}
           dangerouslySetInnerHTML={{ __html: html }}

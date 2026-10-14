@@ -1,0 +1,145 @@
+"use client";
+
+/* ============================================================
+   oniLibrary — PDF engine (FMT-003)
+   Lazy-loads pdfjs-dist in the client, caches documents per
+   work and renders pages to canvas at device-pixel density.
+   The raw .pdf blob lives in IndexedDB (`{workId}::pdf`).
+   ============================================================ */
+
+import type { PDFDocumentProxy } from "pdfjs-dist";
+
+type PdfJs = typeof import("pdfjs-dist");
+type DocTask = ReturnType<PdfJs["getDocument"]>;
+
+let libPromise: Promise<PdfJs> | null = null;
+
+async function getLib(): Promise<PdfJs> {
+  if (!libPromise) {
+    libPromise = import("pdfjs-dist").then((mod) => {
+      // relative to the document base → works on the dev server (/pdf/…)
+      // and inside the APK (assets root → /assets/pdf/…)
+      mod.GlobalWorkerOptions.workerSrc = new URL(
+        "pdf/pdf.worker.min.mjs",
+        document.baseURI
+      ).toString();
+      return mod;
+    });
+  }
+  return libPromise;
+}
+
+/** per-document option bundle (urls resolved against the document base) */
+function docOptions() {
+  return {
+    isEvalSupported: false as const,
+    wasmUrl: new URL("pdf-wasm/", document.baseURI).toString(),
+  };
+}
+
+const docCache = new Map<string, Promise<PDFDocumentProxy>>();
+const taskCache = new Map<string, DocTask>();
+
+/** open (and cache) the PDF stored for a work */
+export function loadPdfDoc(workId: string): Promise<PDFDocumentProxy> {
+  let p = docCache.get(workId);
+  if (!p) {
+    const task = (async () => {
+      const { getFile } = await import("./local-files");
+      const blob = await getFile(`${workId}::pdf`);
+      if (!blob) throw new Error("pdf-missing");
+      const lib = await getLib();
+      const data = new Uint8Array(await blob.arrayBuffer());
+      return lib.getDocument({ data, ...docOptions() });
+    })()
+      .then((t) => {
+        taskCache.set(workId, t);
+        return t.promise;
+      })
+      .catch((err) => {
+        docCache.delete(workId);
+        taskCache.delete(workId);
+        throw err;
+      });
+    docCache.set(workId, task);
+    p = task;
+  }
+  return p;
+}
+
+export function dropPdfDoc(workId: string): void {
+  docCache.delete(workId);
+  const t = taskCache.get(workId);
+  taskCache.delete(workId);
+  void t?.destroy().catch(() => undefined);
+}
+
+/** render one page (1-based) onto a canvas sized to cssWidth */
+export async function renderPdfPage(opts: {
+  canvas: HTMLCanvasElement;
+  doc: PDFDocumentProxy;
+  page: number; // 1-based
+  cssWidth: number;
+  rotation?: number; // 0/90/180/270
+}): Promise<void> {
+  const { canvas, doc, page, cssWidth, rotation = 0 } = opts;
+  const p = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
+  const unit = p.getViewport({ scale: 1, rotation });
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const cssScale = cssWidth > 0 ? cssWidth / unit.width : 1;
+  const vp = p.getViewport({ scale: cssScale * dpr, rotation });
+  canvas.width = Math.max(1, Math.floor(vp.width));
+  canvas.height = Math.max(1, Math.floor(vp.height));
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) throw new Error("canvas-2d-unavailable");
+  await p.render({ canvas, viewport: vp }).promise;
+}
+
+export interface PdfMeta {
+  pages: number;
+  title?: string;
+  author?: string;
+  coverDataUrl?: string;
+}
+
+/** parse a PDF blob: page count, info metadata and a small cover thumbnail */
+export async function readPdfMeta(blob: Blob): Promise<PdfMeta> {
+  const lib = await getLib();
+  const data = new Uint8Array(await blob.arrayBuffer());
+  const task = lib.getDocument({ data, ...docOptions() });
+  const doc = await task.promise;
+  let title: string | undefined;
+  let author: string | undefined;
+  try {
+    const info = (await doc.getMetadata()).info as {
+      Title?: string;
+      Author?: string;
+    };
+    title = info.Title?.trim() || undefined;
+    author = info.Author?.trim() || undefined;
+  } catch {
+    /* metadata optional */
+  }
+  let coverDataUrl: string | undefined;
+  try {
+    const p = await doc.getPage(1);
+    const base = p.getViewport({ scale: 1 });
+    const targetW = 320;
+    const vp = p.getViewport({ scale: targetW / base.width });
+    const cv = document.createElement("canvas");
+    cv.width = Math.ceil(vp.width);
+    cv.height = Math.ceil(vp.height);
+    const ctx = cv.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      await p.render({ canvas: cv, viewport: vp }).promise;
+      coverDataUrl = cv.toDataURL("image/jpeg", 0.82);
+    }
+  } catch {
+    /* cover optional */
+  }
+  const pages = doc.numPages;
+  void task.destroy();
+  return { pages, title, author, coverDataUrl };
+}

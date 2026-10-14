@@ -202,6 +202,19 @@ export function AppShell() {
     bridge.OniAndroid?.setOverlayDepth?.(stack.length);
   }, [lang, stack.length]);
 
+  // PWA service worker — web only (never inside the APK WebView wrapper),
+  // production only so dev HMR stays untouched
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") return;
+    if (typeof window === "undefined") return;
+    if ("OniAndroid" in window) return;
+    if (!("serviceWorker" in navigator)) return;
+    const id = window.setTimeout(() => {
+      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }, 2500);
+    return () => window.clearTimeout(id);
+  }, []);
+
   const dark = resolved === "dark";
 
   if (!mounted) {

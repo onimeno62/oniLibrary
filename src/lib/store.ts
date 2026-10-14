@@ -25,6 +25,8 @@ import type {
   ReadingStatus,
   SourceInfo,
   Extension,
+  SavedFilter,
+  LibraryFilterSnapshot,
 } from "./types";
 
 /* ============================================================
@@ -91,6 +93,7 @@ interface AppState {
   history: HistoryEntry[];
   bookmarks: Bookmark[];
   servers: ServerEntry[];
+  savedFilters: SavedFilter[];
   settings: Settings;
   updateCheck: { lastCheck: string | null; checking: boolean };
   lastBackup: string | null;
@@ -142,6 +145,9 @@ interface AppState {
   removeServer: (id: string) => void;
   setServerStatus: (id: string, status: ServerEntry["status"]) => void;
 
+  saveFilter: (name: string, filter: LibraryFilterSnapshot) => void;
+  deleteSavedFilter: (id: string) => void;
+
   setSourceEnabled: (id: string, v: boolean) => void;
   setSourcePinned: (id: string, v: boolean) => void;
   setExtensionStatus: (id: string, status: Extension["status"], enabled?: boolean) => void;
@@ -180,6 +186,7 @@ export const useApp = create<AppState>()(
       history: [],
       bookmarks: [],
       servers: SEED_SERVERS,
+      savedFilters: [],
       settings: DEFAULT_SETTINGS,
       updateCheck: { lastCheck: null, checking: false },
       lastBackup: null,
@@ -246,6 +253,30 @@ export const useApp = create<AppState>()(
                   })();
                 });
               }
+
+              // attach the built-in sample PDF to the guide work (FMT-003 demo)
+              const guide = works.find((w) => w.id === "w-oni-guide");
+              if (guide && guide.localPages?.[0] !== "pdf") {
+                void (async () => {
+                  try {
+                    const { putFile } = await import("./local-files");
+                    const res = await fetch("samples/oni-library-guide.pdf");
+                    if (!res.ok) return;
+                    const blob = await res.blob();
+                    await putFile(`${guide.id}::pdf`, blob);
+                    useApp.setState((st2) => ({
+                      works: st2.works.map((w) =>
+                        w.id === guide.id && w.localPages?.[0] !== "pdf"
+                          ? { ...w, localPages: ["pdf"] }
+                          : w
+                      ),
+                    }));
+                  } catch {
+                    /* offline / IDB unavailable — guide falls back to generated pages */
+                  }
+                })();
+              }
+
               return {
                 hydrated: true,
                 downloads: seedDownloads(),
@@ -577,6 +608,16 @@ export const useApp = create<AppState>()(
       removeServer: (id) => set((s) => ({ servers: s.servers.filter((x) => x.id !== id) })),
       setServerStatus: (id, status) =>
         set((s) => ({ servers: s.servers.map((x) => (x.id === id ? { ...x, status } : x)) })),
+
+      saveFilter: (name, filter) =>
+        set((s) => ({
+          savedFilters: [
+            ...s.savedFilters.filter((f) => f.name !== name),
+            { id: uid(), name: name.slice(0, 24) || "Filter", filter },
+          ].slice(-12),
+        })),
+      deleteSavedFilter: (id) =>
+        set((s) => ({ savedFilters: s.savedFilters.filter((f) => f.id !== id) })),
 
       setSourceEnabled: (id, v) =>
         set((s) => ({
