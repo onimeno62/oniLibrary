@@ -765,7 +765,13 @@ export function ReaderScreen({
       >
         {/* ============ content ============ */}
         {isEpub ? (
-          <EpubBookView work={work!} chapterId={chapterId} fontSize={epubFontSize} />
+          <EpubBookView
+            work={work!}
+            chapterId={chapterId}
+            fontSize={epubFontSize}
+            font={readerDefaults.epubFont ?? "serif"}
+            theme={readerDefaults.epubTheme ?? "dark"}
+          />
         ) : scrollable && !isPdf ? (
           scrollView
         ) : scrollable && isPdf ? (
@@ -799,7 +805,6 @@ export function ReaderScreen({
             onClick={() => setControlsVisible((v) => !v)}
           />
         )}
-
         {/* tap zones (none in webtoon; sides disabled while panning) */}
         {!vertical && !scrollable && (
           <div className="absolute inset-0 z-10 flex">
@@ -825,12 +830,12 @@ export function ReaderScreen({
             />
           </div>
         )}
-        {scrollable && zoom === 1 && (
+        {scrollable && zoom === 1 && !isEpub && (
           <button
             type="button"
-            aria-label={t("common.close")}
-            className="absolute inset-x-1/3 top-0 z-10 h-full"
-            onClick={() => handleZone("center")}
+            aria-label={t("common.more")}
+            className="absolute inset-x-0 top-0 z-10 h-[16%]"
+            onClick={() => setControlsVisible((v) => !v)}
           />
         )}
 
@@ -1187,6 +1192,58 @@ export function ReaderScreen({
           </DialogHeader>
 
           <div className="space-y-4">
+            {/* book-only: font + page theme (FMT-002 typography) */}
+            {isEpub && (
+              <>
+                <SheetRow label={t("rdr.bookFont")}>
+                  {(
+                    [
+                      ["serif", "rdr.fontSerif"],
+                      ["sans", "rdr.fontSans"],
+                    ] as ["serif" | "sans", TranslationKey][]
+                  ).map(([id, key]) => (
+                    <Chip
+                      key={id}
+                      active={(readerDefaults.epubFont ?? "serif") === id}
+                      onClick={() => setReaderDefaults({ epubFont: id })}
+                    >
+                      <span style={id === "serif" ? { fontFamily: "Georgia, serif" } : { fontFamily: "var(--font-nunito), sans-serif" }}>
+                        {t(key)}
+                      </span>
+                    </Chip>
+                  ))}
+                </SheetRow>
+                <SheetRow label={t("rdr.bookTheme")}>
+                  <div className="flex items-start gap-3">
+                    {(
+                      [
+                        ["dark", "#141414"],
+                        ["sepia", "#f3e8d5"],
+                        ["paper", "#faf7f0"],
+                      ] as ["dark" | "sepia" | "paper", string][]
+                    ).map(([b, hex]) => (
+                      <button
+                        key={b}
+                        type="button"
+                        onClick={() => setReaderDefaults({ epubTheme: b })}
+                        aria-label={t(`rdr.btheme.${b}` as TranslationKey)}
+                        className="flex flex-col items-center gap-1"
+                      >
+                        <span
+                          className={cn(
+                            "h-8 w-8 rounded-full border border-white/15 transition-shadow",
+                            (readerDefaults.epubTheme ?? "dark") === b && "ring-2 ring-primary ring-offset-2 ring-offset-card"
+                          )}
+                          style={{ backgroundColor: hex }}
+                        />
+                        <span className="text-[9px] font-bold text-muted-foreground">{t(`rdr.btheme.${b}` as TranslationKey)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </SheetRow>
+              </>
+            )}
+
             {/* presets */}
             <SheetRow label={t("rdr.preset")}>
               {PRESETS.map((p) => (

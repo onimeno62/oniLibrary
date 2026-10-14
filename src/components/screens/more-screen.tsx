@@ -15,9 +15,53 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { OniLogo } from "@/components/oni-logo";
-import { useApp, useNav } from "@/lib/store";
+import { useApp, useNav, toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
+import { Flame } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+/* mini stats row under the profile — works / today minutes / finished */
+function ProfileStats() {
+  const { t, lang } = useT();
+  const works = useApp((s) => s.works);
+  const sessions = useApp((s) => s.sessions);
+  const goal = useApp((s) => s.settings.dailyGoalMin);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const todayMin = sessions.find((x) => x.date === today)?.minutes ?? 0;
+  const inLibrary = works.filter((w) => !w.inVault).length;
+  const finished = works.filter((w) => w.readingStatus === "COMPLETED").length;
+
+  const cells: { value: string; label: string; hot?: boolean }[] = [
+    { value: String(inLibrary), label: t("stat.totalWorks") },
+    {
+      value: lang === "fa" ? toFa(todayMin) : String(todayMin),
+      label: `${t("stat.minutesUnit")} · ${t("stat.goalToday")}`,
+      hot: goal > 0 && todayMin >= goal,
+    },
+    { value: String(finished), label: t("stat.finishedWorks") },
+  ];
+
+  return (
+    <div className="mt-3.5 grid grid-cols-3 gap-2 border-t border-border pt-3">
+      {cells.map((c) => (
+        <div key={c.label} className="flex flex-col items-center gap-0.5 text-center">
+          <span
+            className={cn(
+              "flex items-center gap-1 text-[15px] font-black",
+              c.hot ? "text-primary" : "text-foreground"
+            )}
+          >
+            {c.hot && <Flame className="h-3.5 w-3.5" />}
+            {c.value}
+          </span>
+          <span className="text-[10px] font-semibold text-muted-foreground">{c.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /* ============================================================
    MoreScreen — tab screen: profile, menu, update check, footer
@@ -64,20 +108,24 @@ export function MoreScreen() {
       </header>
 
       {/* profile card */}
-      <section className="mt-4 flex items-center gap-3.5 rounded-3xl border border-border bg-card p-4">
-        <span
-          aria-hidden
-          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-coral-gradient text-[22px] font-black text-white shadow-[0_10px_22px_-10px_rgba(248,105,76,0.7)]"
-        >
-          {initial}
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[16px] font-extrabold">{userName}</p>
-          <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-semibold leading-snug text-muted-foreground">
-            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
-            {t("more.account")}
-          </p>
+      <section className="mt-4 rounded-3xl border border-border bg-card p-4">
+        <div className="flex items-center gap-3.5">
+          <span
+            aria-hidden
+            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-coral-gradient text-[22px] font-black text-white shadow-[0_10px_22px_-10px_rgba(248,105,76,0.7)]"
+          >
+            {initial}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[16px] font-extrabold">{userName}</p>
+            <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-semibold leading-snug text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+              {t("more.account")}
+            </p>
+          </div>
         </div>
+        {/* mini library stats */}
+        <ProfileStats />
       </section>
 
       {/* menu card */}

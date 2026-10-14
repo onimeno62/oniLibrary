@@ -20,9 +20,10 @@ import {
   Heart,
   Trash2,
   Bookmark,
+  Sparkles,
 } from "lucide-react";
 import { SectionHeader, WorkCover, ProgressBar, EmptyState, StatusBadge } from "@/components/shared";
-import { useApp, useNav, workProgress, currentChapter } from "@/lib/store";
+import { useApp, useNav, workProgress, currentChapter, matchesRule } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { importFiles } from "@/lib/importer";
@@ -44,7 +45,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
-import type { Work, ReadingStatus, LibraryFilterSnapshot } from "@/lib/types";
+import type { Work, ReadingStatus, LibraryFilterSnapshot, SmartRule } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
 
 type TypeFilter = "ALL" | "MANGA" | "COMIC" | "BOOK" | "PDF";
@@ -74,6 +75,7 @@ export function LibraryScreen() {
   const [newCatName, setNewCatName] = useState("");
   const [saveFilterOpen, setSaveFilterOpen] = useState(false);
   const [filterName, setFilterName] = useState("");
+  const [smartRule, setSmartRule] = useState<{ name: string; rule: SmartRule } | null>(null);
   const savedFilters = useApp((s) => s.savedFilters);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -133,6 +135,7 @@ export function LibraryScreen() {
     if (sourceFilter) list = list.filter((w) => w.source === sourceFilter);
     if (downloadedOnly) list = list.filter((w) => w.chapters.some((c) => c.download === "DONE"));
     if (unreadOnly) list = list.filter((w) => w.chapters.some((c) => !c.isRead));
+    if (smartRule) list = list.filter((w) => matchesRule(w, smartRule.rule));
     switch (sort) {
       case "lastRead":
         list.sort((a, b) => ((a.lastReadAt ?? a.addedAt) < (b.lastReadAt ?? b.addedAt) ? 1 : -1));
@@ -151,15 +154,20 @@ export function LibraryScreen() {
         break;
     }
     return list;
-  }, [publicWorks, query, typeFilter, sort, statusFilter, sourceFilter, downloadedOnly, unreadOnly]);
+  }, [publicWorks, query, typeFilter, sort, statusFilter, sourceFilter, downloadedOnly, unreadOnly, smartRule]);
 
   const catCards = useMemo(() => {
     return categories.map((c) => ({
       ...c,
-      count: Object.values(workCategories).filter((ids) => ids.includes(c.id)).length,
-      thumbs: publicWorks
-        .filter((w) => (workCategories[w.id] ?? []).includes(c.id))
-        .slice(0, 1),
+      smart: !!c.rule,
+      count: c.rule
+        ? publicWorks.filter((w) => matchesRule(w, c.rule!)).length
+        : Object.values(workCategories).filter((ids) => ids.includes(c.id)).length,
+      thumbs: c.rule
+        ? publicWorks.filter((w) => matchesRule(w, c.rule!)).slice(0, 1)
+        : publicWorks
+            .filter((w) => (workCategories[w.id] ?? []).includes(c.id))
+            .slice(0, 1),
     }));
   }, [categories, workCategories, publicWorks]);
 
@@ -303,11 +311,27 @@ export function LibraryScreen() {
           {catCards.map((c) => (
             <button
               key={c.id}
-              onClick={() => push({ kind: "categories" })}
+              onClick={() =>
+                c.rule
+                  ? setSmartRule({ name: c.name, rule: c.rule })
+                  : push({ kind: "categories" })
+              }
               className="w-[104px] shrink-0 text-start"
             >
-              <div className="relative h-[104px] overflow-hidden rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.45)]">
-                {c.thumbs[0] ? (
+              <div
+                className={cn(
+                  "relative h-[104px] overflow-hidden rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.45)]",
+                  c.smart && "ring-2 ring-primary/50"
+                )}
+              >
+                {c.smart ? (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-[#f8694c] via-[#f97e5f] to-[#f8a58f] text-white">
+                    <Sparkles className="h-7 w-7" />
+                    <span className="px-1 text-center text-[10px] font-black uppercase leading-tight tracking-wide">
+                      {c.name}
+                    </span>
+                  </div>
+                ) : c.thumbs[0] ? (
                   <WorkCover src={c.thumbs[0].cover} color={c.thumbs[0].coverColor} title={c.name} className="h-full w-full" sizes="104px" />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-coral-soft to-secondary text-primary">
@@ -317,12 +341,29 @@ export function LibraryScreen() {
               </div>
               <p className="mt-1.5 truncate text-[13px] font-extrabold">{c.name}</p>
               <p className="text-[11px] font-semibold text-muted-foreground">
-                {c.count} {t("common.works")}
+                {c.count} {c.count === 1 ? t("common.work") : t("common.works")}
               </p>
             </button>
           ))}
         </div>
       </section>
+
+      {/* active smart rule indicator (LIB-008) */}
+      {smartRule && (
+        <div className="mt-3 flex items-center justify-between rounded-full border border-primary/25 bg-coral-soft px-3 py-1.5">
+          <span className="flex min-w-0 items-center gap-1.5 text-[12px] font-bold text-primary">
+            <Sparkles className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{smartRule.name}</span>
+          </span>
+          <button
+            aria-label={t("lib.clearFilters")}
+            onClick={() => setSmartRule(null)}
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-primary/70 transition-colors hover:text-primary"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* all works header */}
       <section className="mt-6">

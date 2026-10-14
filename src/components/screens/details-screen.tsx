@@ -226,6 +226,38 @@ export function DetailsScreen({ workId }: { workId: string }) {
             />
           </div>
 
+          {/* personal rating (TRK-001) */}
+          <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-2.5">
+            <span className="text-[11px] font-black uppercase tracking-[0.14em] text-white/50">
+              {t("det.yourRating")}
+            </span>
+            <div className="flex items-center gap-0.5" role="radiogroup" aria-label={t("det.yourRating")}>
+              {[1, 2, 3, 4, 5].map((n) => {
+                const on = (work.userRating ?? 0) >= n;
+                return (
+                  <button
+                    key={n}
+                    role="radio"
+                    aria-checked={work.userRating === n}
+                    aria-label={`${t("det.yourRating")}: ${n}/5`}
+                    onClick={() => {
+                      useApp.getState().setUserRating(work.id, n);
+                      toast({ title: t("det.rated", { n }) });
+                    }}
+                    className="p-0.5 transition-transform active:scale-75"
+                  >
+                    <Star
+                      className={cn(
+                        "h-[18px] w-[18px] transition-colors",
+                        on ? "fill-[#f8694c] text-[#f8694c]" : "text-white/25 hover:text-white/50"
+                      )}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* description */}
           <p
             className={cn(

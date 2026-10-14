@@ -63,6 +63,7 @@ export interface Work {
   language: string; // content language
   localPages?: string[]; // imported image data urls
   epubChapters?: { id: string; title: string }[]; // parsed EPUB spine metadata
+  userRating?: number; // personal rating 0..5 stars (TRK-001)
 }
 
 export interface DownloadItem {
@@ -122,6 +123,17 @@ export interface Notification {
 export interface Category {
   id: string;
   name: string;
+  /** LIB-008 smart rule — when present the category is auto-computed from the library */
+  rule?: SmartRule;
+}
+
+/** savable smart-category conditions (LIB-008). All set fields must match (AND). */
+export interface SmartRule {
+  status?: ReadingStatus | null; // reading status must equal
+  downloaded?: boolean; // has downloaded chapters
+  unread?: boolean; // has unread chapters
+  favorite?: boolean; // is favorite
+  type?: "MANGA" | "COMIC" | "BOOK" | "PDF" | null; // coarse type group
 }
 
 export interface ReadingSession {
@@ -198,6 +210,8 @@ export interface Settings {
     cropBorders: boolean;
     keepAwake: boolean;
     epubFontSize?: number; // 14..22 for book reading
+    epubFont?: "serif" | "sans"; // book typeface
+    epubTheme?: "dark" | "sepia" | "paper"; // book page theme
   };
 }
 

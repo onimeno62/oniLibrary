@@ -133,6 +133,13 @@ export function HomeScreen() {
               <WorkCover title={continueItem.work.title} color={continueItem.work.coverColor} className="h-full w-full" />
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-black/5" />
+            {/* progress rail (chapter completion) */}
+            <div className="absolute inset-x-0 top-0 h-[3px] bg-white/15">
+              <div
+                className="h-full bg-coral-gradient shadow-[0_0_8px_rgba(248,105,76,0.8)]"
+                style={{ width: `${Math.round((continueItem.chapter.lastPage ?? 0) * 100)}%` }}
+              />
+            </div>
           </div>
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between p-4">
             <div className="min-w-0">

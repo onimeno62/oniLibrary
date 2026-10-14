@@ -27,6 +27,7 @@ import type {
   Extension,
   SavedFilter,
   LibraryFilterSnapshot,
+  SmartRule,
 } from "./types";
 
 /* ============================================================
@@ -129,10 +130,12 @@ interface AppState {
   markAllNotificationsRead: () => void;
   clearNotifications: () => void;
 
-  createCategory: (name: string) => void;
+  createCategory: (name: string, rule?: SmartRule) => void;
   renameCategory: (id: string, name: string) => void;
+  updateCategoryRule: (id: string, rule: SmartRule | null) => void;
   deleteCategory: (id: string) => void;
   assignCategories: (workId: string, catIds: string[]) => void;
+  setUserRating: (workId: string, rating: number) => void;
 
   logReading: (workId: string, minutes: number, chapters: number) => void;
   pushHistory: (workId: string, chapterId: string, page: number) => void;
@@ -312,6 +315,12 @@ export const useApp = create<AppState>()(
       toggleFavorite: (id) =>
         set((s) => ({
           works: s.works.map((w) => (w.id === id ? { ...w, isFavorite: !w.isFavorite } : w)),
+        })),
+      setUserRating: (workId, rating) =>
+        set((s) => ({
+          works: s.works.map((w) =>
+            w.id === workId ? { ...w, userRating: rating > 0 && w.userRating === rating ? 0 : rating } : w
+          ),
         })),
       setStatus: (id, st) =>
         set((s) => ({
@@ -551,11 +560,25 @@ export const useApp = create<AppState>()(
         set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) })),
       clearNotifications: () => set({ notifications: [] }),
 
-      createCategory: (name) =>
-        set((s) => ({ categories: [...s.categories, { id: "cat-" + uid(), name }] })),
+      createCategory: (name, rule) =>
+        set((s) => ({
+          categories: [
+            ...s.categories,
+            { id: "cat-" + uid(), name, ...(rule ? { rule } : {}) },
+          ],
+        })),
       renameCategory: (id, name) =>
         set((s) => ({
           categories: s.categories.map((c) => (c.id === id ? { ...c, name } : c)),
+        })),
+      updateCategoryRule: (id, rule) =>
+        set((s) => ({
+          categories: s.categories.map((c) => {
+            if (c.id !== id) return c;
+            if (rule) return { ...c, rule };
+            const { rule: _drop, ...rest } = c;
+            return rest;
+          }),
         })),
       deleteCategory: (id) =>
         set((s) => ({
@@ -572,16 +595,36 @@ export const useApp = create<AppState>()(
           const today = new Date().toISOString().slice(0, 10);
           const sessions = [...s.sessions];
           const idx = sessions.findIndex((x) => x.date === today);
+          const before = idx >= 0 ? sessions[idx].minutes : 0;
+          const after = before + minutes;
           if (idx >= 0) {
             sessions[idx] = {
               ...sessions[idx],
-              minutes: sessions[idx].minutes + minutes,
+              minutes: after,
               chapters: sessions[idx].chapters + chapters,
             };
           } else {
-            sessions.push({ date: today, minutes, chapters });
+            sessions.push({ date: today, minutes: after, chapters });
           }
           if (sessions.length > 60) sessions.splice(0, sessions.length - 60);
+
+          // daily-goal celebration (TRK-004/005): fire once when the ring completes
+          const goal = s.settings.dailyGoalMin;
+          if (goal > 0 && before < goal && after >= goal) {
+            void (async () => {
+              const { translate } = await import("./i18n");
+              const lang = useApp.getState().settings.lang;
+              const title = translate(lang, "stats.goalReachedTitle");
+              const body = translate(lang, "stats.goalReachedBody", { min: after });
+              const { toast } = await import("@/hooks/use-toast");
+              toast({ title, description: body });
+              useApp.getState().pushNotification({
+                type: "UPDATE",
+                title,
+                body,
+              });
+            })();
+          }
           return { sessions };
         }),
       pushHistory: (workId, chapterId, page) =>
@@ -767,6 +810,24 @@ function makeDiscoverChapters(workId: string, count: number): Chapter[] {
 }
 
 /* ---------- selectors / utils ---------- */
+
+/** LIB-008 — evaluate a smart rule against a work (all set conditions AND-ed) */
+export function matchesRule(w: Work, rule: SmartRule): boolean {
+  if (rule.status && w.readingStatus !== rule.status) return false;
+  if (rule.downloaded && !w.chapters.some((c) => c.download === "DONE")) return false;
+  if (rule.unread && !w.chapters.some((c) => !c.isRead)) return false;
+  if (rule.favorite && !w.isFavorite) return false;
+  if (rule.type) {
+    const group: Record<string, string[]> = {
+      MANGA: ["MANGA", "MANHWA", "MANHUA", "WEBTOON"],
+      COMIC: ["COMIC"],
+      BOOK: ["BOOK", "NOVEL", "EPUB"],
+      PDF: ["PDF"],
+    };
+    if (!(group[rule.type] ?? []).includes(w.type)) return false;
+  }
+  return true;
+}
 
 export function workProgress(w: Work): number {
   if (w.chapters.length === 0) return 0;

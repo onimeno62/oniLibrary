@@ -59,7 +59,7 @@ export function HistoryScreen() {
         ) : (
           <>
             <p className="mt-1 pb-3 text-[11px] font-bold text-muted-foreground">
-              {t("hist.entries", { n: rows.length })}
+              {rows.length === 1 ? t("hist.entry", { n: rows.length }) : t("hist.entries", { n: rows.length })}
             </p>
             <div className="space-y-2">
               {rows.map(({ h, w, ch, vault }) => (

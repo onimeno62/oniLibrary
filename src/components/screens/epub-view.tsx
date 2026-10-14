@@ -13,10 +13,14 @@ export function EpubBookView({
   work,
   chapterId,
   fontSize,
+  font = "serif",
+  theme = "dark",
 }: {
   work: Work;
   chapterId: string;
   fontSize: number;
+  font?: "serif" | "sans";
+  theme?: "dark" | "sepia" | "paper";
 }) {
   const workId = work.id;
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -132,19 +136,21 @@ export function EpubBookView({
     );
   }
 
+  const themed = theme !== "dark";
   const bg =
-    useApp.getState().settings.readerDefaults.bg === "white"
-      ? "#faf7f0"
-      : useApp.getState().settings.readerDefaults.bg === "sepia"
-        ? "#f3e8d5"
-        : undefined;
+    theme === "paper" ? "#faf7f0" : theme === "sepia" ? "#f3e8d5" : undefined;
+  const fg = themed ? "#2b241d" : undefined;
 
   return (
     <div
       ref={scrollRef}
       onScroll={onScroll}
       className="h-full overflow-y-auto thin-scrollbar"
-      style={bg ? { background: bg, color: "#2b241d" } : undefined}
+      style={{
+        background: bg,
+        color: fg,
+        transition: "background 300ms ease, color 300ms ease",
+      }}
     >
       <article
         dir="auto"
@@ -166,7 +172,11 @@ export function EpubBookView({
         <div
           ref={contentRef}
           className="epub-content"
-          style={{ fontFamily: "var(--font-vazirmatn), Georgia, serif" }}
+          style={
+            font === "sans"
+              ? { fontFamily: "var(--font-nunito), var(--font-vazirmatn), sans-serif" }
+              : { fontFamily: "Georgia, 'Iowan Old Style', var(--font-vazirmatn), serif" }
+          }
           dangerouslySetInnerHTML={{ __html: html }}
         />
       </article>

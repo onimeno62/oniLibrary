@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Bookmark, MoreVertical, Trash2, Pencil, Plus } from "lucide-react";
+import { Bookmark, MoreVertical, Trash2, Pencil, Plus, Sparkles, SlidersHorizontal } from "lucide-react";
 import { OverlayHeader, WorkCover } from "@/components/shared";
-import { useApp } from "@/lib/store";
+import { useApp, matchesRule } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -21,11 +21,147 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Category } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import type { Category, ReadingStatus, SmartRule } from "@/lib/types";
+import type { TranslationKey } from "@/lib/i18n";
 
 /* ============================================================
-   CategoriesScreen — manage categories + cover previews
+   CategoriesScreen — manual + smart categories (LIB-006/008)
+   Smart categories evaluate a saved rule live against the
+   library so results follow work data changes.
    ============================================================ */
+
+const STATUS_KEYS: ReadingStatus[] = ["READING", "PLANNED", "COMPLETED", "ON_HOLD", "DROPPED"];
+const TYPE_KEYS: NonNullable<SmartRule["type"]>[] = ["MANGA", "COMIC", "BOOK", "PDF"];
+
+export function RuleChips({ rule }: { rule: SmartRule }) {
+  const { t } = useT();
+  const chips: string[] = [];
+  if (rule.status) chips.push(t(`status.${rule.status}` as TranslationKey));
+  if (rule.type) chips.push(t(`type.${rule.type}` as TranslationKey));
+  if (rule.downloaded) chips.push(t("cat.ruleDownloaded"));
+  if (rule.unread) chips.push(t("cat.ruleUnread"));
+  if (rule.favorite) chips.push(t("cat.ruleFavorite"));
+  return (
+    <div className="flex flex-wrap gap-1">
+      {chips.length === 0 ? (
+        <span className="text-[11px] font-semibold text-muted-foreground">{t("cat.ruleAny")}</span>
+      ) : (
+        chips.map((c) => (
+          <span
+            key={c}
+            className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary"
+          >
+            {c}
+          </span>
+        ))
+      )}
+    </div>
+  );
+}
+
+/* rule builder used by both create + edit dialogs */
+function RuleBuilder({
+  rule,
+  onChange,
+}: {
+  rule: SmartRule;
+  onChange: (r: SmartRule) => void;
+}) {
+  const { t } = useT();
+  return (
+    <div className="rounded-2xl border border-border bg-background/60 p-3">
+      <p className="mb-2 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-muted-foreground">
+        <SlidersHorizontal className="h-3 w-3 text-primary" />
+        {t("cat.ruleTitle")}
+      </p>
+
+      {/* status */}
+      <div className="mb-2">
+        <p className="mb-1 text-[11px] font-bold text-muted-foreground">{t("cat.ruleStatus")}</p>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => onChange({ ...rule, status: null })}
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
+              !rule.status ? "bg-coral-gradient text-white" : "bg-secondary text-secondary-foreground"
+            )}
+          >
+            {t("cat.ruleAny")}
+          </button>
+          {STATUS_KEYS.map((s) => (
+            <button
+              key={s}
+              onClick={() => onChange({ ...rule, status: s })}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
+                rule.status === s ? "bg-coral-gradient text-white" : "bg-secondary text-secondary-foreground"
+              )}
+            >
+              {t(`status.${s}` as TranslationKey)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* type */}
+      <div className="mb-2">
+        <p className="mb-1 text-[11px] font-bold text-muted-foreground">{t("cat.ruleType")}</p>
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => onChange({ ...rule, type: null })}
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
+              !rule.type ? "bg-coral-gradient text-white" : "bg-secondary text-secondary-foreground"
+            )}
+          >
+            {t("cat.ruleAny")}
+          </button>
+          {TYPE_KEYS.map((ty) => (
+            <button
+              key={ty}
+              onClick={() => onChange({ ...rule, type: ty })}
+              className={cn(
+                "rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
+                rule.type === ty ? "bg-coral-gradient text-white" : "bg-secondary text-secondary-foreground"
+              )}
+            >
+              {t(`type.${ty}` as TranslationKey)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* boolean toggles */}
+      <div className="flex flex-wrap gap-1.5">
+        {(
+          [
+            ["downloaded", t("cat.ruleDownloaded")],
+            ["unread", t("cat.ruleUnread")],
+            ["favorite", t("cat.ruleFavorite")],
+          ] as [keyof SmartRule, string][]
+        ).map(([k, label]) => {
+          const active = rule[k] === true;
+          return (
+            <button
+              key={k}
+              onClick={() => onChange({ ...rule, [k]: !active })}
+              className={cn(
+                "flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold transition-all",
+                active
+                  ? "bg-ink text-cream"
+                  : "border border-border bg-card text-secondary-foreground"
+              )}
+            >
+              {active && <Sparkles className="h-3 w-3" />}
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export function CategoriesScreen() {
   const { t } = useT();
@@ -34,31 +170,60 @@ export function CategoriesScreen() {
   const workCategories = useApp((s) => s.workCategories);
   const createCategory = useApp((s) => s.createCategory);
   const renameCategory = useApp((s) => s.renameCategory);
+  const updateCategoryRule = useApp((s) => s.updateCategoryRule);
   const deleteCategory = useApp((s) => s.deleteCategory);
 
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newRule, setNewRule] = useState<SmartRule>({});
   const [renameTarget, setRenameTarget] = useState<Category | null>(null);
   const [renameName, setRenameName] = useState("");
+  const [renameRule, setRenameRule] = useState<SmartRule>({});
 
   const visibleWorks = useMemo(() => works.filter((w) => !w.inVault), [works]);
 
   const rows = useMemo(
     () =>
       categories.map((c) => {
+        if (c.rule) {
+          const members = visibleWorks.filter((w) => matchesRule(w, c.rule!));
+          return { ...c, smart: true, count: members.length, thumbs: members.slice(0, 3) };
+        }
         const members = visibleWorks.filter((w) => (workCategories[w.id] ?? []).includes(c.id));
-        return { ...c, count: members.length, thumbs: members.slice(0, 3) };
+        return { ...c, smart: false, count: members.length, thumbs: members.slice(0, 3) };
       }),
     [categories, visibleWorks, workCategories]
   );
 
+  const newRuleCount = useMemo(
+    () => visibleWorks.filter((w) => matchesRule(w, newRule)).length,
+    [visibleWorks, newRule]
+  );
+  const renameRuleCount = useMemo(
+    () => visibleWorks.filter((w) => matchesRule(w, renameRule)).length,
+    [visibleWorks, renameRule]
+  );
+
+  const hasRule = (r: SmartRule) =>
+    !!(r.status || r.type || r.downloaded || r.unread || r.favorite);
+
   const submitNew = () => {
     const name = newName.trim();
-    if (!name) return;
-    createCategory(name);
-    toast({ title: t("lib.newCategory"), description: name });
+    if (!name) {
+      toast({ title: t("cat.nameRequired"), variant: "destructive" });
+      return;
+    }
+    createCategory(name, hasRule(newRule) ? newRule : undefined);
+    toast({ title: hasRule(newRule) ? t("cat.newSmart") : t("lib.newCategory"), description: name });
     setNewName("");
+    setNewRule({});
     setNewOpen(false);
+  };
+
+  const openRename = (c: Category) => {
+    setRenameTarget(c);
+    setRenameName(c.name);
+    setRenameRule(c.rule ?? {});
   };
 
   const submitRename = () => {
@@ -66,6 +231,7 @@ export function CategoriesScreen() {
     const name = renameName.trim();
     if (!name) return;
     renameCategory(renameTarget.id, name);
+    updateCategoryRule(renameTarget.id, hasRule(renameRule) ? renameRule : null);
     toast({ title: t("lib.rename"), description: name });
     setRenameTarget(null);
   };
@@ -80,18 +246,41 @@ export function CategoriesScreen() {
     <div className="flex min-h-full flex-col px-5 pb-8">
       <OverlayHeader title={t("more.categories")} />
 
+      <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+        <Sparkles className="h-3 w-3 shrink-0 text-primary" />
+        {t("cat.smartHint")}
+      </p>
+
       {/* category rows */}
       <div className="mt-2 space-y-2.5">
         {rows.map((c) => (
-          <article key={c.id} className="rounded-3xl border border-border bg-card p-4">
+          <article
+            key={c.id}
+            className={cn(
+              "rounded-3xl border bg-card p-4 transition-colors",
+              c.smart ? "border-primary/30 bg-gradient-to-br from-coral-soft/60 to-card" : "border-border"
+            )}
+          >
             <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-coral-soft text-primary">
-                <Bookmark className="h-5 w-5" />
+              <span
+                className={cn(
+                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+                  c.smart ? "bg-coral-gradient text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.7)]" : "bg-coral-soft text-primary"
+                )}
+              >
+                {c.smart ? <Sparkles className="h-5 w-5" /> : <Bookmark className="h-5 w-5" />}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-extrabold">{c.name}</p>
+                <p className="flex items-center gap-1.5 truncate text-[15px] font-extrabold">
+                  <span className="truncate">{c.name}</span>
+                  {c.smart && (
+                    <span className="shrink-0 rounded-full bg-coral-gradient px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
+                      {t("cat.smart")}
+                    </span>
+                  )}
+                </p>
                 <p className="text-[11px] font-semibold text-muted-foreground">
-                  {c.count} {t("common.works")}
+                  {c.count} {c.count === 1 ? t("common.work") : t("common.works")}
                 </p>
               </div>
               <DropdownMenu>
@@ -104,11 +293,17 @@ export function CategoriesScreen() {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="rounded-2xl">
+                  {c.smart && (
+                    <DropdownMenuItem
+                      onClick={() => openRename(c)}
+                      className="gap-2 rounded-xl text-[13px] font-semibold"
+                    >
+                      <SlidersHorizontal className="h-4 w-4 text-primary" />
+                      {t("cat.editRules")}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
-                    onClick={() => {
-                      setRenameTarget(c);
-                      setRenameName(c.name);
-                    }}
+                    onClick={() => openRename(c)}
                     className="gap-2 rounded-xl text-[13px] font-semibold"
                   >
                     <Pencil className="h-4 w-4 text-primary" />
@@ -124,6 +319,13 @@ export function CategoriesScreen() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+
+            {/* smart rule chips (inspectable — LIB-008 acceptance) */}
+            {c.smart && c.rule && (
+              <div className="mt-2.5">
+                <RuleChips rule={c.rule} />
+              </div>
+            )}
 
             {/* cover previews */}
             <div className="mt-3 flex gap-1.5">
@@ -148,28 +350,34 @@ export function CategoriesScreen() {
         ))}
       </div>
 
-      {/* new category */}
+      {/* new smart category */}
       <button
         onClick={() => setNewOpen(true)}
         className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-coral-gradient py-3 text-[14px] font-extrabold text-white shadow-[0_10px_24px_-10px_rgba(248,105,76,0.6)] transition-transform active:scale-[0.98]"
       >
-        <Plus className="h-4.5 w-4.5" />
-        {t("lib.newCategory")}
+        <Sparkles className="h-4.5 w-4.5" />
+        {t("cat.newSmart")}
       </button>
 
-      {/* create dialog */}
+      {/* create dialog (manual or smart via rules) */}
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent className="max-w-[340px] rounded-3xl border-border bg-card p-5" style={{ maxWidth: 340 }}>
           <DialogHeader>
-            <DialogTitle className="text-[17px] font-extrabold">{t("lib.newCategory")}</DialogTitle>
+            <DialogTitle className="text-[17px] font-extrabold">{t("cat.newSmart")}</DialogTitle>
           </DialogHeader>
-          <Input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder={t("lib.categoryName")}
-            autoFocus
-            onKeyDown={(e) => e.key === "Enter" && submitNew()}
-          />
+          <div className="space-y-3">
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder={t("lib.categoryName")}
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && submitNew()}
+            />
+            <RuleBuilder rule={newRule} onChange={setNewRule} />
+            <p className="text-center text-[11px] font-bold text-muted-foreground">
+              {t("cat.matches", { n: newRuleCount })}
+            </p>
+          </div>
           <DialogFooter className="gap-2">
             <Button variant="secondary" className="flex-1 rounded-full font-bold" onClick={() => setNewOpen(false)}>
               {t("common.cancel")}
@@ -184,19 +392,27 @@ export function CategoriesScreen() {
         </DialogContent>
       </Dialog>
 
-      {/* rename dialog */}
+      {/* rename / edit-rules dialog */}
       <Dialog open={renameTarget !== null} onOpenChange={(v) => !v && setRenameTarget(null)}>
         <DialogContent className="max-w-[340px] rounded-3xl border-border bg-card p-5" style={{ maxWidth: 340 }}>
           <DialogHeader>
-            <DialogTitle className="text-[17px] font-extrabold">{t("lib.rename")}</DialogTitle>
+            <DialogTitle className="text-[17px] font-extrabold">
+              {renameTarget?.rule ? t("cat.editRules") : t("lib.rename")}
+            </DialogTitle>
           </DialogHeader>
-          <Input
-            value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
-            placeholder={t("lib.categoryName")}
-            autoFocus
-            onKeyDown={(e) => e.key === "Enter" && submitRename()}
-          />
+          <div className="space-y-3">
+            <Input
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              placeholder={t("lib.categoryName")}
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && submitRename()}
+            />
+            <RuleBuilder rule={renameRule} onChange={setRenameRule} />
+            <p className="text-center text-[11px] font-bold text-muted-foreground">
+              {t("cat.matches", { n: renameRuleCount })}
+            </p>
+          </div>
           <DialogFooter className="gap-2">
             <Button variant="secondary" className="flex-1 rounded-full font-bold" onClick={() => setRenameTarget(null)}>
               {t("common.cancel")}

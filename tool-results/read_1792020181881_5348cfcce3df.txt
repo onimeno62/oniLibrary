@@ -1,0 +1,826 @@
+     1→"use client";
+     2→
+     3→import { create } from "zustand";
+     4→import { persist, createJSONStorage } from "zustand/middleware";
+     5→import {
+     6→  DEFAULT_SETTINGS,
+     7→  SEED_WORKS,
+     8→  SEED_SOURCES,
+     9→  SEED_EXTENSIONS,
+    10→  SEED_CATEGORIES,
+    11→  SEED_WORK_CATEGORIES,
+    12→  SEED_SERVERS,
+    13→} from "./seed";
+    14→import type {
+    15→  Work,
+    16→  Chapter,
+    17→  DownloadItem,
+    18→  Notification,
+    19→  Category,
+    20→  ReadingSession,
+    21→  HistoryEntry,
+    22→  Bookmark,
+    23→  ServerEntry,
+    24→  Settings,
+    25→  ReadingStatus,
+    26→  SourceInfo,
+    27→  Extension,
+    28→  SavedFilter,
+    29→  LibraryFilterSnapshot,
+    30→} from "./types";
+    31→
+    32→/* ============================================================
+    33→   Navigation store (transient — not persisted)
+    34→   ============================================================ */
+    35→
+    36→export type Tab = "home" | "library" | "discover" | "updates" | "downloads" | "more";
+    37→
+    38→export type Overlay =
+    39→  | { kind: "details"; workId: string }
+    40→  | { kind: "reader"; workId: string; chapterId: string; page?: number }
+    41→  | { kind: "search" }
+    42→  | { kind: "source"; sourceId: string }
+    43→  | { kind: "vault" }
+    44→  | { kind: "extensions" }
+    45→  | { kind: "statistics" }
+    46→  | { kind: "history" }
+    47→  | { kind: "settings" }
+    48→  | { kind: "categories" }
+    49→  | { kind: "backup" }
+    50→  | { kind: "servers" }
+    51→  | { kind: "formats" }
+    52→  | { kind: "notifications" };
+    53→
+    54→interface NavState {
+    55→  tab: Tab;
+    56→  stack: Overlay[];
+    57→  setTab: (t: Tab) => void;
+    58→  push: (o: Overlay) => void;
+    59→  pop: () => void;
+    60→  popToTab: () => void;
+    61→  openWork: (workId: string) => void;
+    62→  openReader: (workId: string, chapterId: string, page?: number) => void;
+    63→}
+    64→
+    65→export const useNav = create<NavState>((set) => ({
+    66→  tab: "home",
+    67→  stack: [],
+    68→  setTab: (t) => set({ tab: t, stack: [] }),
+    69→  push: (o) => set((s) => ({ stack: [...s.stack, o] })),
+    70→  pop: () => set((s) => ({ stack: s.stack.slice(0, -1) })),
+    71→  popToTab: () => set({ stack: [] }),
+    72→  openWork: (workId) => set((s) => ({ stack: [...s.stack, { kind: "details", workId }] })),
+    73→  openReader: (workId, chapterId, page) =>
+    74→    set((s) => ({ stack: [...s.stack, { kind: "reader", workId, chapterId, page }] })),
+    75→}));
+    76→
+    77→/* ============================================================
+    78→   App store (persisted)
+    79→   ============================================================ */
+    80→
+    81→interface AppState {
+    82→  hydrated: boolean;
+    83→  onboarded: boolean;
+    84→  vaultUnlocked: boolean;
+    85→  works: Work[];
+    86→  categories: Category[];
+    87→  workCategories: Record<string, string[]>;
+    88→  downloads: DownloadItem[];
+    89→  notifications: Notification[];
+    90→  sources: SourceInfo[];
+    91→  extensions: Extension[];
+    92→  sessions: ReadingSession[];
+    93→  history: HistoryEntry[];
+    94→  bookmarks: Bookmark[];
+    95→  servers: ServerEntry[];
+    96→  savedFilters: SavedFilter[];
+    97→  settings: Settings;
+    98→  updateCheck: { lastCheck: string | null; checking: boolean };
+    99→  lastBackup: string | null;
+   100→
+   101→  setHydrated: () => void;
+   102→  finishOnboarding: (partial?: Partial<Settings>) => void;
+   103→  setSettings: (p: Partial<Settings>) => void;
+   104→  setReaderDefaults: (p: Partial<Settings["readerDefaults"]>) => void;
+   105→  setVaultUnlocked: (v: boolean) => void;
+   106→  setVaultPin: (hash: string | null) => void;
+   107→
+   108→  updateWork: (id: string, p: Partial<Work>) => void;
+   109→  toggleFavorite: (id: string) => void;
+   110→  setStatus: (id: string, s: ReadingStatus) => void;
+   111→  setVaultFlag: (id: string, v: boolean) => void;
+   112→  deleteWorks: (ids: string[]) => void;
+   113→  addWork: (w: Work) => void;
+   114→  addSampleWorkFromSource: (sourceId: string, title: string) => string;
+   115→
+   116→  markChapterRead: (workId: string, chapterId: string, read: boolean, upTo?: boolean) => void;
+   117→  setChapterProgress: (workId: string, chapterId: string, page: number) => void;
+   118→
+   119→  startDownload: (workId: string, chapterId: string) => void;
+   120→  pauseDownload: (id: string) => void;
+   121→  resumeDownload: (id: string) => void;
+   122→  cancelDownload: (id: string) => void;
+   123→  retryDownload: (id: string) => void;
+   124→  removeDownload: (id: string) => void;
+   125→  tickDownloads: () => void;
+   126→
+   127→  pushNotification: (n: Omit<Notification, "id" | "createdAt" | "read">) => void;
+   128→  markNotificationRead: (id: string) => void;
+   129→  markAllNotificationsRead: () => void;
+   130→  clearNotifications: () => void;
+   131→
+   132→  createCategory: (name: string) => void;
+   133→  renameCategory: (id: string, name: string) => void;
+   134→  deleteCategory: (id: string) => void;
+   135→  assignCategories: (workId: string, catIds: string[]) => void;
+   136→
+   137→  logReading: (workId: string, minutes: number, chapters: number) => void;
+   138→  pushHistory: (workId: string, chapterId: string, page: number) => void;
+   139→  clearHistory: () => void;
+   140→
+   141→  addBookmark: (workId: string, chapterId: string, page: number, note?: string) => void;
+   142→  removeBookmark: (id: string) => void;
+   143→
+   144→  addServer: (s: Omit<ServerEntry, "id" | "status">) => void;
+   145→  removeServer: (id: string) => void;
+   146→  setServerStatus: (id: string, status: ServerEntry["status"]) => void;
+   147→
+   148→  saveFilter: (name: string, filter: LibraryFilterSnapshot) => void;
+   149→  deleteSavedFilter: (id: string) => void;
+   150→
+   151→  setSourceEnabled: (id: string, v: boolean) => void;
+   152→  setSourcePinned: (id: string, v: boolean) => void;
+   153→  setExtensionStatus: (id: string, status: Extension["status"], enabled?: boolean) => void;
+   154→
+   155→  runUpdateCheck: () => Promise<number>;
+   156→  setLastBackup: (iso: string) => void;
+   157→  importBackup: (data: unknown) => boolean;
+   158→}
+   159→
+   160→function uid(): string {
+   161→  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+   162→}
+   163→
+   164→export function hashPin(pin: string): string {
+   165→  let h = 0;
+   166→  for (let i = 0; i < pin.length; i++) {
+   167→    h = (h * 31 + pin.charCodeAt(i)) | 0;
+   168→  }
+   169→  return "h" + Math.abs(h).toString(36);
+   170→}
+   171→
+   172→export const useApp = create<AppState>()(
+   173→  persist(
+   174→    (set, get) => ({
+   175→      hydrated: false,
+   176→      onboarded: false,
+   177→      vaultUnlocked: false,
+   178→      works: SEED_WORKS,
+   179→      categories: SEED_CATEGORIES,
+   180→      workCategories: SEED_WORK_CATEGORIES,
+   181→      downloads: [] as DownloadItem[],
+   182→      notifications: [],
+   183→      sources: SEED_SOURCES,
+   184→      extensions: SEED_EXTENSIONS,
+   185→      sessions: [],
+   186→      history: [],
+   187→      bookmarks: [],
+   188→      servers: SEED_SERVERS,
+   189→      savedFilters: [],
+   190→      settings: DEFAULT_SETTINGS,
+   191→      updateCheck: { lastCheck: null, checking: false },
+   192→      lastBackup: null,
+   193→
+   194→      // on init, populate dynamic seeds once
+   195→      setHydrated: () => {
+   196→        const s = get();
+   197→        if (s.downloads.length === 0 && s.sessions.length === 0 && s.notifications.length === 0) {
+   198→          import("./seed").then(({ seedDownloads, seedNotifications, seedSessions }) => {
+   199→            set((st) => {
+   200→              // re-apply downloads on chapters
+   201→              const works = st.works.map((w) => {
+   202→                const chapters = w.chapters.map((c) => ({ ...c }));
+   203→                return { ...w, chapters };
+   204→              });
+   205→              for (const d of seedDownloads()) {
+   206→                const w = works.find((x) => x.id === d.workId);
+   207→                const c = w?.chapters.find((x) => x.id === d.chapterId);
+   208→                if (c && d.status === "DONE") c.download = "DONE";
+   209→              }
+   210→              // attach the built-in sample book to the seeded EPUB work (FMT-002 demo)
+   211→              const sample = works.find((w) => w.id === "w-silentbook");
+   212→              if (sample) {
+   213→                import("./sample-epub").then(({ SAMPLE_EPUB }) => {
+   214→                  void (async () => {
+   215→                    try {
+   216→                      const { putFile } = await import("./local-files");
+   217→                      await putFile(
+   218→                        `${sample.id}::epub`,
+   219→                        new Blob([JSON.stringify(SAMPLE_EPUB)], { type: "application/json" })
+   220→                      );
+   221→                      useApp.setState((st2) => ({
+   222→                        works: st2.works.map((w) =>
+   223→                          w.id === sample.id
+   224→                            ? {
+   225→                                ...w,
+   226→                                localPages: ["epub"],
+   227→                                epubChapters: SAMPLE_EPUB.chapters.map((c) => ({
+   228→                                  id: c.id,
+   229→                                  title: c.title,
+   230→                                })),
+   231→                                chapters: SAMPLE_EPUB.chapters.map((c, i) => ({
+   232→                                  id: c.id,
+   233→                                  number: i + 1,
+   234→                                  title: c.title,
+   235→                                  pages: Math.max(
+   236→                                    1,
+   237→                                    Math.round(
+   238→                                      c.html.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean).length / 220
+   239→                                    )
+   240→                                  ),
+   241→                                  releaseDate: w.chapters[i]?.releaseDate ?? new Date().toISOString(),
+   242→                                  isRead: false,
+   243→                                  download: "DONE" as const,
+   244→                                  sizeMb: 0.2,
+   245→                                })),
+   246→                              }
+   247→                            : w
+   248→                        ),
+   249→                      }));
+   250→                    } catch {
+   251→                      /* IDB unavailable — work stays as generated-page demo */
+   252→                    }
+   253→                  })();
+   254→                });
+   255→              }
+   256→
+   257→              // attach the built-in sample PDF to the guide work (FMT-003 demo)
+   258→              const guide = works.find((w) => w.id === "w-oni-guide");
+   259→              if (guide && guide.localPages?.[0] !== "pdf") {
+   260→                void (async () => {
+   261→                  try {
+   262→                    const { putFile } = await import("./local-files");
+   263→                    const res = await fetch("samples/oni-library-guide.pdf");
+   264→                    if (!res.ok) return;
+   265→                    const blob = await res.blob();
+   266→                    await putFile(`${guide.id}::pdf`, blob);
+   267→                    useApp.setState((st2) => ({
+   268→                      works: st2.works.map((w) =>
+   269→                        w.id === guide.id && w.localPages?.[0] !== "pdf"
+   270→                          ? { ...w, localPages: ["pdf"] }
+   271→                          : w
+   272→                      ),
+   273→                    }));
+   274→                  } catch {
+   275→                    /* offline / IDB unavailable — guide falls back to generated pages */
+   276→                  }
+   277→                })();
+   278→              }
+   279→
+   280→              return {
+   281→                hydrated: true,
+   282→                downloads: seedDownloads(),
+   283→                notifications: seedNotifications(),
+   284→                sessions: seedSessions(),
+   285→                works,
+   286→              };
+   287→            });
+   288→          });
+   289→        } else {
+   290→          set({ hydrated: true });
+   291→        }
+   292→      },
+   293→
+   294→      finishOnboarding: (partial) =>
+   295→        set((s) => ({
+   296→          onboarded: true,
+   297→          settings: { ...s.settings, ...(partial ?? {}) },
+   298→        })),
+   299→
+   300→      setSettings: (p) => set((s) => ({ settings: { ...s.settings, ...p } })),
+   301→      setReaderDefaults: (p) =>
+   302→        set((s) => ({
+   303→          settings: { ...s.settings, readerDefaults: { ...s.settings.readerDefaults, ...p } },
+   304→        })),
+   305→      setVaultUnlocked: (v) => set({ vaultUnlocked: v }),
+   306→      setVaultPin: (hash) => set((s) => ({ settings: { ...s.settings, vaultPinHash: hash } })),
+   307→
+   308→      updateWork: (id, p) =>
+   309→        set((s) => ({
+   310→          works: s.works.map((w) => (w.id === id ? { ...w, ...p } : w)),
+   311→        })),
+   312→      toggleFavorite: (id) =>
+   313→        set((s) => ({
+   314→          works: s.works.map((w) => (w.id === id ? { ...w, isFavorite: !w.isFavorite } : w)),
+   315→        })),
+   316→      setStatus: (id, st) =>
+   317→        set((s) => ({
+   318→          works: s.works.map((w) => (w.id === id ? { ...w, readingStatus: st } : w)),
+   319→        })),
+   320→      setVaultFlag: (id, v) =>
+   321→        set((s) => ({
+   322→          works: s.works.map((w) => (w.id === id ? { ...w, inVault: v } : w)),
+   323→        })),
+   324→      deleteWorks: (ids) =>
+   325→        set((s) => ({
+   326→          works: s.works.filter((w) => !ids.includes(w.id)),
+   327→          downloads: s.downloads.filter((d) => !ids.includes(d.workId)),
+   328→          workCategories: Object.fromEntries(
+   329→            Object.entries(s.workCategories).filter(([k]) => !ids.includes(k))
+   330→          ),
+   331→        })),
+   332→      addWork: (w) => set((s) => ({ works: [w, ...s.works] })),
+   333→      addSampleWorkFromSource: (sourceId, title) => {
+   334→        const id = "w-" + uid();
+   335→        const source = get().sources.find((x) => x.id === sourceId);
+   336→        const type =
+   337→          source?.kinds[0] === "Comics"
+   338→            ? "COMIC"
+   339→            : source?.kinds[0] === "Light Novels"
+   340→              ? "NOVEL"
+   341→              : source?.name === "Webtoon"
+   342→                ? "WEBTOON"
+   343→                : "MANGA";
+   344→        const work: Work = {
+   345→          id,
+   346→          title,
+   347→          author: "Unknown",
+   348→          cover: "",
+   349→          coverColor: "from-orange-500 to-rose-900",
+   350→          type,
+   351→          source: sourceId,
+   352→          description: `Added from ${source?.name ?? "source"} via Discover.`,
+   353→          workStatus: "ONGOING",
+   354→          readingStatus: "PLANNED",
+   355→          isFavorite: false,
+   356→          inVault: false,
+   357→          tags: ["Discovered"],
+   358→          rating: 8,
+   359→          ratingCount: 1200 + Math.floor(Math.random() * 40000),
+   360→          direction: type === "WEBTOON" ? "VERTICAL" : "RTL",
+   361→          readerMode: type === "WEBTOON" ? "WEBTOON" : "PAGED",
+   362→          fitMode: "WIDTH",
+   363→          chapters: makeDiscoverChapters(id, 24 + Math.floor(Math.random() * 160)),
+   364→          addedAt: new Date().toISOString(),
+   365→          language: source?.languages[0] ?? "EN",
+   366→        };
+   367→        get().addWork(work);
+   368→        return id;
+   369→      },
+   370→
+   371→      markChapterRead: (workId, chapterId, read, upTo) =>
+   372→        set((s) => ({
+   373→          works: s.works.map((w) => {
+   374→            if (w.id !== workId) return w;
+   375→            const target = w.chapters.find((c) => c.id === chapterId);
+   376→            const chapters = w.chapters.map((c) => {
+   377→              if (c.id === chapterId) return { ...c, isRead: read, lastPage: read ? undefined : c.lastPage };
+   378→              if (upTo && target && c.number < target.number) return { ...c, isRead: read };
+   379→              return c;
+   380→            });
+   381→            return { ...w, chapters };
+   382→          }),
+   383→        })),
+   384→      setChapterProgress: (workId, chapterId, page) =>
+   385→        set((s) => ({
+   386→          works: s.works.map((w) => {
+   387→            if (w.id !== workId) return w;
+   388→            const chapters = w.chapters.map((c) =>
+   389→              c.id === chapterId ? { ...c, lastPage: page } : c
+   390→            );
+   391→            return { ...w, chapters, lastReadAt: new Date().toISOString() };
+   392→          }),
+   393→        })),
+   394→
+   395→      startDownload: (workId, chapterId) => {
+   396→        const s = get();
+   397→        const w = s.works.find((x) => x.id === workId);
+   398→        const c = w?.chapters.find((x) => x.id === chapterId);
+   399→        if (!w || !c) return;
+   400→        if (s.downloads.some((d) => d.chapterId === chapterId && d.status !== "ERROR")) return;
+   401→        const activeCount = s.downloads.filter((d) => d.status === "ACTIVE").length;
+   402→        const item: DownloadItem = {
+   403→          id: "dl-" + uid(),
+   404→          workId,
+   405→          chapterId,
+   406→          status: activeCount < s.settings.maxConcurrent ? "ACTIVE" : "QUEUED",
+   407→          progress: 0,
+   408→          downloadedMb: 0,
+   409→          totalMb: c.sizeMb,
+   410→          speedMbps: 1.5 + Math.random() * 2,
+   411→          startedAt: new Date().toISOString(),
+   412→        };
+   413→        set((st) => ({
+   414→          downloads: [item, ...st.downloads],
+   415→          works: st.works.map((x) =>
+   416→            x.id === workId
+   417→              ? {
+   418→                  ...x,
+   419→                  chapters: x.chapters.map((ch) =>
+   420→                    ch.id === chapterId ? { ...ch, download: "DOWNLOADING" as const } : ch
+   421→                  ),
+   422→                }
+   423→              : x
+   424→          ),
+   425→        }));
+   426→      },
+   427→      pauseDownload: (id) =>
+   428→        set((s) => ({
+   429→          downloads: s.downloads.map((d) => (d.id === id ? { ...d, status: "PAUSED", speedMbps: 0 } : d)),
+   430→          works: setChDl(s.works, s.downloads, id, "PAUSED"),
+   431→        })),
+   432→      resumeDownload: (id) =>
+   433→        set((s) => {
+   434→          const activeCount = s.downloads.filter((d) => d.status === "ACTIVE").length;
+   435→          const st = activeCount < s.settings.maxConcurrent ? "ACTIVE" : "QUEUED";
+   436→          return {
+   437→            downloads: s.downloads.map((d) =>
+   438→              d.id === id
+   439→                ? { ...d, status: st, speedMbps: 1.5 + Math.random() * 2, error: undefined }
+   440→                : d
+   441→            ),
+   442→            works: setChDl(s.works, s.downloads, id, "DOWNLOADING"),
+   443→          };
+   444→        }),
+   445→      cancelDownload: (id) =>
+   446→        set((s) => ({
+   447→          downloads: s.downloads.filter((d) => d.id !== id),
+   448→          works: setChDl(s.works, s.downloads, id, "NONE"),
+   449→        })),
+   450→      retryDownload: (id) =>
+   451→        set((s) => ({
+   452→          downloads: s.downloads.map((d) =>
+   453→            d.id === id
+   454→              ? { ...d, status: "ACTIVE", progress: 0, downloadedMb: 0, speedMbps: 2, error: undefined }
+   455→              : d
+   456→          ),
+   457→          works: setChDl(s.works, s.downloads, id, "DOWNLOADING"),
+   458→        })),
+   459→      removeDownload: (id) =>
+   460→        set((s) => ({
+   461→          downloads: s.downloads.filter((d) => d.id !== id),
+   462→          works: setChDl(s.works, s.downloads, id, "NONE"),
+   463→        })),
+   464→      tickDownloads: () => {
+   465→        const s = get();
+   466→        if (s.settings.offlineMode && s.settings.wifiOnly) return; // stalled
+   467→        let changed = false;
+   468→        const newEvents: { n: Omit<Notification, "id" | "createdAt" | "read">; d: DownloadItem }[] = [];
+   469→        let downloads = s.downloads.map((d) => {
+   470→          if (d.status !== "ACTIVE") return d;
+   471→          changed = true;
+   472→          const step = d.speedMbps / 6; // MB per tick (sim)
+   473→          let downloadedMb = d.downloadedMb + step;
+   474→          let progress = Math.min(100, (downloadedMb / d.totalMb) * 100);
+   475→          let status: DownloadItem["status"] = d.status;
+   476→          if (progress >= 100) {
+   477→            progress = 100;
+   478→            downloadedMb = d.totalMb;
+   479→            status = "DONE";
+   480→          }
+   481→          const nd = { ...d, downloadedMb, progress, status };
+   482→          if (status === "DONE") {
+   483→            newEvents.push({ d: nd, n: {
+   484→              type: "DOWNLOAD" as const,
+   485→              workId: d.workId,
+   486→              chapterLabel: chapterLabelOf(s.works, d),
+   487→              title: workTitleOf(s.works, d.workId),
+   488→              body: `Download completed · ${d.totalMb.toFixed(1)} MB`,
+   489→            } });
+   490→          }
+   491→          return nd;
+   492→        });
+   493→        if (!changed) return;
+   494→
+   495→        // promote queued items when capacity frees
+   496→        const activeNow = downloads.filter((d) => d.status === "ACTIVE").length;
+   497→        if (activeNow < s.settings.maxConcurrent) {
+   498→          let slots = s.settings.maxConcurrent - activeNow;
+   499→          downloads = downloads.map((d) => {
+   500→            if (d.status === "QUEUED" && slots > 0) {
+   501→              slots--;
+   502→              return { ...d, status: "ACTIVE" as const, speedMbps: 1.5 + Math.random() * 2 };
+   503→            }
+   504→            return d;
+   505→          });
+   506→        }
+   507→
+   508→        const works = s.works.map((w) => {
+   509→          const dl = downloads.find((d) => d.workId === w.id);
+   510→          if (!dl) return w;
+   511→          const chapterAffected = downloads.some((d) => d.workId === w.id);
+   512→          if (!chapterAffected) return w;
+   513→          return {
+   514→            ...w,
+   515→            chapters: w.chapters.map((c) => {
+   516→              const d = downloads.find((x) => x.chapterId === c.id);
+   517→              if (!d) return c;
+   518→              const mapped =
+   519→                d.status === "ACTIVE"
+   520→                  ? "DOWNLOADING"
+   521→                  : d.status === "PAUSED"
+   522→                    ? "PAUSED"
+   523→                    : d.status === "DONE"
+   524→                      ? "DONE"
+   525→                      : d.status === "ERROR"
+   526→                        ? "ERROR"
+   527→                        : "QUEUED";
+   528→              return { ...c, download: mapped as Chapter["download"] };
+   529→            }),
+   530→          };
+   531→        });
+   532→
+   533→        set((st) => {
+   534→          const notifications = [...newEvents.map((e) => ({ ...e.n, id: uid(), createdAt: new Date().toISOString(), read: false })), ...st.notifications];
+   535→          return { downloads, works, notifications };
+   536→        });
+   537→      },
+   538→
+   539→      pushNotification: (n) =>
+   540→        set((s) => ({
+   541→          notifications: [
+   542→            { ...n, id: uid(), createdAt: new Date().toISOString(), read: false },
+   543→            ...s.notifications,
+   544→          ],
+   545→        })),
+   546→      markNotificationRead: (id) =>
+   547→        set((s) => ({
+   548→          notifications: s.notifications.map((n) => (n.id === id ? { ...n, read: true } : n)),
+   549→        })),
+   550→      markAllNotificationsRead: () =>
+   551→        set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) })),
+   552→      clearNotifications: () => set({ notifications: [] }),
+   553→
+   554→      createCategory: (name) =>
+   555→        set((s) => ({ categories: [...s.categories, { id: "cat-" + uid(), name }] })),
+   556→      renameCategory: (id, name) =>
+   557→        set((s) => ({
+   558→          categories: s.categories.map((c) => (c.id === id ? { ...c, name } : c)),
+   559→        })),
+   560→      deleteCategory: (id) =>
+   561→        set((s) => ({
+   562→          categories: s.categories.filter((c) => c.id !== id),
+   563→          workCategories: Object.fromEntries(
+   564→            Object.entries(s.workCategories).filter(([, v]) => !v.includes(id))
+   565→          ),
+   566→        })),
+   567→      assignCategories: (workId, catIds) =>
+   568→        set((s) => ({ workCategories: { ...s.workCategories, [workId]: catIds } })),
+   569→
+   570→      logReading: (workId, minutes, chapters) =>
+   571→        set((s) => {
+   572→          const today = new Date().toISOString().slice(0, 10);
+   573→          const sessions = [...s.sessions];
+   574→          const idx = sessions.findIndex((x) => x.date === today);
+   575→          if (idx >= 0) {
+   576→            sessions[idx] = {
+   577→              ...sessions[idx],
+   578→              minutes: sessions[idx].minutes + minutes,
+   579→              chapters: sessions[idx].chapters + chapters,
+   580→            };
+   581→          } else {
+   582→            sessions.push({ date: today, minutes, chapters });
+   583→          }
+   584→          if (sessions.length > 60) sessions.splice(0, sessions.length - 60);
+   585→          return { sessions };
+   586→        }),
+   587→      pushHistory: (workId, chapterId, page) =>
+   588→        set((s) => ({
+   589→          history: [
+   590→            { id: uid(), workId, chapterId, page, at: new Date().toISOString() },
+   591→            ...s.history.filter((h) => !(h.workId === workId && h.chapterId === chapterId)),
+   592→          ].slice(0, 100),
+   593→        })),
+   594→      clearHistory: () => set({ history: [] }),
+   595→
+   596→      addBookmark: (workId, chapterId, page, note) =>
+   597→        set((s) => ({
+   598→          bookmarks: [
+   599→            { id: uid(), workId, chapterId, page, note, createdAt: new Date().toISOString() },
+   600→            ...s.bookmarks,
+   601→          ],
+   602→        })),
+   603→      removeBookmark: (id) =>
+   604→        set((s) => ({ bookmarks: s.bookmarks.filter((b) => b.id !== id) })),
+   605→
+   606→      addServer: (srv) =>
+   607→        set((s) => ({ servers: [...s.servers, { ...srv, id: uid(), status: "UNKNOWN" }] })),
+   608→      removeServer: (id) => set((s) => ({ servers: s.servers.filter((x) => x.id !== id) })),
+   609→      setServerStatus: (id, status) =>
+   610→        set((s) => ({ servers: s.servers.map((x) => (x.id === id ? { ...x, status } : x)) })),
+   611→
+   612→      saveFilter: (name, filter) =>
+   613→        set((s) => ({
+   614→          savedFilters: [
+   615→            ...s.savedFilters.filter((f) => f.name !== name),
+   616→            { id: uid(), name: name.slice(0, 24) || "Filter", filter },
+   617→          ].slice(-12),
+   618→        })),
+   619→      deleteSavedFilter: (id) =>
+   620→        set((s) => ({ savedFilters: s.savedFilters.filter((f) => f.id !== id) })),
+   621→
+   622→      setSourceEnabled: (id, v) =>
+   623→        set((s) => ({
+   624→          sources: s.sources.map((x) => (x.id === id ? { ...x, enabled: v } : x)),
+   625→        })),
+   626→      setSourcePinned: (id, v) =>
+   627→        set((s) => ({
+   628→          sources: s.sources.map((x) => (x.id === id ? { ...x, pinned: v } : x)),
+   629→        })),
+   630→      setExtensionStatus: (id, status, enabled) =>
+   631→        set((s) => ({
+   632→          extensions: s.extensions.map((x) =>
+   633→            x.id === id ? { ...x, status, enabled: enabled ?? x.enabled } : x
+   634→          ),
+   635→        })),
+   636→
+   637→      runUpdateCheck: async () => {
+   638→        const s = get();
+   639→        set({ updateCheck: { ...s.updateCheck, checking: true } });
+   640→        await new Promise((r) => setTimeout(r, 1600));
+   641→        // find unread latest chapters released within last 12h
+   642→        const fresh: Omit<Notification, "id" | "createdAt" | "read">[] = [];
+   643→        for (const w of s.works) {
+   644→          if (w.inVault) continue;
+   645→          const latest = w.chapters[0];
+   646→          if (!latest || latest.isRead) continue;
+   647→          const hours =
+   648→            (Date.now() - new Date(latest.releaseDate).getTime()) / 3_600_000;
+   649→          if (hours <= 10) {
+   650→            const dup = s.notifications.some(
+   651→              (n) => n.type === "CHAPTER" && n.workId === w.id && n.chapterLabel === `Ch. ${latest.number}`
+   652→            );
+   653→            if (!dup) {
+   654→              fresh.push({
+   655→                type: "CHAPTER",
+   656→                workId: w.id,
+   657→                chapterLabel: `Ch. ${latest.number}`,
+   658→                title: w.title,
+   659→                body: "New chapter available",
+   660→              });
+   661→            }
+   662→          }
+   663→        }
+   664→        set((st) => ({
+   665→          updateCheck: { lastCheck: new Date().toISOString(), checking: false },
+   666→          notifications: [
+   667→            ...fresh.map((n) => ({ ...n, id: uid(), createdAt: new Date().toISOString(), read: false })),
+   668→            ...st.notifications,
+   669→          ],
+   670→        }));
+   671→        return fresh.length;
+   672→      },
+   673→
+   674→      setLastBackup: (iso) => set({ lastBackup: iso }),
+   675→
+   676→      importBackup: (data) => {
+   677→        try {
+   678→          const d = data as Partial<AppState> & { app?: string };
+   679→          if (!d || d.app !== "oniLibrary") return false;
+   680→          set((s) => ({
+   681→            works: (d.works as Work[]) ?? s.works,
+   682→            categories: (d.categories as Category[]) ?? s.categories,
+   683→            workCategories: d.workCategories ?? s.workCategories,
+   684→            settings: { ...s.settings, ...(d.settings as Settings) },
+   685→            sessions: (d.sessions as ReadingSession[]) ?? s.sessions,
+   686→            bookmarks: (d.bookmarks as Bookmark[]) ?? s.bookmarks,
+   687→            lastBackup: s.lastBackup,
+   688→          }));
+   689→          return true;
+   690→        } catch {
+   691→          return false;
+   692→        }
+   693→      },
+   694→    }),
+   695→    {
+   696→      name: "onilibrary-store-v1",
+   697→      storage: createJSONStorage(() => localStorage),
+   698→      partialize: (s) => ({
+   699→        onboarded: s.onboarded,
+   700→        works: s.works,
+   701→        categories: s.categories,
+   702→        workCategories: s.workCategories,
+   703→        downloads: s.downloads,
+   704→        notifications: s.notifications,
+   705→        sources: s.sources,
+   706→        extensions: s.extensions,
+   707→        sessions: s.sessions,
+   708→        history: s.history,
+   709→        bookmarks: s.bookmarks,
+   710→        servers: s.servers,
+   711→        settings: s.settings,
+   712→        updateCheck: { lastCheck: s.updateCheck.lastCheck, checking: false },
+   713→        lastBackup: s.lastBackup,
+   714→      }),
+   715→      onRehydrateStorage: () => (state) => {
+   716→        state?.setHydrated();
+   717→      },
+   718→    }
+   719→  )
+   720→);
+   721→
+   722→/* ---------- helpers ---------- */
+   723→
+   724→function setChDl(
+   725→  works: Work[],
+   726→  downloads: DownloadItem[],
+   727→  downloadId: string,
+   728→  state: Chapter["download"]
+   729→): Work[] {
+   730→  const d = downloads.find((x) => x.id === downloadId);
+   731→  if (!d) return works;
+   732→  return works.map((w) =>
+   733→    w.id === d.workId
+   734→      ? {
+   735→          ...w,
+   736→          chapters: w.chapters.map((c) => (c.id === d.chapterId ? { ...c, download: state } : c)),
+   737→        }
+   738→      : w
+   739→  );
+   740→}
+   741→
+   742→function workTitleOf(works: Work[], workId: string): string {
+   743→  return works.find((w) => w.id === workId)?.title ?? "Work";
+   744→}
+   745→function chapterLabelOf(works: Work[], d: DownloadItem): string {
+   746→  const w = works.find((x) => x.id === d.workId);
+   747→  const c = w?.chapters.find((x) => x.id === d.chapterId);
+   748→  return c ? `Ch. ${c.number}` : "";
+   749→}
+   750→
+   751→function makeDiscoverChapters(workId: string, count: number): Chapter[] {
+   752→  const chapters: Chapter[] = [];
+   753→  for (let i = 0; i < 12; i++) {
+   754→    const number = count - i;
+   755→    chapters.push({
+   756→      id: `${workId}-c${number}`,
+   757→      number,
+   758→      title: `Chapter ${number}`,
+   759→      pages: 16,
+   760→      releaseDate: new Date(Date.now() - i * 86_400_000 * 3).toISOString(),
+   761→      isRead: false,
+   762→      download: "NONE",
+   763→      sizeMb: 10 + (i % 5),
+   764→    });
+   765→  }
+   766→  return chapters;
+   767→}
+   768→
+   769→/* ---------- selectors / utils ---------- */
+   770→
+   771→export function workProgress(w: Work): number {
+   772→  if (w.chapters.length === 0) return 0;
+   773→  const read = w.chapters.filter((c) => c.isRead).length;
+   774→  const current = w.chapters.find((c) => !c.isRead && c.lastPage);
+   775→  const frac = current ? (current.lastPage ?? 0) : 0;
+   776→  return Math.min(100, Math.round(((read + frac) / w.chapters.length) * 100));
+   777→}
+   778→
+   779→export function currentChapter(w: Work): Chapter | undefined {
+   780→  const asc = [...w.chapters].sort((a, b) => a.number - b.number);
+   781→  return asc.find((c) => !c.isRead) ?? w.chapters[0];
+   782→}
+   783→
+   784→export function continueReading(w: Work): { chapter: Chapter; page: number } | null {
+   785→  const asc = [...w.chapters].sort((a, b) => a.number - b.number);
+   786→  const next = asc.find((c) => !c.isRead);
+   787→  if (next && typeof next.lastPage === "number") {
+   788→    return { chapter: next, page: Math.round((next.pages ?? 20) * next.lastPage) };
+   789→  }
+   790→  if (next) return { chapter: next, page: 0 };
+   791→  const last = asc[asc.length - 1];
+   792→  return last ? { chapter: last, page: 0 } : null;
+   793→}
+   794→
+   795→export function timeAgo(dateStr: string, lang: "en" | "fa"): string {
+   796→  const diff = Date.now() - new Date(dateStr).getTime();
+   797→  const m = Math.max(1, Math.round(diff / 60_000));
+   798→  if (lang === "fa") {
+   799→    if (m < 1) return "همین حالا";
+   800→    if (m < 60) return `${toFa(m)} دقیقه پیش`;
+   801→    const h = Math.round(m / 60);
+   802→    if (h < 24) return `${toFa(h)} ساعت پیش`;
+   803→    const d = Math.round(h / 24);
+   804→    return `${toFa(d)} روز پیش`;
+   805→  }
+   806→  if (m < 1) return "Just now";
+   807→  if (m < 60) return `${m}m ago`;
+   808→  const h = Math.round(m / 60);
+   809→  if (h < 24) return `${h}h ago`;
+   810→  const d = Math.round(h / 24);
+   811→  return `${d}d ago`;
+   812→}
+   813→
+   814→export function toFa(n: number | string): string {
+   815→  return String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]);
+   816→}
+   817→
+   818→export function fmtNum(n: number, lang: "en" | "fa"): string {
+   819→  if (lang === "fa") return toFa(n.toLocaleString("en-US"));
+   820→  return n.toLocaleString("en-US");
+   821→}
+   822→
+   823→export function fmtSize(mb: number): string {
+   824→  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(1)} MB`;
+   825→}
+   826→

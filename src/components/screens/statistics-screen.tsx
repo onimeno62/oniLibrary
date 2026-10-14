@@ -160,7 +160,7 @@ export function StatisticsScreen() {
         <span className="min-w-0 flex-1">
           <span className="block text-[14px] font-extrabold">{t("stat.viewHistory")}</span>
           <span className="block text-[11px] font-semibold text-muted-foreground">
-            {t("hist.entries", { n: historyCount })}
+            {historyCount === 1 ? t("hist.entry", { n: historyCount }) : t("hist.entries", { n: historyCount })}
           </span>
         </span>
         <span className="h-2 w-2 rounded-full bg-coral-gradient" />
