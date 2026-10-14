@@ -1,0 +1,210 @@
+"use client";
+
+import { useMemo } from "react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, Tooltip } from "recharts";
+import { Clock3, BookOpen, LibraryBig, CheckCircle2, Flame } from "lucide-react";
+import { OverlayHeader } from "@/components/shared";
+import { useApp } from "@/lib/store";
+import { toFa } from "@/lib/store";
+import { useT } from "@/lib/use-app";
+import type { WorkType } from "@/lib/types";
+import type { TranslationKey } from "@/lib/i18n";
+
+/* ============================================================
+   StatisticsScreen — totals, 14-day chart, streak, by type
+   ============================================================ */
+
+function utcDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function SummaryCard({
+  Icon,
+  value,
+  label,
+}: {
+  Icon: typeof Clock3;
+  value: string;
+  label: string;
+}) {
+  return (
+    <div className="rounded-3xl border border-border bg-card p-4">
+      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-coral-soft text-primary">
+        <Icon className="h-5 w-5" />
+      </span>
+      <p className="mt-2.5 text-[20px] font-black leading-none tracking-tight" dir="ltr">
+        {value}
+      </p>
+      <p className="mt-1 text-[11px] font-bold text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+type ChartDatum = { minutes: number; label: string; dateLabel: string };
+
+function ChartTip({
+  active,
+  payload,
+  minUnit,
+}: {
+  active?: boolean;
+  payload?: unknown[];
+  minUnit: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const datum = (payload[0] as { payload?: ChartDatum } | undefined)?.payload;
+  if (!datum) return null;
+  return (
+    <div className="rounded-lg bg-[#1e1c1a] px-2.5 py-1.5 text-[11px] font-bold text-white shadow-lg">
+      {datum.dateLabel} · {datum.minutes} {minUnit}
+    </div>
+  );
+}
+
+export function StatisticsScreen() {
+  const { t, lang } = useT();
+  const works = useApp((s) => s.works);
+  const sessions = useApp((s) => s.sessions);
+
+  const fa = lang === "fa";
+  const num = (n: number | string) => (fa ? toFa(n) : String(n));
+
+  const totalMinutes = useMemo(() => sessions.reduce((a, s) => a + s.minutes, 0), [sessions]);
+  const totalChapters = useMemo(() => sessions.reduce((a, s) => a + s.chapters, 0), [sessions]);
+  const publicWorks = useMemo(() => works.filter((w) => !w.inVault), [works]);
+  const finished = useMemo(
+    () => publicWorks.filter((w) => w.readingStatus === "COMPLETED").length,
+    [publicWorks]
+  );
+
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  const totalTimeLabel = `${num(h)}${t("stat.hoursShort")} ${num(m)}${t("stat.minutesShort")}`;
+
+  /* chart data — last 14 sessions, ascending */
+  const chartData: ChartDatum[] = [...sessions]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-14)
+    .map((s) => ({
+      minutes: s.minutes,
+      label: num(Number(s.date.slice(8, 10))),
+      dateLabel: fa ? toFa(s.date) : s.date,
+    }));
+
+  /* streak — consecutive days with minutes > 0 ending today or yesterday */
+  const streak = useMemo(() => {
+    const byDate = new Map(sessions.map((s) => [s.date, s]));
+    const cursor = new Date();
+    const active = (d: Date) => (byDate.get(utcDay(d))?.minutes ?? 0) > 0;
+    if (!active(cursor)) cursor.setDate(cursor.getDate() - 1);
+    let n = 0;
+    while (active(cursor)) {
+      n++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return n;
+  }, [sessions]);
+
+  /* by type */
+  const typeGroups = useMemo<{ label: TranslationKey; types: WorkType[]; count: number }[]>(
+    () =>
+      (
+        [
+          ["type.MANGA", ["MANGA", "MANHUA"]],
+          ["type.MANHWA", ["MANHWA"]],
+          ["type.WEBTOON", ["WEBTOON"]],
+          ["type.COMIC", ["COMIC"]],
+          ["type.BOOK", ["BOOK", "NOVEL", "EPUB"]],
+          ["type.PDF", ["PDF"]],
+        ] as [TranslationKey, WorkType[]][]
+      ).map(([label, types]) => ({
+        label,
+        types,
+        count: publicWorks.filter((w) => types.includes(w.type)).length,
+      })),
+    [publicWorks]
+  );
+  const maxType = Math.max(1, ...typeGroups.map((g) => g.count));
+
+  return (
+    <div className="min-h-full px-5 pb-8">
+      <OverlayHeader title={t("stat.title")} />
+
+      {/* summary 2x2 */}
+      <div className="mt-2 grid grid-cols-2 gap-2.5">
+        <SummaryCard Icon={Clock3} value={totalTimeLabel} label={t("stat.totalTime")} />
+        <SummaryCard Icon={BookOpen} value={num(totalChapters)} label={t("stat.totalChapters")} />
+        <SummaryCard Icon={LibraryBig} value={num(publicWorks.length)} label={t("stat.totalWorks")} />
+        <SummaryCard Icon={CheckCircle2} value={num(finished)} label={t("stat.finishedWorks")} />
+      </div>
+
+      {/* reading time chart */}
+      <section className="mt-3 rounded-3xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-[15px] font-extrabold tracking-tight">{t("stat.readingTime")}</p>
+          <span className="rounded-full bg-secondary px-2.5 py-1 text-[10px] font-bold text-secondary-foreground">
+            {t("stat.last14")}
+          </span>
+        </div>
+        <div className="mt-2 h-[160px] w-full" dir="ltr">
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={chartData} margin={{ top: 8, right: 0, bottom: 0, left: 0 }}>
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 9, fill: "currentColor", fontWeight: 700 }}
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+              />
+              <Tooltip
+                cursor={{ fill: "rgba(248,105,76,0.08)", radius: 8 }}
+                content={<ChartTip minUnit={t("stat.minutesShort")} />}
+              />
+              <Bar dataKey="minutes" fill="#f8694c" radius={[6, 6, 0, 0]} maxBarSize={22} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </section>
+
+      {/* streak */}
+      <section className="mt-3 flex items-center gap-3 rounded-3xl border border-border bg-card p-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-coral-soft text-primary">
+          <Flame className="h-6 w-6" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[14px] font-extrabold">{t("stat.streak")}</p>
+          <p className="mt-0.5 text-[12px] font-semibold text-muted-foreground">
+            {t("stat.last14")}
+          </p>
+        </div>
+        <p className="shrink-0 text-[24px] font-black leading-none text-primary">
+          {num(streak)}
+          <span className="ms-1 text-[12px] font-bold text-muted-foreground">
+            {t("stat.daysUnit")}
+          </span>
+        </p>
+      </section>
+
+      {/* by type */}
+      <section className="mt-3 rounded-3xl border border-border bg-card p-4">
+        <p className="text-[15px] font-extrabold tracking-tight">{t("stat.byType")}</p>
+        <div className="mt-3 space-y-3">
+          {typeGroups.map((g) => (
+            <div key={g.label}>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[12px] font-bold text-foreground">{t(g.label)}</span>
+                <span className="text-[11px] font-bold text-muted-foreground">{num(g.count)}</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full rounded-full bg-coral-gradient transition-all duration-500"
+                  style={{ width: `${Math.round((g.count / maxType) * 100)}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
