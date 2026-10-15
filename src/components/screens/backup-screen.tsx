@@ -7,6 +7,8 @@ import {
   Info,
   Database,
   Download,
+  FileSpreadsheet,
+  History,
   Upload,
 } from "lucide-react";
 import { OverlayHeader } from "@/components/shared";
@@ -64,6 +66,98 @@ export function BackupScreen() {
   const num = (n: number | string) =>
     fa ? String(n).replace(/\d/g, (d) => "۰۱۲۳۴۵۶۷۸۹"[Number(d)]) : String(n);
 
+  const ymd = () => {
+    const d = new Date();
+    return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  const downloadFile = (name: string, mime: string, content: string) => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  };
+
+  /* CSV quoting: wrap when the value contains comma, quote or newline */
+  const csvEscape = (v: string | number) => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const toCsv = (rows: (string | number)[][]) =>
+    "\uFEFF" + rows.map((r) => r.map(csvEscape).join(",")).join("\n");
+
+  const exportLibraryCsv = () => {
+    const rows: (string | number)[][] = [
+      [
+        "Title",
+        "AltTitle",
+        "Author",
+        "Type",
+        "WorkStatus",
+        "ReadingStatus",
+        "YourRating",
+        "CommunityRating",
+        "ChaptersRead",
+        "ChaptersTotal",
+        "ProgressPct",
+        "Favorite",
+        "InVault",
+        "Tags",
+        "Categories",
+        "AddedAt",
+        "LastReadAt",
+      ],
+      ...works.map((w) => {
+        const read = w.chapters.filter((c) => c.isRead).length;
+        const ratio =
+          w.chapters.length > 0
+            ? w.chapters.reduce((a, c) => a + (typeof c.lastPage === "number" ? c.lastPage : 0), 0) /
+              w.chapters.length
+            : 0;
+        const cats = (workCategories[w.id] ?? [])
+          .map((cid) => categories.find((c) => c.id === cid)?.name ?? "")
+          .filter(Boolean);
+        return [
+          w.title,
+          w.altTitle ?? "",
+          w.author,
+          w.type,
+          w.workStatus,
+          w.readingStatus,
+          w.userRating ?? 0,
+          w.rating,
+          read,
+          w.chapters.length,
+          Math.round(ratio * 100),
+          w.isFavorite ? "yes" : "no",
+          w.inVault ? "yes" : "no",
+          w.tags.join("; "),
+          cats.join("; "),
+          w.addedAt,
+          w.lastReadAt ?? "",
+        ];
+      }),
+    ];
+    downloadFile(`onilibrary-library-${ymd()}.csv`, "text/csv;charset=utf-8", toCsv(rows));
+    toast({ title: t("bkp.csvDone"), description: `onilibrary-library-${ymd()}.csv` });
+  };
+
+  const exportHistoryCsv = () => {
+    const rows: (string | number)[][] = [
+      ["Date", "Minutes", "Chapters"],
+      ...[...sessions]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((s) => [s.date, s.minutes, s.chapters]),
+    ];
+    downloadFile(`onilibrary-history-${ymd()}.csv`, "text/csv;charset=utf-8", toCsv(rows));
+    toast({ title: t("bkp.csvDone"), description: `onilibrary-history-${ymd()}.csv` });
+  };
+
   const createBackup = () => {
     const payload = {
       app: "oniLibrary",
@@ -79,16 +173,14 @@ export function BackupScreen() {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const d = new Date();
-    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
     a.href = url;
-    a.download = `onilibrary-backup-${ymd}.onibackup`;
+    a.download = `onilibrary-backup-${ymd()}.onibackup`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
     setLastBackup(new Date().toISOString());
-    toast({ title: t("bkp.success"), description: `onilibrary-backup-${ymd}.onibackup` });
+    toast({ title: t("bkp.success"), description: `onilibrary-backup-${ymd()}.onibackup` });
   };
 
   const onFile = async (file: File | null | undefined) => {
@@ -208,6 +300,35 @@ export function BackupScreen() {
           <Upload className="h-4.5 w-4.5 text-primary" />
           {t("bkp.restore")}
         </button>
+      </section>
+
+      {/* spreadsheet export card (TRK-006) */}
+      <section className="mt-3 rounded-3xl border border-border bg-card p-4">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+            <FileSpreadsheet className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[15px] font-extrabold">{t("bkp.csvTitle")}</p>
+            <p className="text-[11px] font-semibold leading-snug text-muted-foreground">{t("bkp.csvHint")}</p>
+          </div>
+        </div>
+        <div className="mt-3.5 grid grid-cols-2 gap-2.5">
+          <button
+            onClick={exportLibraryCsv}
+            className="flex items-center justify-center gap-2 rounded-full bg-coral-gradient py-3 text-[13px] font-extrabold text-white shadow-[0_10px_24px_-12px_rgba(248,105,76,0.65)] transition-transform active:scale-[0.98]"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            {t("bkp.csvLibrary")}
+          </button>
+          <button
+            onClick={exportHistoryCsv}
+            className="flex items-center justify-center gap-2 rounded-full border border-border bg-background py-3 text-[13px] font-extrabold text-foreground transition-colors hover:bg-secondary"
+          >
+            <History className="h-4 w-4 text-primary" />
+            {t("bkp.csvHistory")}
+          </button>
+        </div>
       </section>
 
       {/* encrypted note */}

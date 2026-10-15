@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { Work } from "@/lib/types";
 import { useApp } from "@/lib/store";
 
@@ -9,18 +9,68 @@ import { useApp } from "@/lib/store";
    (FMT-002). Progress is stored as chapter.lastPage ratio (0..1).
    ============================================================ */
 
+/* The book content is a MEMOIZED leaf: reader re-renders (scroll progress
+   saves, search typing, chrome toggles) must never re-apply
+   dangerouslySetInnerHTML — that would wipe resolved image srcs and the
+   search-hit flash highlight. Only html/font/size changes re-render it. */
+const EpubArticle = memo(function EpubArticle({
+  html,
+  font,
+  fontSize,
+  workTitle,
+  chapterTitle,
+  contentRef,
+}: {
+  html: string;
+  font: "serif" | "sans";
+  fontSize: number;
+  workTitle: string;
+  chapterTitle?: string;
+  contentRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <article dir="auto" className="mx-auto max-w-[560px] px-6 pb-24 pt-6" style={{ fontSize }}>
+      {/* chapter heading */}
+      <header className="mb-6 border-b border-current/10 pb-4">
+        <p
+          className="text-[11px] font-bold uppercase tracking-[0.18em] opacity-50"
+          style={{ fontFamily: "var(--font-nunito), sans-serif" }}
+        >
+          {workTitle}
+        </p>
+        <h2 className="mt-1.5 text-[1.35em] font-black leading-snug">{chapterTitle}</h2>
+      </header>
+
+      {/* sanitized book content */}
+      <div
+        ref={contentRef}
+        className="epub-content"
+        style={
+          font === "sans"
+            ? { fontFamily: "var(--font-nunito), var(--font-vazirmatn), sans-serif" }
+            : { fontFamily: "Georgia, 'Iowan Old Style', var(--font-vazirmatn), serif" }
+        }
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </article>
+  );
+});
+
 export function EpubBookView({
   work,
   chapterId,
   fontSize,
   font = "serif",
   theme = "dark",
+  jumpTarget = null,
 }: {
   work: Work;
   chapterId: string;
   fontSize: number;
   font?: "serif" | "sans";
   theme?: "dark" | "sepia" | "paper";
+  /** search hit to scroll to — {query, nonce} so identical queries re-trigger */
+  jumpTarget?: { query: string; nonce: number } | null;
 }) {
   const workId = work.id;
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -119,6 +169,33 @@ export function EpubBookView({
     };
   }, [html, chapterId]);
 
+  /* scroll to a search hit inside the chapter + coral flash (book search).
+     The flash self-expires via timeout — its lifetime is deliberately
+     decoupled from this effect (no cleanup-removal), and jumpTarget stays
+     set until the next jump overwrites it (stable nonce → no re-trigger). */
+  useEffect(() => {
+    if (html === null || !jumpTarget) return;
+    const root = contentRef.current;
+    if (!root) return;
+    const q = jumpTarget.query.toLowerCase();
+    if (!q) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let hit: Text | null = null;
+    while (walker.nextNode()) {
+      const t = walker.currentNode as Text;
+      if ((t.textContent ?? "").toLowerCase().includes(q)) {
+        hit = t;
+        break;
+      }
+    }
+    const el = hit?.parentElement ?? null;
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      el.classList.add("epub-search-flash");
+      window.setTimeout(() => el.classList.remove("epub-search-flash"), 2600);
+    }
+  }, [html, jumpTarget?.nonce]);
+
   if (missing) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
@@ -152,34 +229,14 @@ export function EpubBookView({
         transition: "background 300ms ease, color 300ms ease",
       }}
     >
-      <article
-        dir="auto"
-        className="mx-auto max-w-[560px] px-6 pb-24 pt-6"
-        style={{ fontSize }}
-      >
-        {/* chapter heading */}
-        <header className="mb-6 border-b border-current/10 pb-4">
-          <p
-            className="text-[11px] font-bold uppercase tracking-[0.18em] opacity-50"
-            style={{ fontFamily: "var(--font-nunito), sans-serif" }}
-          >
-            {work.title}
-          </p>
-          <h2 className="mt-1.5 text-[1.35em] font-black leading-snug">{chapter?.title}</h2>
-        </header>
-
-        {/* sanitized book content */}
-        <div
-          ref={contentRef}
-          className="epub-content"
-          style={
-            font === "sans"
-              ? { fontFamily: "var(--font-nunito), var(--font-vazirmatn), sans-serif" }
-              : { fontFamily: "Georgia, 'Iowan Old Style', var(--font-vazirmatn), serif" }
-          }
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      </article>
+      <EpubArticle
+        html={html}
+        font={font}
+        fontSize={fontSize}
+        workTitle={work.title}
+        chapterTitle={chapter?.title}
+        contentRef={contentRef}
+      />
     </div>
   );
 }

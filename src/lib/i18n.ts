@@ -451,6 +451,11 @@ const en = {
   "bkp.restoreSuccess": "Backup restored",
   "bkp.invalidFile": "Invalid backup file",
   "bkp.encryptedNote": "Encrypted backups: not available in this build",
+  "bkp.csvTitle": "Spreadsheet export",
+  "bkp.csvHint": "Download your library and reading history as CSV for Excel, Sheets or AniList-style tracking.",
+  "bkp.csvLibrary": "Library CSV",
+  "bkp.csvHistory": "History CSV",
+  "bkp.csvDone": "CSV exported",
 
   // servers
   "srv.title": "Personal Servers",
@@ -612,6 +617,11 @@ const en = {
   "rdr.sc.zoom": "Cycle zoom",
   "rdr.sc.chapters": "Chapter list",
   "rdr.sc.settings": "Reader settings",
+  "rdr.sc.search": "Search in document / book",
+  "rdr.session": "This session",
+  "rdr.bookSearch": "Search in book",
+  "rdr.bookSearchHint": "Type at least 2 characters to search every chapter.",
+  "rdr.bookSearchPlaceholder": "Search this book…",
 } ;
 
 export type TranslationKey = keyof typeof en;
@@ -1056,6 +1066,11 @@ const fa: Record<TranslationKey, string> = {
   "bkp.restoreSuccess": "پشتیبان بازیابی شد",
   "bkp.invalidFile": "فایل پشتیبان نامعتبر است",
   "bkp.encryptedNote": "پشتیبان رمزنگاری‌شده: در این نسخه نیست",
+  "bkp.csvTitle": "خروجی صفحه‌گسترده",
+  "bkp.csvHint": "کتابخانه و تاریخچهٔ مطالعه‌ات را به‌صورت CSV برای اکسل، شیتس یا پیگیری به سبک AniList بگیر.",
+  "bkp.csvLibrary": "CSV کتابخانه",
+  "bkp.csvHistory": "CSV تاریخچه",
+  "bkp.csvDone": "CSV خروجی گرفته شد",
 
   // servers
   "srv.title": "سرورهای شخصی",
@@ -1215,6 +1230,11 @@ const fa: Record<TranslationKey, string> = {
   "rdr.sc.zoom": "تغییر بزرگ‌نمایی",
   "rdr.sc.chapters": "فهرست فصل‌ها",
   "rdr.sc.settings": "تنظیمات خواننده",
+  "rdr.sc.search": "جست‌وجو در سند / کتاب",
+  "rdr.session": "این نشست",
+  "rdr.bookSearch": "جست‌وجو در کتاب",
+  "rdr.bookSearchHint": "برای جست‌وجو در همهٔ فصل‌ها دست‌کم ۲ نویسه بنویسید.",
+  "rdr.bookSearchPlaceholder": "جست‌وجو در این کتاب…",
 };
 
 const dicts: Record<Lang, Record<TranslationKey, string>> = { en, fa };

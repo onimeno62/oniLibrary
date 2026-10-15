@@ -246,6 +246,52 @@ export async function loadEpub(workId: string): Promise<EpubDoc | null> {
   }
 }
 
+/* ---------- EPUB full-text search (RDR-015 parity for books) ---------- */
+
+export interface EpubSearchHit {
+  chapterId: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  snippet: string;
+  count: number;
+}
+
+/** search every chapter of a parsed EPUB; returns one hit per matching chapter */
+export async function searchEpubText(
+  workId: string,
+  rawQuery: string,
+  cap = 40
+): Promise<EpubSearchHit[]> {
+  const doc = await loadEpub(workId);
+  if (!doc) return [];
+  const q = rawQuery.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const hits: EpubSearchHit[] = [];
+  doc.chapters.forEach((ch, idx) => {
+    const dom = new DOMParser().parseFromString(ch.html, "text/html");
+    dom.querySelectorAll("script,style").forEach((n) => n.remove());
+    const text = (dom.body?.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (!text) return;
+    const lower = text.toLowerCase();
+    let count = 0;
+    let first = -1;
+    let pos = lower.indexOf(q);
+    while (pos !== -1) {
+      count++;
+      if (first === -1) first = pos;
+      pos = lower.indexOf(q, pos + q.length);
+    }
+    if (count > 0 && first >= 0) {
+      const start = Math.max(0, first - 34);
+      const end = Math.min(text.length, first + q.length + 46);
+      const snippet =
+        (start > 0 ? "…" : "") + text.slice(start, end).trim() + (end < text.length ? "…" : "");
+      hits.push({ chapterId: ch.id, chapterIndex: idx, chapterTitle: ch.title, snippet, count });
+    }
+  });
+  return hits.slice(0, cap);
+}
+
 /** strip scripts/styles/images/attributes — keeps a safe reading subset of tags */
 function sanitizeEpubHtml(html: string): string {
   const doc = new DOMParser().parseFromString(html, "text/html");

@@ -44,6 +44,7 @@ import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav, toFa } from "@/lib/store";
 import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSupported, useTts } from "@/lib/tts";
 import type { PdfSearchHit, PdfTocItem } from "@/lib/pdf-engine";
+import type { EpubSearchHit } from "@/lib/importer";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -172,6 +173,32 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
     >
       {children}
     </button>
+  );
+}
+
+/* Live reading-session clock — self-contained leaf so its 1s tick never
+   re-renders the (heavy) reader tree around it. */
+function SessionPill({ title, visible }: { title: string; visible: boolean }) {
+  const [sec, setSec] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setSec((s) => s + 1), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const h = Math.floor(sec / 3600);
+  const mm = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
+  const ss = String(sec % 60).padStart(2, "0");
+  const label = h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+  return (
+    <div
+      className={cn(
+        "pointer-events-none absolute left-3 top-14 z-30 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-[10px] font-bold text-white/85 backdrop-blur transition-opacity duration-300",
+        visible ? "opacity-100" : "opacity-0"
+      )}
+      title={title}
+    >
+      <CirclePlay className="h-3 w-3 text-primary" />
+      <span dir="ltr" className="tabular-nums">{label}</span>
+    </div>
   );
 }
 
@@ -308,6 +335,11 @@ export function ReaderScreen({
   const [pdfQuery, setPdfQuery] = useState("");
   const [pdfHits, setPdfHits] = useState<PdfSearchHit[] | null>(null);
   const [pdfSearching, setPdfSearching] = useState(false);
+  const [epubSearchOpen, setEpubSearchOpen] = useState(false);
+  const [epubQuery, setEpubQuery] = useState("");
+  const [epubHits, setEpubHits] = useState<EpubSearchHit[] | null>(null);
+  const [epubSearching, setEpubSearching] = useState(false);
+  const [epubJump, setEpubJump] = useState<{ chapterId: string; query: string; nonce: number } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [finePointer, setFinePointer] = useState(false);
   const ttsRateTimer = useRef<number | null>(null);
@@ -474,6 +506,26 @@ export function ReaderScreen({
     if (scrollable) setScrollCmd({ page: p });
   };
 
+  /* jump to a book (epub) search hit — switches chapter, then scrolls + flashes */
+  const jumpEpubHit = (hit: EpubSearchHit) => {
+    setEpubSearchOpen(false);
+    setEpubJump({ chapterId: hit.chapterId, query: epubQuery.trim(), nonce: Date.now() });
+    if (hit.chapterId !== chapterId) openChapter(hit.chapterId);
+  };
+
+  /* open the full-text search sheet for the current content kind */
+  const openSearch = () => {
+    if (isPdf) {
+      setPdfQuery("");
+      setPdfHits(null);
+      setPdfSearchOpen(true);
+    } else if (isEpub) {
+      setEpubQuery("");
+      setEpubHits(null);
+      setEpubSearchOpen(true);
+    }
+  };
+
   /* ----- read-aloud controls (books) ----- */
   const startTts = async () => {
     try {
@@ -622,6 +674,9 @@ export function ReaderScreen({
         setChapterSheet(true);
       } else if (e.key === "s" || e.key === "S") {
         setSettingsSheet(true);
+      } else if (e.key === "/") {
+        e.preventDefault();
+        openSearch();
       } else if (e.key === "?") {
         setHelpOpen(true);
       }
@@ -663,6 +718,40 @@ export function ReaderScreen({
       window.clearTimeout(id);
     };
   }, [pdfQuery, pdfSearchOpen, isPdf, workId]);
+
+  /* ----- book (epub) full-text search: debounced committed query ----- */
+  useEffect(() => {
+    if (!epubSearchOpen || !isEpub) return;
+    const q = epubQuery.trim();
+    if (q.length < 2) {
+      setEpubHits(null);
+      setEpubSearching(false);
+      return;
+    }
+    setEpubSearching(true);
+    let alive = true;
+    const id = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { searchEpubText } = await import("@/lib/importer");
+          const hits = await searchEpubText(workId, q);
+          if (alive) {
+            setEpubHits(hits);
+            setEpubSearching(false);
+          }
+        } catch {
+          if (alive) {
+            setEpubHits([]);
+            setEpubSearching(false);
+          }
+        }
+      })();
+    }, 380);
+    return () => {
+      alive = false;
+      window.clearTimeout(id);
+    };
+  }, [epubQuery, epubSearchOpen, isEpub, workId]);
 
   /* ----- continuous scroll → current page (rAF throttled) ----- */
   const onScroll = () => {
@@ -957,6 +1046,7 @@ export function ReaderScreen({
             fontSize={epubFontSize}
             font={readerDefaults.epubFont ?? "serif"}
             theme={readerDefaults.epubTheme ?? "dark"}
+            jumpTarget={epubJump && epubJump.chapterId === chapterId ? { query: epubJump.query, nonce: epubJump.nonce } : null}
           />
         ) : scrollable && !isPdf ? (
           scrollView
@@ -1044,6 +1134,9 @@ export function ReaderScreen({
           {t("rdr.offlineReading")}
         </div>
       )}
+
+      {/* ============ live session timer pill ============ */}
+      <SessionPill title={t("rdr.session")} visible={controlsVisible} />
 
       {/* ============ top bar (auto-hide) ============ */}
       <header
@@ -1316,12 +1409,17 @@ export function ReaderScreen({
               icon={Search}
               label={t("rdr.pdfSearch")}
               active={pdfSearchOpen}
-              onClick={() => {
-                setPdfQuery("");
-                setPdfHits(null);
-                setPdfSearchOpen(true);
-              }}
+              onClick={openSearch}
               aria-label={t("rdr.pdfSearch")}
+            />
+          )}
+          {isEpub && (
+            <ToolbarBtn
+              icon={Search}
+              label={t("rdr.bookSearch")}
+              active={epubSearchOpen}
+              onClick={openSearch}
+              aria-label={t("rdr.bookSearch")}
             />
           )}
           <ToolbarBtn
@@ -1556,6 +1654,79 @@ export function ReaderScreen({
         </DialogContent>
       </Dialog>
 
+      {/* ============ book (epub) full-text search sheet ============ */}
+      <Dialog open={epubSearchOpen} onOpenChange={setEpubSearchOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="dark top-auto bottom-0 left-1/2 w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-start text-[16px] font-extrabold">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-coral-soft text-primary">
+                <Search className="h-4 w-4" />
+              </span>
+              {t("rdr.bookSearch")}
+            </DialogTitle>
+            <DialogDescription className="text-[11px] font-semibold">{t("rdr.bookSearchHint")}</DialogDescription>
+          </DialogHeader>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={epubQuery}
+              onChange={(e) => setEpubQuery(e.target.value)}
+              placeholder={t("rdr.bookSearchPlaceholder")}
+              aria-label={t("rdr.bookSearch")}
+              autoFocus
+              dir="auto"
+              className="h-11 w-full rounded-2xl border border-border bg-secondary/60 ps-10 pe-4 text-[13px] font-bold outline-none transition-colors placeholder:font-semibold placeholder:text-muted-foreground focus:border-primary/60 focus:bg-secondary"
+            />
+          </div>
+
+          <div className="thin-scrollbar max-h-[42vh] space-y-1.5 overflow-y-auto pe-1">
+            {epubSearching && (
+              <div className="flex items-center justify-center gap-2 py-8 text-[12px] font-bold text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                {t("common.loading")}
+              </div>
+            )}
+            {!epubSearching && epubHits && epubHits.length === 0 && (
+              <div className="flex flex-col items-center gap-1.5 py-8 text-center">
+                <Search className="h-7 w-7 text-muted-foreground/40" />
+                <p className="text-[13px] font-bold text-muted-foreground">
+                  {epubQuery.trim().length < 2 ? t("rdr.bookSearchHint") : t("rdr.pdfSearchEmpty")}
+                </p>
+              </div>
+            )}
+            {!epubSearching &&
+              epubHits?.map((hit) => (
+                <button
+                  key={hit.chapterId}
+                  onClick={() => jumpEpubHit(hit)}
+                  className="w-full rounded-2xl border border-border bg-white/[0.02] px-3 py-2.5 text-start transition-colors hover:bg-secondary/60"
+                >
+                  <span className="mb-1 flex items-center gap-2">
+                    <span className="shrink-0 rounded-full bg-coral-soft px-2.5 py-1 text-[10px] font-black text-primary">
+                      {t("common.chapter")} {lang === "fa" ? toFa(hit.chapterIndex + 1) : hit.chapterIndex + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-extrabold text-foreground/90" dir="auto">
+                      {hit.chapterTitle}
+                    </span>
+                    {hit.count > 1 && (
+                      <span className="shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-black text-secondary-foreground">
+                        ×{lang === "fa" ? toFa(hit.count) : hit.count}
+                      </span>
+                    )}
+                  </span>
+                  <span className="block text-[12px] font-semibold leading-relaxed text-foreground/85" dir="auto">
+                    {highlightSnippet(hit.snippet, epubQuery.trim())}
+                  </span>
+                </button>
+              ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ============ keyboard shortcuts help (desktop) ============ */}
       <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
         <DialogContent
@@ -1576,6 +1747,7 @@ export function ReaderScreen({
                 [["Z"], "rdr.sc.zoom"],
                 [["C"], "rdr.sc.chapters"],
                 [["S"], "rdr.sc.settings"],
+                [["/"], "rdr.sc.search"],
               ] as [string[], TranslationKey][]
             ).map(([keys, label]) => (
               <div key={label} className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.03] px-3.5 py-2.5">
