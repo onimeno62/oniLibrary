@@ -335,3 +335,23 @@ Stage Summary:
 - Round-10 delivered: full highlight-annotation system for books (select → color → note → persisted → re-anchored across renders, manageable via tap popup, included in backups), PDF read-aloud with page auto-advance + document-end disarm, and the EPUB header overlap fix. APK updated in place.
 - Risks/notes: (1) highlight offsets are computed on the parsed chapter HTML — a RE-IMPORT of the same book falls back to text-search re-anchoring (first occurrence wins if the text appears multiple times); (2) highlights are chapter-scoped by design; no cross-chapter manager UI yet; (3) overlapping selections nest marks (inner color paints over outer) — acceptable; (4) PDF auto-advance relies on speech end events — Android native TTS reports via OniNativeTts.done() which feeds the same queue; (5) EPUB marks still wiped by font/theme changes and re-applied from the store (no data loss — anchors are offsets).
 - Next-round priorities: 1) "Notes & highlights" manager (list all highlights per work, tap to jump, filter by color, export as Markdown/CSV); 2) highlight support for PDFs (rect-anchored, reuse getPdfPageMatches geometry); 3) OPDS/Komga live browsing when servers reachable; 4) per-day goal history editing + configurable focus-mode target; 5) streak freeze / goal history heatmap polish on Statistics.
+
+---
+Task ID: hotfix-apk-whitescreen (v1.0.1)
+Agent: Z.ai Code (main)
+Task: Fix installed-APK white screen with orange icon at top-left; rebuild APK
+
+Work Log:
+- ROOT CAUSE: MainActivity.shouldInterceptRequest() only served URLs under the "/assets/" prefix, but the bundled index.html references ALL assets root-absolute ("/_next/static/chunks/*.js|css", "/logo-mark.svg", "/manifest.webmanifest"). Those requests hit the network (host doesn't exist) → no CSS/JS → unstyled HTML shell = white screen + orange oni-logo SVG (the loading fallback) at top-left.
+- FIX (android/app/java/com/onilibrary/app/MainActivity.java): interceptor now serves EVERY request to host appassets.androidplatform.net; new serveAsset(rawPath) handles "/", legacy "/assets/" prefix, root-absolute paths, and extension-less page fallbacks (dir/index.html → dir.html → 404.html); MIME map +epub/cbz/m4a/mp3; Cache-Control immutable for _next/; binary responses use null encoding (textual only utf-8).
+- SANDBOX REPAIR: /tmp/ecj.jar and /home/z/android-sdk were wiped → re-downloaded ecj 3.33.0 + re-ran scripts/setup-android-sdk.sh (build-tools 34.0.0, platform android-34). out/ restored from bundled android/app/assets/www (no src changes since last bundle → skipped re-export, dev .next untouched).
+- SANDBOX REPAIR 2: src/lib/local-files.ts was missing (never committed, lost in restore) → dev server 500. Reconstructed exact API: putFile/getFile/deleteFile/deleteWorkFiles (IndexedDB "onilibrary-files"/"files", keys "<workId>::pN|::pdf|::epub") + blobToThumbDataUrl (createImageBitmap→canvas jpeg thumb). Verified via eslint + browser QA.
+- VERSION BUMP: AndroidManifest versionCode 1→2, versionName 1.0.0→1.0.1; build script output → download/oniLibrary-v1.0.1.apk (old broken v1.0.0 apk+idsig deleted).
+- BUILD: scripts/build-apk.sh OK (aapt2 → ecj → d8 → zipalign → apksigner, same keystore cert → installs as update over v1.0.0). APK 4.34 MB, 78 files in assets/www, dex contains new resolveAsset/assetExists methods.
+- VERIFICATION: scripts/verify-apk-assets.cjs simulates the new interceptor against the real APK — 33/33 unique local URLs resolve (index.html refs + 17 runtime refs in JS chunks). 4 initial "misses" triaged as dormant (sw.js strings — SW never registers in APK due to OniAndroid guard; "/_next/" bare prefixes only concatenated; "/_next/image" dormant because images.unoptimized).
+- WEB QA (agent-browser, 412x915): onboarding→home→library (categories, "1 work" pluralization)→details→PDF reader canvas rendered via reconstructed local-files; zero console/page errors; dev.log GET / 200.
+
+Stage Summary:
+- oniLibrary-v1.0.1.apk (versionCode 2) delivered at /home/z/my-project/download/oniLibrary-v1.0.1.apk — fixes the white-screen-at-launch bug. User should install over the old build (same signature).
+- White screen root cause documented; keep "intercept ALL virtual-host paths" invariant when touching MainActivity again.
+- src/lib/local-files.ts restored and MUST be committed; new tool: scripts/verify-apk-assets.cjs (run after every APK rebuild).

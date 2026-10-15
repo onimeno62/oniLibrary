@@ -75,6 +75,10 @@ public class MainActivity extends Activity {
         MIME.put("map", "application/json");
         MIME.put("pdf", "application/pdf");
         MIME.put("wasm", "application/wasm");
+        MIME.put("epub", "application/epub+zip");
+        MIME.put("cbz", "application/vnd.comicbook+zip");
+        MIME.put("m4a", "audio/mp4");
+        MIME.put("mp3", "audio/mpeg");
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -134,11 +138,16 @@ public class MainActivity extends Activity {
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    String url = request.getUrl().toString();
-                    if (url.startsWith("https://" + HOST + ASSET_PREFIX)) {
-                        return serveAsset(url);
-                    }
+                // Serve EVERY request made to the virtual host. The bundled
+                // index.html references assets at root-absolute paths
+                // (/_next/static/..., /logo-mark.svg, /manifest.webmanifest, …)
+                // so filtering by the /assets/ prefix would break all of them —
+                // the app would render as an unstyled shell (white screen with
+                // only the orange logo). Map any host path onto assets/www/.
+                Uri u = request.getUrl();
+                if (u != null && HOST.equals(u.getHost())) {
+                    String path = u.getPath();
+                    return serveAsset(path == null ? "/" : path);
                 }
                 return null;
             }
@@ -260,25 +269,66 @@ public class MainActivity extends Activity {
         });
     }
 
-    private WebResourceResponse serveAsset(String url) {
-        String path = url.substring(url.indexOf(ASSET_PREFIX) + ASSET_PREFIX.length());
-        int q = path.indexOf('?');
-        if (q >= 0) path = path.substring(0, q);
-        if (path.isEmpty()) path = "index.html";
+    /**
+     * Map a virtual-host URL path onto assets/www/ and serve it.
+     * Accepts: "/", "/index.html", the legacy "/assets/…" prefix,
+     * root-absolute asset paths ("/_next/static/chunks/x.js"), and
+     * extension-less page paths ("/x" → "/x/index.html" or "/x.html").
+     */
+    private WebResourceResponse serveAsset(String rawPath) {
+        String path = rawPath == null || rawPath.isEmpty() ? "/" : rawPath;
+        if (path.startsWith(ASSET_PREFIX)) path = path.substring(ASSET_PREFIX.length());
+        while (path.startsWith("/")) path = path.substring(1);
+        while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+
+        boolean looksLikePage = path.isEmpty() || !path.contains(".");
+        String resolved = resolveAsset(path, looksLikePage);
+        if (resolved == null && looksLikePage) resolved = "404.html"; // SPA not-found shell
+        if (resolved == null) {
+            // missing binary/static resource → empty 200 keeps the app alive
+            byte[] empty = new byte[0];
+            return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(empty));
+        }
+
         try {
-            InputStream is = getAssets().open("www/" + path);
-            String ext = path.contains(".") ? path.substring(path.lastIndexOf('.') + 1).toLowerCase() : "";
+            InputStream is = getAssets().open("www/" + resolved);
+            String ext = resolved.substring(resolved.lastIndexOf('.') + 1).toLowerCase();
             String mime = MIME.get(ext);
             if (mime == null) mime = "application/octet-stream";
+            boolean textual = mime.startsWith("text/") || mime.contains("javascript")
+                    || mime.contains("json") || mime.contains("svg+xml") || mime.contains("wasm");
             Map<String, String> headers = new HashMap<>();
             headers.put("Access-Control-Allow-Origin", "*");
-            headers.put("Cache-Control", "no-cache");
-            WebResourceResponse resp = new WebResourceResponse(mime, "utf-8", is);
+            // immutable build output → cache hard; everything else revalidates
+            headers.put("Cache-Control", resolved.startsWith("_next/")
+                    ? "max-age=31536000, immutable" : "no-cache");
+            WebResourceResponse resp = new WebResourceResponse(
+                    mime, textual ? "utf-8" : null, is);
             resp.setResponseHeaders(headers);
             return resp;
         } catch (IOException e) {
             byte[] empty = new byte[0];
             return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(empty));
+        }
+    }
+
+    /** try the exact path first, then directory/page-style fallbacks */
+    private String resolveAsset(String path, boolean looksLikePage) {
+        if (path.isEmpty()) return assetExists("index.html") ? "index.html" : null;
+        if (assetExists(path)) return path;
+        if (looksLikePage) {
+            if (assetExists(path + "/index.html")) return path + "/index.html";
+            if (assetExists(path + ".html")) return path + ".html";
+        }
+        return null;
+    }
+
+    private boolean assetExists(String p) {
+        try {
+            getAssets().open("www/" + p).close();
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 

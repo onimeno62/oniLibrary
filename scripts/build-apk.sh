@@ -69,8 +69,8 @@ if [ ! -f $KS ]; then
     -dname "CN=oniLibrary, OU=Oni, O=oniLibrary, L=Tokyo, C=JP" > /dev/null 2>&1
 fi
 $BT/apksigner sign --ks $KS --ks-pass pass:onilibrary --key-pass pass:onilibrary \
-  --out /home/z/my-project/download/oniLibrary-v1.0.0.apk $OUT/aligned.apk
+  --out /home/z/my-project/download/oniLibrary-v1.0.1.apk $OUT/aligned.apk
 
-$BT/apksigner verify --print-certs /home/z/my-project/download/oniLibrary-v1.0.0.apk | head -4
-ls -la /home/z/my-project/download/oniLibrary-v1.0.0.apk
+$BT/apksigner verify --print-certs /home/z/my-project/download/oniLibrary-v1.0.1.apk | head -4
+ls -la /home/z/my-project/download/oniLibrary-v1.0.1.apk
 echo "APK BUILD COMPLETE"
