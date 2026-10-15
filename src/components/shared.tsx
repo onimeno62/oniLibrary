@@ -39,6 +39,20 @@ export function WorkCover({
     ? color.replace("from-", "bg-gradient-to-br from-")
     : `bg-gradient-to-br ${coverGradients[seed % coverGradients.length]}`;
   if (src && !failed) {
+    // data: urls (custom covers, imported thumbnails) bypass next/image —
+    // the dev optimizer rejects them; a plain <img> renders them fine.
+    if (src.startsWith("data:")) {
+      return (
+        <div className={cn("relative overflow-hidden bg-secondary", className)}>
+          <img
+            src={src}
+            alt={title}
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={() => setFailed(true)}
+          />
+        </div>
+      );
+    }
     return (
       <div className={cn("relative overflow-hidden bg-secondary", className)}>
         <Image

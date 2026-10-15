@@ -27,6 +27,7 @@ import { useApp, useNav, workProgress, currentChapter, matchesRule } from "@/lib
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { importFiles } from "@/lib/importer";
+import { findDuplicateGroups } from "@/lib/duplicates";
 import { deleteWorkFiles } from "@/lib/local-files";
 import {
   DropdownMenu,
@@ -184,6 +185,14 @@ export function LibraryScreen() {
     for (const w of created) addWork(w);
     if (created.length) {
       toast({ title: t("imp.added", { n: created.length }), description: created.map((c) => c.title).join(", ") });
+      // LIB-009: flag possible duplicates right after import
+      const groups = findDuplicateGroups(useApp.getState().works);
+      const fresh = groups.filter((g) => g.some((w) => created.some((c) => c.id === w.id)));
+      for (const g of fresh.slice(0, 2)) {
+        const kept = g.find((w) => created.some((c) => c.id === w.id));
+        const other = g.find((w) => w.id !== kept?.id);
+        if (kept && other) toast({ title: t("imp.duplicateFound", { t: other.title }) });
+      }
     }
     if (unsupported.length) {
       toast({ title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }), variant: "destructive" });

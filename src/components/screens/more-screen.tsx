@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Download,
   BarChart3,
@@ -13,9 +13,11 @@ import {
   Settings as SettingsIcon,
   ChevronRight,
   RefreshCw,
+  Copy,
 } from "lucide-react";
 import { OniLogo } from "@/components/oni-logo";
 import { useApp, useNav, toFa } from "@/lib/store";
+import { duplicateWorkCount } from "@/lib/duplicates";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
 import { Flame } from "lucide-react";
@@ -68,12 +70,15 @@ function ProfileStats() {
    ============================================================ */
 
 export function MoreScreen() {
-  const { t } = useT();
+  const { t, lang } = useT();
   const userName = useApp((s) => s.settings.userName);
+  const works = useApp((s) => s.works);
   const runUpdateCheck = useApp((s) => s.runUpdateCheck);
   const setTab = useNav((s) => s.setTab);
   const push = useNav((s) => s.push);
   const [checking, setChecking] = useState(false);
+
+  const dupCount = useMemo(() => duplicateWorkCount(works), [works]);
 
   const initial = (userName.trim()[0] ?? "R").toUpperCase();
 
@@ -82,6 +87,12 @@ export function MoreScreen() {
     { Icon: BarChart3, label: t("more.statistics"), onClick: () => push({ kind: "statistics" }) },
     { Icon: ShieldCheck, label: t("more.vault"), onClick: () => push({ kind: "vault" }) },
     { Icon: Bookmark, label: t("more.categories"), onClick: () => push({ kind: "categories" }) },
+    {
+      Icon: Copy,
+      label: t("dup.title"),
+      badge: dupCount > 0 ? t("dup.scanBadge", { n: lang === "fa" ? toFa(dupCount) : dupCount }) : undefined,
+      onClick: () => push({ kind: "duplicates" }),
+    },
     { Icon: Database, label: t("more.backup"), onClick: () => push({ kind: "backup" }) },
     { Icon: Puzzle, label: t("more.extensions"), onClick: () => push({ kind: "extensions" }) },
     { Icon: Server, label: t("more.servers"), onClick: () => push({ kind: "servers" }) },
@@ -130,7 +141,7 @@ export function MoreScreen() {
 
       {/* menu card */}
       <nav aria-label={t("more.title")} className="mt-3 divide-y divide-border rounded-3xl border border-border bg-card">
-        {menu.map(({ Icon, label, onClick }) => (
+        {menu.map(({ Icon, label, badge, onClick }) => (
           <button
             key={label}
             onClick={onClick}
@@ -140,6 +151,11 @@ export function MoreScreen() {
               <Icon className="h-4.5 w-4.5" />
             </span>
             <span className="min-w-0 flex-1 truncate text-[14px] font-bold">{label}</span>
+            {badge && (
+              <span className="shrink-0 rounded-full bg-coral-gradient px-2 py-0.5 text-[10px] font-black text-white shadow-[0_6px_14px_-6px_rgba(248,105,76,0.8)]">
+                {badge}
+              </span>
+            )}
             <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground rtl:rotate-180" />
           </button>
         ))}

@@ -490,6 +490,7 @@ const en = {
   "imp.pick": "Choose files",
   "imp.supported": "CBZ, ZIP, images (JPG/PNG/WebP), PDF, EPUB",
   "imp.added": "Imported {n} file(s)",
+  "imp.duplicateFound": "Possible duplicate: “{t}” is already in your library — see More → Duplicate scan",
   "imp.unsupported": "Unsupported: {names}",
   "imp.imagesLoaded": "images ready to read",
   "imp.cbzLoaded": "archive extracted",
@@ -543,6 +544,56 @@ const en = {
   "fmt.demo": "Demo mode in this build",
   "fmt.no": "Planned",
   "fmt.status": "Status",
+
+  // duplicate scan (LIB-009)
+  "dup.title": "Duplicate scan",
+  "dup.subtitle": "Works with the same title in your library",
+  "dup.none": "No duplicates found",
+  "dup.noneHint": "Every title in your library is unique. Imports are checked automatically.",
+  "dup.copies": "{n} copies",
+  "dup.keepThis": "Keep this",
+  "dup.removeOthers": "Remove {n} copies",
+  "dup.removeOther": "Remove 1 copy",
+  "dup.removedToast": "Removed {n} duplicate copies",
+  "dup.deleteConfirm": "Delete {n} duplicate copies of “{t}”? Reading progress of the kept copy is preserved.",
+  "dup.scanBadge": "{n} dup",
+
+  // work editor (LIB-010)
+  "edit.title": "Edit details",
+  "edit.name": "Title",
+  "edit.author": "Author",
+  "edit.cover": "Custom cover",
+  "edit.chooseCover": "Choose image",
+  "edit.removeCover": "Remove custom cover",
+  "edit.coverHint": "JPG or PNG · resized to fit",
+  "edit.tags": "Tags",
+  "edit.addTag": "Add tag…",
+  "edit.add": "Add",
+  "edit.notes": "Personal notes",
+  "edit.notesPlaceholder": "Where you left off, thoughts, reminders…",
+  "edit.saved": "Details updated",
+
+  // details extras
+  "det.myNotes": "My notes",
+  "det.editWork": "Edit details",
+  "det.notesEmpty": "No notes yet — tap Edit details to add one.",
+
+  // read aloud (books TTS)
+  "tts.readAloud": "Read aloud",
+  "tts.play": "Play",
+  "tts.pause": "Pause",
+  "tts.stop": "Stop",
+  "tts.speed": "Speed",
+  "tts.playing": "Reading aloud…",
+  "tts.paused": "Paused",
+  "tts.idle": "Ready to read this chapter",
+  "tts.para": "Paragraph {p}/{t}",
+  "tts.unsupported": "Text-to-speech isn’t available in this browser",
+  "tts.empty": "This chapter has no readable text",
+
+  // pdf outline
+  "pdf.outline": "Outline",
+  "pdf.jumpPage": "Page {n}",
 } ;
 
 export type TranslationKey = keyof typeof en;
@@ -1026,6 +1077,7 @@ const fa: Record<TranslationKey, string> = {
   "imp.pick": "انتخاب فایل",
   "imp.supported": "CBZ، ZIP، تصویر (JPG/PNG/WebP)، PDF، EPUB",
   "imp.added": "{n} فایل درون‌ریزی شد",
+  "imp.duplicateFound": "احتمال تکرار: «{t}» از قبل در کتابخانه هست — بخش بیشتر ← جست‌وجوی موارد تکراری",
   "imp.unsupported": "پشتیبانی‌نشده: {names}",
   "imp.imagesLoaded": "تصویر آماده خواندن",
   "imp.cbzLoaded": "آرشیو استخراج شد",
@@ -1077,6 +1129,56 @@ const fa: Record<TranslationKey, string> = {
   "fmt.demo": "حالت نمایشی در این نسخه",
   "fmt.no": "در برنامه آینده",
   "fmt.status": "وضعیت",
+
+  // duplicate scan (LIB-009)
+  "dup.title": "جست‌وجوی موارد تکراری",
+  "dup.subtitle": "آثاری با عنوان یکسان در کتابخانه شما",
+  "dup.none": "مورد تکراری پیدا نشد",
+  "dup.noneHint": "همه عنوان‌های کتابخانه‌تان یکتا هستند. هنگام درون‌ریزی هم به‌صورت خودکار بررسی می‌شود.",
+  "dup.copies": "{n} نسخه",
+  "dup.keepThis": "نگه‌داشتن این یکی",
+  "dup.removeOthers": "حذف {n} نسخه",
+  "dup.removeOther": "حذف ۱ نسخه",
+  "dup.removedToast": "{n} نسخه تکراری حذف شد",
+  "dup.deleteConfirm": "«{t}»: {n} نسخه تکراری حذف شود؟ پیشرفت خواندن نسخه نگه‌داشته‌شده حفظ می‌شود.",
+  "dup.scanBadge": "{n} تکراری",
+
+  // work editor (LIB-010)
+  "edit.title": "ویرایش جزئیات",
+  "edit.name": "عنوان",
+  "edit.author": "نویسنده",
+  "edit.cover": "جلد سفارشی",
+  "edit.chooseCover": "انتخاب تصویر",
+  "edit.removeCover": "حذف جلد سفارشی",
+  "edit.coverHint": "JPG یا PNG · اندازه خودکار تنظیم می‌شود",
+  "edit.tags": "برچسب‌ها",
+  "edit.addTag": "افزودن برچسب…",
+  "edit.add": "افزودن",
+  "edit.notes": "یادداشت‌های شخصی",
+  "edit.notesPlaceholder": "کجا رها کردید، نظرات، یادآوری‌ها…",
+  "edit.saved": "جزئیات به‌روزرسانی شد",
+
+  // details extras
+  "det.myNotes": "یادداشت‌های من",
+  "det.editWork": "ویرایش جزئیات",
+  "det.notesEmpty": "هنوز یادداشتی نیست — برای افزودن، ویرایش جزئیات را باز کنید.",
+
+  // read aloud (books TTS)
+  "tts.readAloud": "خواندن بلند",
+  "tts.play": "پخش",
+  "tts.pause": "توقف موقت",
+  "tts.stop": "ایست",
+  "tts.speed": "سرعت",
+  "tts.playing": "در حال خواندن…",
+  "tts.paused": "متوقف شد",
+  "tts.idle": "آماده برای خواندن این فصل",
+  "tts.para": "پاراگراف {p}/{t}",
+  "tts.unsupported": "تبدیل متن به گفتار در این مرورگر موجود نیست",
+  "tts.empty": "این فصل متن قابل خواندنی ندارد",
+
+  // pdf outline
+  "pdf.outline": "فهرست",
+  "pdf.jumpPage": "صفحه {n}",
 };
 
 const dicts: Record<Lang, Record<TranslationKey, string>> = { en, fa };

@@ -64,6 +64,8 @@ export interface Work {
   localPages?: string[]; // imported image data urls
   epubChapters?: { id: string; title: string }[]; // parsed EPUB spine metadata
   userRating?: number; // personal rating 0..5 stars (TRK-001)
+  customCover?: string; // user-chosen cover data url (LIB-010)
+  personalNotes?: string; // free-form private notes (LIB-010)
 }
 
 export interface DownloadItem {
@@ -212,6 +214,7 @@ export interface Settings {
     epubFontSize?: number; // 14..22 for book reading
     epubFont?: "serif" | "sans"; // book typeface
     epubTheme?: "dark" | "sepia" | "paper"; // book page theme
+    ttsRate?: number; // read-aloud speed 0.6..1.8 (books)
   };
 }
 

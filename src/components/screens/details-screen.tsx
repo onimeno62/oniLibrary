@@ -22,6 +22,10 @@ import {
   Loader2,
   ArrowUpDown,
   Trash2,
+  Pencil,
+  StickyNote,
+  ImagePlus,
+  X,
 } from "lucide-react";
 import { WorkCover } from "@/components/shared";
 import { WorkMenu } from "@/components/screens/library-screen";
@@ -41,7 +45,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { Chapter, ReadingStatus, ReaderMode, ReadingDirection, FitMode } from "@/lib/types";
+import type { Chapter, ReadingStatus, ReaderMode, ReadingDirection, FitMode, Work } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
 
 export function DetailsScreen({ workId }: { workId: string }) {
@@ -56,6 +60,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const [expanded, setExpanded] = useState(false);
   const [readerSettings, setReaderSettings] = useState(false);
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const bookmarks = useApp((s) => s.bookmarks);
   const workBookmarkCount = bookmarks.filter((b) => b.workId === workId).length;
@@ -156,6 +161,9 @@ export function DetailsScreen({ workId }: { workId: string }) {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="rounded-2xl">
+                  <DropdownMenuItem onClick={() => setEditOpen(true)} className="gap-2.5 rounded-xl text-[13px] font-semibold">
+                    <Pencil className="h-4 w-4 text-primary" /> {t("det.editWork")}
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setReaderSettings(true)} className="gap-2.5 rounded-xl text-[13px] font-semibold">
                     <Settings2 className="h-4 w-4 text-primary" /> {t("det.readerMode")}
                   </DropdownMenuItem>
@@ -179,7 +187,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
         <div className="relative z-10 -mt-24 px-5">
           <div className="flex gap-4">
             <WorkCover
-              src={work.cover}
+              src={work.customCover ?? work.cover}
               color={work.coverColor}
               title={work.title}
               eager
@@ -257,6 +265,31 @@ export function DetailsScreen({ workId }: { workId: string }) {
               })}
             </div>
           </div>
+
+          {/* personal notes (LIB-010) */}
+          <button
+            onClick={() => setEditOpen(true)}
+            className={cn(
+              "mt-3 block w-full rounded-2xl border p-3.5 text-start transition-colors",
+              work.personalNotes
+                ? "border-amber-300/30 bg-amber-300/[0.07] hover:bg-amber-300/[0.12]"
+                : "border-white/8 bg-white/[0.04] hover:bg-white/[0.07]"
+            )}
+          >
+            <span className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white/50">
+              <StickyNote className={cn("h-3.5 w-3.5", work.personalNotes && "text-amber-300")} />
+              {t("det.myNotes")}
+            </span>
+            <span
+              dir="auto"
+              className={cn(
+                "mt-1.5 block whitespace-pre-wrap text-[12.5px] font-medium leading-relaxed",
+                work.personalNotes ? "text-white/85" : "text-white/40 italic"
+              )}
+            >
+              {work.personalNotes || t("det.notesEmpty")}
+            </span>
+          </button>
 
           {/* description */}
           <p
@@ -362,6 +395,9 @@ export function DetailsScreen({ workId }: { workId: string }) {
           openReader(work.id, chapterId, page);
         }}
       />
+
+      {/* work editor (LIB-010) */}
+      <EditWorkDialog workId={work.id} open={editOpen} onOpenChange={setEditOpen} />
     </div>
   );
 }
@@ -606,5 +642,267 @@ function PerSeriesSettings({ workId }: { workId: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ============================================================
+   EditWorkDialog — custom cover / title / author / tags /
+   personal notes (PRD LIB-010). Cover images are canvas-resized
+   to keep localStorage small.
+   ============================================================ */
+
+const MAX_COVER_H = 480;
+
+async function fileToCoverDataUrl(file: File): Promise<string> {
+  const raw = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.onerror = () => reject(new Error("read-failed"));
+    fr.readAsDataURL(file);
+  });
+  return new Promise<string>((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_COVER_H / img.naturalHeight);
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      const cv = document.createElement("canvas");
+      cv.width = w;
+      cv.height = h;
+      const ctx = cv.getContext("2d");
+      if (!ctx) {
+        resolve(raw);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      try {
+        resolve(cv.toDataURL("image/jpeg", 0.82));
+      } catch {
+        resolve(raw);
+      }
+    };
+    img.onerror = () => resolve(raw);
+    img.src = raw;
+  });
+}
+
+function EditWorkDialog({
+  workId,
+  open,
+  onOpenChange,
+}: {
+  workId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const work = useApp((s) => s.works.find((w) => w.id === workId));
+  // remount-based seeding: the inner form only exists while the dialog is
+  // open, so plain useState initializers always reflect the current work
+  if (!open || !work) return null;
+  return <EditWorkDialogInner key={`${work.id}:${work.customCover ?? "-"}:${work.personalNotes ?? "-"}`} work={work} onOpenChange={onOpenChange} />;
+}
+
+function EditWorkDialogInner({
+  work,
+  onOpenChange,
+}: {
+  work: Work;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const { t } = useT();
+  const workId = work.id;
+  const [title, setTitle] = useState(work.title);
+  const [author, setAuthor] = useState(work.author);
+  const [tags, setTags] = useState<string[]>([...work.tags]);
+  const [tagDraft, setTagDraft] = useState("");
+  const [notes, setNotes] = useState(work.personalNotes ?? "");
+  const [cover, setCover] = useState<string | undefined>(work.customCover);
+
+  const addTag = () => {
+    const v = tagDraft.trim().replace(/^#/, "");
+    if (!v) return;
+    if (!tags.some((x) => x.toLowerCase() === v.toLowerCase()) && tags.length < 12) {
+      setTags([...tags, v]);
+    }
+    setTagDraft("");
+  };
+
+  const save = () => {
+    useApp.getState().updateWork(workId, {
+      title: title.trim() || work.title,
+      author: author.trim() || work.author,
+      tags,
+      personalNotes: notes.trim() || undefined,
+      customCover: cover,
+    });
+    onOpenChange(false);
+    toast({ title: t("edit.saved") });
+  };
+
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className="dark top-auto bottom-0 left-1/2 max-h-[90%] w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 overflow-y-auto rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9 thin-scrollbar"
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-start text-[16px] font-extrabold">
+            <Pencil className="h-4.5 w-4.5 text-primary" />
+            {t("edit.title")}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* cover */}
+          <div className="flex items-center gap-4 rounded-2xl border border-border bg-white/[0.03] p-3">
+            <div className="relative h-[84px] w-[60px] shrink-0 overflow-hidden rounded-xl bg-secondary shadow-inner">
+              {cover ? (
+                <img src={cover} alt="" className="absolute inset-0 h-full w-full object-cover" />
+              ) : work.cover ? (
+                <img src={work.cover} alt="" className="absolute inset-0 h-full w-full object-cover" />
+              ) : (
+                <div className={cn("h-full w-full bg-gradient-to-br", work.coverColor ?? "from-orange-500 to-rose-900")} />
+              )}
+            </div>
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <p className="text-[12px] font-extrabold">{t("edit.cover")}</p>
+              <p className="text-[10.5px] font-semibold text-muted-foreground">{t("edit.coverHint")}</p>
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                <label className="flex h-8 cursor-pointer items-center gap-1.5 rounded-full bg-coral-soft px-3 text-[11px] font-extrabold text-primary transition-opacity hover:opacity-85">
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  {t("edit.chooseCover")}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!f) return;
+                      void fileToCoverDataUrl(f).then(setCover);
+                    }}
+                  />
+                </label>
+                {cover && (
+                  <button
+                    type="button"
+                    onClick={() => setCover(undefined)}
+                    className="flex h-8 items-center rounded-full border border-border px-3 text-[11px] font-bold text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    {t("edit.removeCover")}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* title + author */}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-black uppercase tracking-[0.12em] text-muted-foreground">
+                {t("edit.name")}
+              </span>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                dir="auto"
+                className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-[13px] font-bold outline-none transition-colors focus:border-primary"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[11px] font-black uppercase tracking-[0.12em] text-muted-foreground">
+                {t("edit.author")}
+              </span>
+              <input
+                value={author}
+                onChange={(e) => setAuthor(e.target.value)}
+                dir="auto"
+                className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-[13px] font-bold outline-none transition-colors focus:border-primary"
+              />
+            </label>
+          </div>
+
+          {/* tags */}
+          <div>
+            <p className="mb-1.5 text-[11px] font-black uppercase tracking-[0.12em] text-muted-foreground">
+              {t("edit.tags")}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="flex items-center gap-1 rounded-full bg-coral-soft py-1 ps-3 pe-1.5 text-[11px] font-bold text-primary"
+                >
+                  {tag}
+                  <button
+                    type="button"
+                    onClick={() => setTags(tags.filter((x) => x !== tag))}
+                    aria-label={`${t("common.delete")}: ${tag}`}
+                    className="flex h-4.5 w-4.5 items-center justify-center rounded-full transition-colors hover:bg-primary/20"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addTag();
+                  }
+                }}
+                placeholder={t("edit.addTag")}
+                dir="auto"
+                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-[12.5px] font-semibold outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary"
+              />
+              <button
+                type="button"
+                onClick={addTag}
+                className="rounded-xl bg-secondary px-3.5 text-[12px] font-extrabold text-secondary-foreground transition-colors hover:bg-secondary/70"
+              >
+                {t("edit.add")}
+              </button>
+            </div>
+          </div>
+
+          {/* notes */}
+          <label className="block">
+            <span className="mb-1.5 block text-[11px] font-black uppercase tracking-[0.12em] text-muted-foreground">
+              {t("edit.notes")}
+            </span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder={t("edit.notesPlaceholder")}
+              dir="auto"
+              rows={4}
+              className="w-full resize-none rounded-2xl border border-border bg-background px-3.5 py-3 text-[13px] font-medium leading-relaxed outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-primary"
+            />
+          </label>
+
+          {/* actions */}
+          <div className="flex gap-2.5 pt-1">
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="flex-1 rounded-full border border-border py-3 text-[13px] font-extrabold text-muted-foreground transition-colors hover:bg-secondary/50"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              className="flex-1 rounded-full bg-coral-gradient py-3 text-[13px] font-extrabold text-white shadow-[0_12px_26px_-10px_rgba(248,105,76,0.8)] transition-transform hover:scale-[1.02]"
+            >
+              {t("common.save")}
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

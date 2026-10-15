@@ -21,20 +21,27 @@ import {
   Ellipsis,
   ImageOff,
   List,
+  ListTree,
   Loader2,
   MoreVertical,
   MoveHorizontal,
+  Pause,
+  Play,
   RotateCw,
   Settings,
   SkipBack,
   SkipForward,
+  Square,
   Sun,
+  Volume2,
   ZoomIn,
   type LucideIcon,
 } from "lucide-react";
 import { MangaPage, hashStr } from "@/lib/manga-page";
 import { PdfCanvas } from "@/components/pdf-view";
-import { useApp, useNav } from "@/lib/store";
+import { useApp, useNav, toFa } from "@/lib/store";
+import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSupported, useTts } from "@/lib/tts";
+import type { PdfTocItem } from "@/lib/pdf-engine";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -230,7 +237,7 @@ export function ReaderScreen({
   chapterId: string;
   startPage?: number;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
 
   /* ----- store ----- */
   const work = useApp((s) => s.works.find((w) => w.id === workId));
@@ -275,6 +282,11 @@ export function ReaderScreen({
   const [chapterSheet, setChapterSheet] = useState(false);
   const [settingsSheet, setSettingsSheet] = useState(false);
   const [brightOpen, setBrightOpen] = useState(false);
+  const [ttsOpen, setTtsOpen] = useState(false);
+  const [ttsRateDraft, setTtsRateDraft] = useState(1);
+  const [pdfToc, setPdfToc] = useState<PdfTocItem[]>([]);
+  const ttsRateTimer = useRef<number | null>(null);
+  const tts = useTts();
 
   /* ----- refs ----- */
   const contentRef = useRef<HTMLDivElement>(null);
@@ -370,6 +382,28 @@ export function ReaderScreen({
     return () => window.clearInterval(id);
   }, [workId]);
 
+  /* ----- read-aloud (books): stop when chapter or reader closes ----- */
+  useEffect(() => () => ttsStop(), [workId, chapterId]);
+
+  /* ----- pdf outline (TOC) — loaded when the chapter sheet opens ----- */
+  useEffect(() => {
+    if (!chapterSheet || !isPdf) return;
+    let alive = true;
+    setPdfToc([]);
+    void (async () => {
+      try {
+        const { getPdfToc } = await import("@/lib/pdf-engine");
+        const toc = await getPdfToc(workId);
+        if (alive) setPdfToc(toc);
+      } catch {
+        /* outline unavailable */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [chapterSheet, isPdf, workId]);
+
   /* ----- mark chapter read when it was fully seen and we leave it -----
      (the persisted lastPage ratio reaching the final page counts as "seen all") */
   useEffect(() => {
@@ -397,6 +431,66 @@ export function ReaderScreen({
     const c = Math.max(0, Math.min(total - 1, p));
     setEndCard(false);
     setPage(c);
+  };
+
+  /* jump to a PDF outline entry (1-based page) */
+  const jumpPdfToc = (item: PdfTocItem) => {
+    setChapterSheet(false);
+    const p = Math.max(0, Math.min(total - 1, item.page - 1));
+    goToPage(p);
+    if (scrollable) setScrollCmd({ page: p });
+  };
+
+  /* ----- read-aloud controls (books) ----- */
+  const startTts = async () => {
+    try {
+      const { loadEpub } = await import("@/lib/importer");
+      const doc = await loadEpub(workId);
+      const ch = doc?.chapters.find((c) => c.id === chapterId);
+      if (!ch?.html) {
+        toast({ title: t("tts.empty") });
+        return;
+      }
+      const dom = new DOMParser().parseFromString(ch.html, "text/html");
+      dom.querySelectorAll("script,style").forEach((n) => n.remove());
+      const sel = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,dd,dt,pre";
+      const nodes = [...dom.querySelectorAll(sel)];
+      const blocks = nodes.filter((n) => !nodes.some((m) => m !== n && m.contains(n)));
+      const chunks = blocks.map((b) => (b.textContent ?? "").trim()).filter(Boolean);
+      const rate = readerDefaults.ttsRate ?? 1;
+      const ok = ttsStart(chunks.length ? chunks : [dom.body?.textContent ?? ""], {
+        lang: work?.language,
+        rate,
+      });
+      if (!ok) toast({ title: t("tts.empty") });
+    } catch {
+      toast({ title: t("tts.empty") });
+    }
+  };
+
+  const onTtsPrimary = () => {
+    if (!ttsSupported()) {
+      toast({ title: t("tts.unsupported") });
+      return;
+    }
+    if (tts.status === "playing") {
+      ttsPause();
+      return;
+    }
+    if (tts.status === "paused") {
+      ttsResume();
+      return;
+    }
+    void startTts();
+  };
+
+  const applyTtsRate = (v: number) => {
+    setTtsRateDraft(v);
+    if (ttsRateTimer.current) window.clearTimeout(ttsRateTimer.current);
+    ttsRateTimer.current = window.setTimeout(() => {
+      ttsSetRate(v);
+      useApp.getState().setReaderDefaults({ ttsRate: v });
+    }, 250);
   };
 
   const openChapter = (targetId: string, atEnd = false) => {
@@ -1040,6 +1134,81 @@ export function ReaderScreen({
 
         {/* toolbar row */}
         <div className="mt-2 flex items-start justify-between px-1">
+          {isEpub && (
+            <Popover
+              open={ttsOpen}
+              onOpenChange={(v) => {
+                setTtsOpen(v);
+                if (v) setTtsRateDraft(readerDefaults.ttsRate ?? 1);
+              }}
+            >
+              <PopoverTrigger asChild>
+                <ToolbarBtn
+                  icon={Volume2}
+                  label={t("tts.readAloud")}
+                  active={ttsOpen || tts.status !== "idle"}
+                  aria-label={t("tts.readAloud")}
+                />
+              </PopoverTrigger>
+              <PopoverContent side="top" align="start" className="dark w-[252px] rounded-2xl border-border bg-popover p-4">
+                <p className="flex items-center gap-1.5 text-[12px] font-bold text-foreground">
+                  <Volume2 className={cn("h-3.5 w-3.5", tts.status === "playing" ? "animate-pulse text-primary" : "text-primary")} />
+                  {t("tts.readAloud")}
+                </p>
+                <p className="mt-0.5 text-[11px] font-semibold text-muted-foreground">
+                  {tts.status === "playing"
+                    ? t("tts.playing")
+                    : tts.status === "paused"
+                      ? t("tts.paused")
+                      : t("tts.idle")}
+                  {tts.status !== "idle" && tts.total > 0 && (
+                    <span className="ms-1 font-extrabold text-primary">
+                      · {t("tts.para", {
+                        p: lang === "fa" ? toFa(tts.idx + 1) : tts.idx + 1,
+                        t: lang === "fa" ? toFa(tts.total) : tts.total,
+                      })}
+                    </span>
+                  )}
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onTtsPrimary}
+                    aria-label={tts.status === "playing" ? t("tts.pause") : t("tts.play")}
+                    className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-coral-gradient text-[12px] font-extrabold text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.8)] transition-transform active:scale-95"
+                  >
+                    {tts.status === "playing" ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
+                    {tts.status === "playing" ? t("tts.pause") : tts.status === "paused" ? t("tts.play") : t("tts.play")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => ttsStop()}
+                    disabled={tts.status === "idle"}
+                    aria-label={t("tts.stop")}
+                    className="flex h-9 items-center justify-center gap-1.5 rounded-full border border-border px-3 text-[12px] font-extrabold text-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+                  >
+                    <Square className="h-3 w-3 fill-current" />
+                    {t("tts.stop")}
+                  </button>
+                </div>
+                <div className="mt-3">
+                  <p className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-muted-foreground">
+                    {t("tts.speed")}
+                    <span className="text-[11px] font-extrabold text-foreground">{ttsRateDraft.toFixed(1)}×</span>
+                  </p>
+                  <Slider
+                    value={[ttsRateDraft]}
+                    min={0.6}
+                    max={1.8}
+                    step={0.1}
+                    aria-label={t("tts.speed")}
+                    onValueChange={(v) => applyTtsRate(v[0] ?? 1)}
+                    className="[&_[data-slot=slider-track]]:bg-white/15 [&_[data-slot=slider-range]]:bg-[#f8694c] [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
+                  />
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
           <ToolbarBtn
             icon={MoveHorizontal}
             label={t(`rdr.fit.${fit}` as TranslationKey)}
@@ -1141,6 +1310,40 @@ export function ReaderScreen({
             </DialogTitle>
             <DialogDescription className="sr-only">{t("det.chapters")}</DialogDescription>
           </DialogHeader>
+
+          {/* pdf outline (TOC) — shown when the document defines one */}
+          {isPdf && pdfToc.length > 0 && (
+            <div className="mb-3 rounded-2xl border border-border bg-white/[0.03] p-2.5">
+              <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted-foreground">
+                <ListTree className="h-3.5 w-3.5 text-primary" />
+                {t("pdf.outline")}
+              </p>
+              <div className="thin-scrollbar max-h-[24vh] space-y-0.5 overflow-y-auto">
+                {pdfToc.map((item, i) => (
+                  <button
+                    key={i}
+                    onClick={() => jumpPdfToc(item)}
+                    className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-start transition-colors hover:bg-secondary/60"
+                    style={{ paddingInlineStart: 8 + item.depth * 14 }}
+                  >
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        item.depth === 0 ? "bg-primary" : "bg-muted-foreground/50"
+                      )}
+                    />
+                    <span className={cn("min-w-0 flex-1 truncate text-[12.5px] font-bold", item.depth > 0 && "font-semibold text-muted-foreground")}>
+                      {item.title}
+                    </span>
+                    <span className="shrink-0 rounded-full bg-coral-soft px-2 py-0.5 text-[10px] font-extrabold text-primary">
+                      {t("pdf.jumpPage", { n: lang === "fa" ? toFa(item.page) : item.page })}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="thin-scrollbar max-h-[46vh] space-y-1.5 overflow-y-auto pe-1">
             {chaptersDesc.map((ch) => (
               <button

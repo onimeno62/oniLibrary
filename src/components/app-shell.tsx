@@ -24,6 +24,7 @@ import { BackupScreen } from "@/components/screens/backup-screen";
 import { ServersScreen } from "@/components/screens/servers-screen";
 import { FormatsScreen } from "@/components/screens/formats-screen";
 import { NotificationsScreen } from "@/components/screens/notifications-screen";
+import { DuplicatesScreen } from "@/components/screens/duplicates-screen";
 import { useApp, useNav, type Overlay } from "@/lib/store";
 import { useT, useResolvedTheme, useMounted } from "@/lib/use-app";
 import { useClientEngine } from "@/lib/engine";
@@ -156,6 +157,8 @@ function OverlayRenderer({ overlay }: { overlay: Overlay }) {
       return <FormatsScreen />;
     case "notifications":
       return <NotificationsScreen />;
+    case "duplicates":
+      return <DuplicatesScreen />;
     default:
       return null;
   }

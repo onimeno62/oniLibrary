@@ -50,7 +50,8 @@ export type Overlay =
   | { kind: "backup" }
   | { kind: "servers" }
   | { kind: "formats" }
-  | { kind: "notifications" };
+  | { kind: "notifications" }
+  | { kind: "duplicates" };
 
 interface NavState {
   tab: Tab;

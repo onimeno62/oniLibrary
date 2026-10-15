@@ -102,6 +102,49 @@ export interface PdfMeta {
   coverDataUrl?: string;
 }
 
+export interface PdfTocItem {
+  title: string;
+  page: number; // 1-based
+  depth: number; // nesting depth (0 = top level)
+}
+
+/** resolve the document outline (TOC) to page numbers — [] when absent */
+export async function getPdfToc(workId: string): Promise<PdfTocItem[]> {
+  try {
+    const doc = await loadPdfDoc(workId);
+    const outline = (await doc.getOutline()) ?? [];
+    const out: PdfTocItem[] = [];
+    const walk = async (
+      items: Awaited<ReturnType<PDFDocumentProxy["getOutline"]>>,
+      depth: number
+    ): Promise<void> => {
+      for (const it of items ?? []) {
+        let page: number | null = null;
+        try {
+          let dest: unknown = it.dest;
+          if (typeof dest === "string") dest = await doc.getDestination(dest);
+          if (Array.isArray(dest)) {
+            const ref = dest[0];
+            if (ref && typeof ref === "object" && "num" in (ref as object)) {
+              page = (await doc.getPageIndex(ref as Parameters<PDFDocumentProxy["getPageIndex"]>[0])) + 1;
+            } else if (typeof ref === "number") {
+              page = ref + 1;
+            }
+          }
+        } catch {
+          /* unresolvable destination → fall back to page 1 */
+        }
+        if (it.title?.trim()) out.push({ title: it.title.trim(), page: page ?? 1, depth });
+        if (it.items?.length && depth < 3) await walk(it.items, depth + 1);
+      }
+    };
+    await walk(outline, 0);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 /** parse a PDF blob: page count, info metadata and a small cover thumbnail */
 export async function readPdfMeta(blob: Blob): Promise<PdfMeta> {
   const lib = await getLib();
