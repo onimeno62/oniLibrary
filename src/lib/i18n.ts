@@ -386,6 +386,8 @@ const en = {
   "stat.minutesUnit": "min",
   "stats.goalReachedTitle": "Daily goal reached! 🎉",
   "stats.goalReachedBody": "You read {min} min today — nice pace!",
+  "stats.streakChip": "{n}-day streak!",
+  "stats.weeklyChip": "Weekly goal!",
 
   // more / settings
   "more.title": "More",
@@ -1012,6 +1014,8 @@ const fa: Record<TranslationKey, string> = {
   "stat.minutesUnit": "دقیقه",
   "stats.goalReachedTitle": "هدف روزانه کامل شد! 🎉",
   "stats.goalReachedBody": "امروز {min} دقیقه خواندید — عالی!",
+  "stats.streakChip": "{n} روز پیاپی!",
+  "stats.weeklyChip": "هدف هفتگی!",
 
   // more / settings
   "more.title": "بیشتر",

@@ -2,12 +2,18 @@ package com.onilibrary.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.util.Base64;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -18,10 +24,14 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -167,6 +177,76 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void ttsStop() {
             if (tts != null) tts.stop();
+        }
+
+        /**
+         * Save a file produced by the web app (CSV export / .onibackup) to the
+         * user-visible Downloads collection (API 29+) — falls back to the
+         * system share sheet on older devices. base64 payload keeps the bridge
+         * string-safe for UTF-8 content (Persian CSVs included).
+         */
+        @JavascriptInterface
+        public String exportFile(String base64, String fileName, String mime) {
+            if (base64 == null || fileName == null || fileName.isEmpty()) return "error";
+            final byte[] bytes;
+            try {
+                bytes = Base64.decode(base64, Base64.DEFAULT);
+            } catch (IllegalArgumentException e) {
+                return "error";
+            }
+            final String safeName = fileName.replaceAll("[\\\\/:*?\"<>|]", "_");
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ContentValues cv = new ContentValues();
+                    cv.put(MediaStore.MediaColumns.DISPLAY_NAME, safeName);
+                    cv.put(MediaStore.MediaColumns.MIME_TYPE, mime == null ? "application/octet-stream" : mime);
+                    cv.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                    Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                    if (uri == null) return "error";
+                    try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                        if (os == null) throw new IOException("no stream");
+                        os.write(bytes);
+                    }
+                    toast("Saved to Downloads: " + safeName);
+                    return "saved";
+                }
+                // legacy path: write to the public Downloads dir, share sheet on failure
+                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                File out = new File(dir, safeName);
+                try (FileOutputStream fos = new FileOutputStream(out)) {
+                    fos.write(bytes);
+                }
+                toast("Saved to Downloads: " + safeName);
+                return "saved";
+            } catch (Exception e) {
+                // permission-denied or full disk → offer the share sheet instead
+                shareBytes(bytes, safeName, mime);
+                return "shared";
+            }
+        }
+
+        /** system share sheet (ACTION_SEND) via FileProvider — universal fallback */
+        private void shareBytes(byte[] bytes, String fileName, String mime) {
+            try {
+                File f = new File(getCacheDir(), "share/" + fileName);
+                File parent = f.getParentFile();
+                if (parent != null) parent.mkdirs();
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    fos.write(bytes);
+                }
+                Uri uri = Uri.parse("content://" + ShareProvider.AUTH + "/" + fileName);
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType(mime == null ? "application/octet-stream" : mime);
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                send.putExtra(Intent.EXTRA_TITLE, fileName);
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(send, "Share " + fileName));
+            } catch (Exception ignored) { }
+        }
+
+        private void toast(final String msg) {
+            mainHandler.post(() ->
+                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
         }
     }
 

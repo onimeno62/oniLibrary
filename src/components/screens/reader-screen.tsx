@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ALargeSmall,
   Bookmark,
+  CalendarCheck,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -22,6 +23,7 @@ import {
   CirclePlay,
   Download,
   Ellipsis,
+  Flame,
   ImageOff,
   Keyboard,
   List,
@@ -234,8 +236,20 @@ function SessionPill({
 
 /* Daily-goal celebration (TRK-004/005): full-reader confetti burst shown
    once when the day's logged minutes cross the goal. Pure CSS pieces —
-   pointer-events-none so reading continues underneath. */
-function GoalCelebration({ title, body }: { title: string; body: string }) {
+   pointer-events-none so reading continues underneath. Round 9: optional
+   milestone chips (goal streak / weekly goal) pop in under the card. */
+function GoalCelebration({
+  title,
+  body,
+  streak,
+  weekly,
+}: {
+  title: string;
+  body: string;
+  streak?: number;
+  weekly?: boolean;
+}) {
+  const { t } = useT();
   const pieces = useMemo(
     () =>
       Array.from({ length: 26 }, (_, i) => ({
@@ -277,6 +291,22 @@ function GoalCelebration({ title, body }: { title: string; body: string }) {
           </span>
           <p className="text-[16px] font-black text-white">{title}</p>
           <p className="text-[12px] font-semibold text-white/65">{body}</p>
+          {(streak !== undefined || weekly) && (
+            <div className="mt-1 flex items-center justify-center gap-2">
+              {streak !== undefined && (
+                <span className="oni-milestone-chip flex items-center gap-1.5 rounded-full border border-[#f8694c]/40 bg-[#f8694c]/15 px-3 py-1.5 text-[11px] font-extrabold text-[#ffb199]">
+                  <Flame className="h-3.5 w-3.5 text-[#f8694c]" />
+                  {t("stats.streakChip", { n: streak })}
+                </span>
+              )}
+              {weekly && (
+                <span className="oni-milestone-chip oni-milestone-chip-2 flex items-center gap-1.5 rounded-full border border-emerald-400/40 bg-emerald-400/15 px-3 py-1.5 text-[11px] font-extrabold text-emerald-300">
+                  <CalendarCheck className="h-3.5 w-3.5 text-emerald-400" />
+                  {t("stats.weeklyChip")}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -285,7 +315,13 @@ function GoalCelebration({ title, body }: { title: string; body: string }) {
 
 /* Wrapper that resolves today's logged minutes + localized strings for the
    celebration card (kept separate so the reader body stays lean). */
-function GoalCelebrationOverlay({ lang }: { lang: string }) {
+function GoalCelebrationOverlay({
+  lang,
+  milestone,
+}: {
+  lang: string;
+  milestone: { streak?: number; weekly?: boolean } | null;
+}) {
   const { t } = useT();
   const minutes = useApp(
     (s) => s.sessions.find((x) => x.date === new Date().toISOString().slice(0, 10))?.minutes ?? 0
@@ -294,6 +330,8 @@ function GoalCelebrationOverlay({ lang }: { lang: string }) {
     <GoalCelebration
       title={t("stats.goalReachedTitle")}
       body={t("stats.goalReachedBody", { min: lang === "fa" ? toFa(minutes) : minutes })}
+      streak={milestone?.streak}
+      weekly={milestone?.weekly}
     />
   );
 }
@@ -501,8 +539,10 @@ export function ReaderScreen({
   const [epubMarks, setEpubMarks] = useState(0);
   /* focus timer: paused minutes don't tick the pill or the reading log */
   const [sessionPaused, setSessionPaused] = useState(false);
-  /* daily-goal celebration overlay (fires once per reader mount when crossed) */
+  /* daily-goal celebration overlay (fires once per reader mount when crossed);
+     optional milestone chips (streak count / weekly goal) ride along (round 9) */
   const [goalCelebrate, setGoalCelebrate] = useState(false);
+  const [celebrateMilestone, setCelebrateMilestone] = useState<{ streak?: number; weekly?: boolean } | null>(null);
   const sessionPausedRef = useRef(false);
   const goalCelebrateTimer = useRef<number | null>(null);
   const ttsRateTimer = useRef<number | null>(null);
@@ -599,7 +639,8 @@ export function ReaderScreen({
   }, [workId, chapterId]);
 
   /* ----- reading-time log every 60s while open (paused minutes excluded) -----
-     also fires the in-reader daily-goal celebration when the crossing happens */
+     also fires the in-reader daily-goal celebration when the crossing happens;
+     the crossing tick also evaluates streak + weekly milestones (round 9) */
   useEffect(() => {
     const id = window.setInterval(() => {
       if (sessionPausedRef.current) return;
@@ -610,6 +651,31 @@ export function ReaderScreen({
       st.logReading(workId, 1, 0);
       const after = useApp.getState().sessions.find((x) => x.date === today)?.minutes ?? 0;
       if (goal > 0 && before < goal && after >= goal) {
+        /* goal streak: consecutive days (ending today) where the goal was reached */
+        const minutesByDate = new Map(useApp.getState().sessions.map((s) => [s.date, s.minutes]));
+        let streak = 0;
+        for (let i = 0; i < 400; i++) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          const key = d.toISOString().slice(0, 10);
+          const m = minutesByDate.get(key) ?? 0;
+          if (m >= goal) streak++;
+          else break;
+        }
+        /* weekly goal: rolling last-7-days total vs 7×daily — fires when the
+           crossing tick completes the week (yesterday's rolling sum was short) */
+        const weekKeys: string[] = [];
+        for (let i = 0; i < 7; i++) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          weekKeys.push(d.toISOString().slice(0, 10));
+        }
+        const sum = (keys: string[]) => keys.reduce((a, k) => a + (minutesByDate.get(k) ?? 0), 0);
+        const weeklyGoal = goal * 7;
+        const weeklyNow = sum(weekKeys) >= weeklyGoal;
+        const weeklyBefore = sum(weekKeys.slice(1)) >= weeklyGoal;
+        const weekly = weeklyNow && !weeklyBefore;
+        setCelebrateMilestone({ streak: streak >= 2 ? streak : undefined, weekly });
         setGoalCelebrate(true);
         if (goalCelebrateTimer.current) window.clearTimeout(goalCelebrateTimer.current);
         goalCelebrateTimer.current = window.setTimeout(() => setGoalCelebrate(false), 5200);
@@ -736,6 +802,26 @@ export function ReaderScreen({
 
   const findTotal = isPdf ? pdfSeq.length : epubSeq.length;
   const findActive = findIdx !== null && findTotal > 0;
+
+  /* exact-position highlight for the CURRENT page (round 9): the global
+     findIdx maps to a local match index inside this page's block of the
+     sequence → PdfCanvas renders textLayer-style marks with the active one */
+  const pdfHighlightFor = (pageNum: number): { query: string; active: number } | null => {
+    if (findIdx === null || !pdfHits?.length || !pdfQuery.trim()) return null;
+    let base = -1;
+    let count = 0;
+    for (const h of pdfHits) {
+      if (h.page === pageNum) {
+        base = count;
+        break;
+      }
+      count += h.count;
+    }
+    if (base < 0) return null;
+    const local = findIdx - base;
+    if (local < 0 || local >= (pdfHits.find((h) => h.page === pageNum)?.count ?? 0)) return null;
+    return { query: pdfQuery.trim(), active: local };
+  };
 
   const findStep = (dir: 1 | -1) => {
     if (isPdf) {
@@ -1187,7 +1273,7 @@ export function ReaderScreen({
   const renderPageEl = (i: number, fitOverride?: string) => {
     const cls = fitOverride ?? FIT_CLASS[fit];
     if (isPdf) {
-      return <PdfCanvas workId={work.id} page={i + 1} className={cls} />;
+      return <PdfCanvas workId={work.id} page={i + 1} className={cls} highlight={pdfHighlightFor(i + 1)} />;
     }
     if (isLocal && work.localPages?.[i]) {
       return <LocalPageImage storageKey={work.localPages[i]} className={cls} />;
@@ -1330,7 +1416,7 @@ export function ReaderScreen({
                   anchorsRef.current[i] = el;
                 }}
               >
-                <PdfCanvas workId={work.id} page={i + 1} className="block w-full" />
+                <PdfCanvas workId={work.id} page={i + 1} className="block w-full" highlight={pdfHighlightFor(i + 1)} />
               </div>
             ))}
           </div>
@@ -1431,7 +1517,7 @@ export function ReaderScreen({
       )}
 
       {/* ============ daily-goal celebration (TRK-004/005) ============ */}
-      {goalCelebrate && <GoalCelebrationOverlay lang={lang} />}
+      {goalCelebrate && <GoalCelebrationOverlay lang={lang} milestone={celebrateMilestone} />}
 
       {/* ============ top bar (auto-hide) ============ */}
       <header

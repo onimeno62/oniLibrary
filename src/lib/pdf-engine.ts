@@ -185,6 +185,100 @@ async function getPdfPageTexts(workId: string): Promise<string[]> {
   return p;
 }
 
+/* ------------------------------------------------------------------ */
+/* exact-position match rects (round 9 — textLayer-style overlay)      */
+/* ------------------------------------------------------------------ */
+
+export interface PdfMatchRect {
+  /** axis-aligned rect in UNROTATED, scale-1 PDF user space (y grows up) */
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** per-(work,page,query) rect cache — workId → page → query → rects */
+const rectCache = new Map<string, Map<number, Map<string, Promise<PdfMatchRect[]>>>>();
+
+/** drop cached rects for a work (call when the work is removed/re-imported) */
+export function dropPdfRects(workId: string): void {
+  rectCache.delete(workId);
+}
+
+/**
+ * Compute highlight rectangles for every occurrence of `query` on one page.
+ * Lightweight textLayer equivalent: proportional char slicing per text item.
+ * Rects are in unrotated scale-1 user space — the caller converts them with
+ * the SAME viewport used for canvas rendering (convertToViewportRectangle),
+ * so rotation/zoom stay in sync for free.
+ */
+export function getPdfPageMatches(
+  workId: string,
+  page: number, // 1-based
+  rawQuery: string
+): Promise<PdfMatchRect[]> {
+  const q = rawQuery.trim().toLowerCase();
+  if (q.length < 2) return Promise.resolve([]);
+
+  let pageMap = rectCache.get(workId);
+  if (!pageMap) {
+    pageMap = new Map();
+    rectCache.set(workId, pageMap);
+  }
+  const cached = pageMap.get(page)?.get(q);
+  if (cached) return cached;
+
+  const p = (async () => {
+    try {
+      const doc = await loadPdfDoc(workId);
+      const pdfPage = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
+      const tc = await pdfPage.getTextContent();
+      const rects: PdfMatchRect[] = [];
+      let budget = 200;
+      for (const item of tc.items) {
+        if (!("str" in item) || budget <= 0) continue;
+        const str = item.str;
+        if (!str || str.length === 0) continue;
+        const lower = str.toLowerCase();
+        // pdf.js text items: width/height already in user space,
+        // transform[4..5] = (x, y) of the baseline origin
+        const w = item.width;
+        const h = item.height;
+        const e = item.transform[4];
+        const f = item.transform[5];
+        const charW = str.length > 0 ? w / str.length : 0;
+        let from = 0;
+        for (;;) {
+          const at = lower.indexOf(q, from);
+          if (at < 0) break;
+          const x1 = e + at * charW;
+          const x2 = e + (at + q.length) * charW;
+          rects.push({
+            x1,
+            x2,
+            // baseline at y=f → cover ascent + descender band
+            y1: f - h * 0.22,
+            y2: f + h * 0.92,
+          });
+          budget--;
+          from = at + q.length;
+          if (budget <= 0) break;
+        }
+      }
+      return rects;
+    } catch {
+      return [];
+    }
+  })();
+
+  if (!pageMap.get(page)) pageMap.set(page, new Map());
+  pageMap.get(page)!.set(q, p);
+  p.catch(() => {
+    pageMap?.get(page)?.delete(q);
+  });
+  return p;
+}
+
 export interface PdfSearchHit {
   page: number; // 1-based
   snippet: string; // trimmed context around the first match on that page

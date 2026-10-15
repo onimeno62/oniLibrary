@@ -71,7 +71,32 @@ export function BackupScreen() {
     return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   };
 
+  /* UTF-8 → base64 (chunked to avoid stack overflow on big backups) */
+  const toBase64 = (bytes: Uint8Array) => {
+    let bin = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  };
+
+  /* round 9: inside the APK the WebView can't download anchors — hand the
+     payload to the native bridge (MediaStore Downloads / share sheet) */
+  const nativeExport = (name: string, mime: string, bytes: Uint8Array): boolean => {
+    const bridge = (window as { OniAndroid?: { exportFile?: (b64: string, n: string, m: string) => string } })
+      .OniAndroid;
+    if (!bridge?.exportFile) return false;
+    try {
+      return bridge.exportFile(toBase64(bytes), name, mime.split(";")[0]) !== "error";
+    } catch {
+      return false;
+    }
+  };
+
   const downloadFile = (name: string, mime: string, content: string) => {
+    const bytes = new TextEncoder().encode(content);
+    if (nativeExport(name, mime, bytes)) return;
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -170,17 +195,24 @@ export function BackupScreen() {
       sessions,
       bookmarks,
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const name = `onilibrary-backup-${ymd()}.onibackup`;
+    const content = JSON.stringify(payload, null, 2);
+    if (nativeExport(name, "application/json", new TextEncoder().encode(content))) {
+      setLastBackup(new Date().toISOString());
+      toast({ title: t("bkp.success"), description: name });
+      return;
+    }
+    const blob = new Blob([content], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `onilibrary-backup-${ymd()}.onibackup`;
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
     setLastBackup(new Date().toISOString());
-    toast({ title: t("bkp.success"), description: `onilibrary-backup-${ymd()}.onibackup` });
+    toast({ title: t("bkp.success"), description: name });
   };
 
   const onFile = async (file: File | null | undefined) => {
