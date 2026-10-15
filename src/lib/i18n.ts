@@ -622,6 +622,17 @@ const en = {
   "rdr.bookSearch": "Search in book",
   "rdr.bookSearchHint": "Type at least 2 characters to search every chapter.",
   "rdr.bookSearchPlaceholder": "Search this book…",
+  // find-in-page bar (round 8)
+  "rdr.findPrev": "Previous match",
+  "rdr.findNext": "Next match",
+  "rdr.findClose": "Close find bar",
+  "rdr.matchOf": "{cur} / {total}",
+  "rdr.findKept": "Stays active",
+  "rdr.pdfSummary": "{n} matches in {p} pages",
+  "rdr.pdfSummaryOne": "{n} matches in 1 page",
+  "rdr.epubSummary": "{n} matches in {c} chapters",
+  "rdr.epubSummaryOne": "{n} matches in 1 chapter",
+  "rdr.sessionPaused": "Paused",
 } ;
 
 export type TranslationKey = keyof typeof en;
@@ -1235,6 +1246,17 @@ const fa: Record<TranslationKey, string> = {
   "rdr.bookSearch": "جست‌وجو در کتاب",
   "rdr.bookSearchHint": "برای جست‌وجو در همهٔ فصل‌ها دست‌کم ۲ نویسه بنویسید.",
   "rdr.bookSearchPlaceholder": "جست‌وجو در این کتاب…",
+  // find-in-page bar (round 8)
+  "rdr.findPrev": "مورد قبلی",
+  "rdr.findNext": "مورد بعدی",
+  "rdr.findClose": "بستن نوار یافتن",
+  "rdr.matchOf": "{cur} / {total}",
+  "rdr.findKept": "فعال می‌ماند",
+  "rdr.pdfSummary": "{n} مورد در {p} صفحه",
+  "rdr.pdfSummaryOne": "{n} مورد در ۱ صفحه",
+  "rdr.epubSummary": "{n} مورد در {c} فصل",
+  "rdr.epubSummaryOne": "{n} مورد در ۱ فصل",
+  "rdr.sessionPaused": "متوقف",
 };
 
 const dicts: Record<Lang, Record<TranslationKey, string>> = { en, fa };

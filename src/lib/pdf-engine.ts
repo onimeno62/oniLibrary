@@ -188,21 +188,22 @@ async function getPdfPageTexts(workId: string): Promise<string[]> {
 export interface PdfSearchHit {
   page: number; // 1-based
   snippet: string; // trimmed context around the first match on that page
-  count: number; // matches on this page (first 3 counted per page)
+  count: number; // ALL matches on this page (drives find-bar prev/next)
 }
 
-/** search the whole document — up to 3 snippet hits per page, 80 pages capped */
+/** search the whole document — one hit per page with full match count, 80 pages capped */
 export async function searchPdfText(workId: string, rawQuery: string): Promise<PdfSearchHit[]> {
   const q = rawQuery.trim().toLowerCase();
   if (q.length < 2) return [];
   const pages = await getPdfPageTexts(workId);
   const hits: PdfSearchHit[] = [];
+  let budget = 2000; // global match-counting cap (perf guard)
   for (let i = 0; i < pages.length; i++) {
     const lower = pages[i].toLowerCase();
     let from = 0;
     let count = 0;
     let snippet = "";
-    while (count < 3) {
+    for (;;) {
       const at = lower.indexOf(q, from);
       if (at < 0) break;
       if (count === 0) {
@@ -214,11 +215,13 @@ export async function searchPdfText(workId: string, rawQuery: string): Promise<P
       }
       from = at + q.length;
       count++;
+      if (--budget <= 0) break;
     }
     if (count > 0) {
       hits.push({ page: i + 1, snippet, count });
       if (hits.length >= 80) break;
     }
+    if (budget <= 0) break;
   }
   return hits;
 }

@@ -6,12 +6,13 @@ import { useApp, useNav, workProgress, currentChapter } from "@/lib/store";
 /**
  * Global client engine:
  *  - ticks the download simulation
- *  - logs reading time while a reader overlay is open
  *  - auto-locks the Vault when the document is hidden
+ *  (reading time is logged by the reader's own 60s interval, which also
+ *   respects the focus-timer pause — a second rough logger here would
+ *   double-count minutes and skew the daily goal)
  */
 export function useClientEngine(readerOpen: boolean) {
   const tickDownloads = useApp((s) => s.tickDownloads);
-  const logReading = useApp((s) => s.logReading);
   const vaultAutoLock = useApp((s) => s.settings.vaultAutoLock);
   const vaultUnlocked = useApp((s) => s.vaultUnlocked);
   const setVaultUnlocked = useApp((s) => s.setVaultUnlocked);
@@ -22,13 +23,6 @@ export function useClientEngine(readerOpen: boolean) {
     const id = setInterval(() => tickDownloads(), 1000);
     return () => clearInterval(id);
   }, [tickDownloads]);
-
-  // reading time tracking (rough: 1 min per 20s of reader being open)
-  useEffect(() => {
-    if (!readerOpen) return;
-    const id = setInterval(() => logReading("current", 1, 0), 20_000);
-    return () => clearInterval(id);
-  }, [readerOpen, logReading]);
 
   // vault auto lock on background
   useEffect(() => {

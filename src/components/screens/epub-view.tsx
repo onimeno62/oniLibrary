@@ -63,14 +63,17 @@ export function EpubBookView({
   font = "serif",
   theme = "dark",
   jumpTarget = null,
+  onMarksFound,
 }: {
   work: Work;
   chapterId: string;
   fontSize: number;
   font?: "serif" | "sans";
   theme?: "dark" | "sepia" | "paper";
-  /** search hit to scroll to — {query, nonce} so identical queries re-trigger */
-  jumpTarget?: { query: string; nonce: number } | null;
+  /** search hit to scroll to — {query, nonce} so identical queries re-trigger; index selects the active match */
+  jumpTarget?: { query: string; nonce: number; index?: number } | null;
+  /** reports how many in-chapter matches were just marked (drives the find bar) */
+  onMarksFound?: (count: number) => void;
 }) {
   const workId = work.id;
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -169,30 +172,81 @@ export function EpubBookView({
     };
   }, [html, chapterId]);
 
-  /* scroll to a search hit inside the chapter + coral flash (book search).
-     The flash self-expires via timeout — its lifetime is deliberately
-     decoupled from this effect (no cleanup-removal), and jumpTarget stays
-     set until the next jump overwrites it (stable nonce → no re-trigger). */
+  /* in-chapter find (book search): wrap EVERY match in <mark class="oni-find">
+     and activate the selected one. Marks are rebuilt on each jump and removed
+     when jumpTarget clears. A content re-render (font/size/theme change) wipes
+     them — they re-apply on the next jump (same trade-off as the old flash). */
   useEffect(() => {
-    if (html === null || !jumpTarget) return;
     const root = contentRef.current;
     if (!root) return;
-    const q = jumpTarget.query.toLowerCase();
-    if (!q) return;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let hit: Text | null = null;
-    while (walker.nextNode()) {
-      const t = walker.currentNode as Text;
-      if ((t.textContent ?? "").toLowerCase().includes(q)) {
-        hit = t;
-        break;
-      }
+    // unwrap any previous marks (keeps text intact)
+    root.querySelectorAll("mark.oni-find").forEach((m) => {
+      const parent = m.parentNode;
+      if (!parent) return;
+      while (m.firstChild) parent.insertBefore(m.firstChild, m);
+      m.remove();
+      parent.normalize();
+    });
+    if (html === null || !jumpTarget) {
+      onMarksFound?.(0);
+      return;
     }
-    const el = hit?.parentElement ?? null;
-    if (el) {
-      el.scrollIntoView({ block: "center" });
-      el.classList.add("epub-search-flash");
-      window.setTimeout(() => el.classList.remove("epub-search-flash"), 2600);
+    const q = jumpTarget.query.toLowerCase();
+    if (!q) {
+      onMarksFound?.(0);
+      return;
+    }
+    // collect matches over text nodes, longest-first split (script/style skipped)
+    type Seg = { node: Text; start: number; end: number };
+    const segs: Seg[] = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => {
+        const p = n.parentElement;
+        if (p && (p.closest("script,style") || p.classList.contains("oni-find")))
+          return NodeFilter.FILTER_REJECT;
+        return (n.textContent ?? "").length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      segs.push({ node, start: 0, end: node.textContent?.length ?? 0 });
+    }
+    const marks: HTMLElement[] = [];
+    const CAP = 200;
+    for (const seg of segs) {
+      if (marks.length >= CAP) break;
+      const text = seg.node.textContent ?? "";
+      const lower = text.toLowerCase();
+      let from = 0;
+      let ranges: Array<[number, number]> = [];
+      for (;;) {
+        const at = lower.indexOf(q, from);
+        if (at < 0) break;
+        ranges.push([at, at + q.length]);
+        from = at + q.length;
+      }
+      if (!ranges.length) continue;
+      // replace node content: split around matches and wrap them
+      const frag = document.createDocumentFragment();
+      let cursor = 0;
+      for (const [s, e] of ranges) {
+        if (s > cursor) frag.appendChild(document.createTextNode(text.slice(cursor, s)));
+        const mark = document.createElement("mark");
+        mark.className = "oni-find";
+        mark.textContent = text.slice(s, e);
+        frag.appendChild(mark);
+        marks.push(mark);
+        cursor = e;
+      }
+      if (cursor < text.length) frag.appendChild(document.createTextNode(text.slice(cursor)));
+      seg.node.parentNode?.replaceChild(frag, seg.node);
+    }
+    onMarksFound?.(marks.length);
+    const idx = Math.max(0, Math.min(marks.length - 1, jumpTarget.index ?? 0));
+    const active = marks[idx] ?? null;
+    if (active) {
+      active.classList.add("oni-find-active");
+      requestAnimationFrame(() => active.scrollIntoView({ block: "center" }));
     }
   }, [html, jumpTarget?.nonce]);
 

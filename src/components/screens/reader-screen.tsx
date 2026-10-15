@@ -15,7 +15,10 @@ import {
   ALargeSmall,
   Bookmark,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
+  CirclePause,
   CirclePlay,
   Download,
   Ellipsis,
@@ -35,7 +38,9 @@ import {
   SkipForward,
   Square,
   Sun,
+  Trophy,
   Volume2,
+  X,
   ZoomIn,
   type LucideIcon,
 } from "lucide-react";
@@ -177,27 +182,175 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
 }
 
 /* Live reading-session clock — self-contained leaf so its 1s tick never
-   re-renders the (heavy) reader tree around it. */
-function SessionPill({ title, visible }: { title: string; visible: boolean }) {
+   re-renders the (heavy) reader tree around it. Tap toggles pause/resume
+   (focus timer); paused minutes are excluded from the reading log. */
+function SessionPill({
+  title,
+  visible,
+  paused,
+  onToggle,
+  pausedLabel,
+}: {
+  title: string;
+  visible: boolean;
+  paused: boolean;
+  onToggle: () => void;
+  pausedLabel: string;
+}) {
   const [sec, setSec] = useState(0);
   useEffect(() => {
+    if (paused) return;
     const id = window.setInterval(() => setSec((s) => s + 1), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [paused]);
   const h = Math.floor(sec / 3600);
   const mm = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
   const ss = String(sec % 60).padStart(2, "0");
   const label = h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
   return (
-    <div
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={paused}
+      title={paused ? `${title} · ${pausedLabel}` : title}
       className={cn(
-        "pointer-events-none absolute left-3 top-14 z-30 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-[10px] font-bold text-white/85 backdrop-blur transition-opacity duration-300",
-        visible ? "opacity-100" : "opacity-0"
+        "absolute left-3 top-14 z-30 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-[10px] font-bold text-white/85 backdrop-blur transition-all duration-300 hover:bg-black/70 active:scale-95",
+        paused && "ring-1 ring-primary/70",
+        visible ? "opacity-100" : "pointer-events-none opacity-0"
       )}
-      title={title}
     >
-      <CirclePlay className="h-3 w-3 text-primary" />
-      <span dir="ltr" className="tabular-nums">{label}</span>
+      {paused ? (
+        <CirclePause className="h-3 w-3 text-primary" />
+      ) : (
+        <CirclePlay className="h-3 w-3 text-primary" />
+      )}
+      <span dir="ltr" className={cn("tabular-nums", paused && "text-white/50")}>
+        {label}
+      </span>
+      {paused && <span className="font-extrabold text-primary">{pausedLabel}</span>}
+    </button>
+  );
+}
+
+/* Daily-goal celebration (TRK-004/005): full-reader confetti burst shown
+   once when the day's logged minutes cross the goal. Pure CSS pieces —
+   pointer-events-none so reading continues underneath. */
+function GoalCelebration({ title, body }: { title: string; body: string }) {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 26 }, (_, i) => ({
+        id: i,
+        left: 4 + ((i * 37) % 92),
+        size: 6 + ((i * 13) % 7),
+        dur: 2.2 + ((i * 7) % 14) / 10,
+        delay: ((i * 11) % 16) / 10,
+        drift: ((i * 53) % 120) - 60,
+        spin: ((i * 29) % 720) - 360,
+        color: ["#f8694c", "#ffb199", "#ffd9a8", "#f7f1e8", "#ffffff"][i % 5],
+        round: i % 3 === 0,
+      })),
+    []
+  );
+  return (
+    <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden" role="status">
+      {pieces.map((p) => (
+        <span
+          key={p.id}
+          className="oni-confetti absolute top-[-4%] block"
+          style={{
+            left: `${p.left}%`,
+            width: p.size,
+            height: p.round ? p.size : p.size * 0.45,
+            background: p.color,
+            borderRadius: p.round ? "9999px" : "2px",
+            animationDuration: `${p.dur}s`,
+            animationDelay: `${p.delay}s`,
+            "--drift": `${p.drift}px`,
+            "--spin": `${p.spin}deg`,
+          } as React.CSSProperties}
+        />
+      ))}
+      <div className="absolute inset-x-0 top-1/2 flex -translate-y-1/2 justify-center px-8">
+        <div className="oni-goal-card flex flex-col items-center gap-2 rounded-[2rem] border border-border bg-black/80 px-8 py-6 text-center shadow-[0_24px_60px_-18px_rgba(0,0,0,0.85)] backdrop-blur-xl">
+          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-coral-gradient shadow-[0_14px_30px_-10px_rgba(248,105,76,0.9)]">
+            <Trophy className="h-7 w-7 text-white" />
+          </span>
+          <p className="text-[16px] font-black text-white">{title}</p>
+          <p className="text-[12px] font-semibold text-white/65">{body}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Wrapper that resolves today's logged minutes + localized strings for the
+   celebration card (kept separate so the reader body stays lean). */
+function GoalCelebrationOverlay({ lang }: { lang: string }) {
+  const { t } = useT();
+  const minutes = useApp(
+    (s) => s.sessions.find((x) => x.date === new Date().toISOString().slice(0, 10))?.minutes ?? 0
+  );
+  return (
+    <GoalCelebration
+      title={t("stats.goalReachedTitle")}
+      body={t("stats.goalReachedBody", { min: lang === "fa" ? toFa(minutes) : minutes })}
+    />
+  );
+}
+
+/* Chrome-style find bar: floating glass pill with match counter + prev/next.
+   Stays visible while a search query is active, even with the chrome hidden. */
+function FindBar({
+  cur,
+  total,
+  onPrev,
+  onNext,
+  onClose,
+  labels,
+}: {
+  cur: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onClose: () => void;
+  labels: { prev: string; next: string; close: string; counter: string };
+}) {
+  return (
+    <div className="oni-findbar absolute right-3 top-14 z-40 flex items-center gap-0.5 rounded-full border border-white/10 bg-black/70 p-1 shadow-[0_14px_34px_-12px_rgba(0,0,0,0.9)] backdrop-blur-md">
+      <span
+        dir="ltr"
+        className="min-w-[52px] px-2 text-center text-[11px] font-extrabold tabular-nums text-white/85"
+        aria-live="polite"
+      >
+        {labels.counter}
+      </span>
+      <button
+        type="button"
+        onClick={onPrev}
+        aria-label={labels.prev}
+        className="flex h-7 w-7 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/15 active:scale-90"
+      >
+        <ChevronUp className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={onNext}
+        aria-label={labels.next}
+        className="flex h-7 w-7 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-white/15 active:scale-90"
+      >
+        <ChevronDown className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label={labels.close}
+        className="flex h-7 w-7 items-center justify-center rounded-full text-white/80 transition-colors hover:bg-primary hover:text-white active:scale-90"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+      <span className="sr-only">
+        {cur} / {total}
+      </span>
     </div>
   );
 }
@@ -339,9 +492,19 @@ export function ReaderScreen({
   const [epubQuery, setEpubQuery] = useState("");
   const [epubHits, setEpubHits] = useState<EpubSearchHit[] | null>(null);
   const [epubSearching, setEpubSearching] = useState(false);
-  const [epubJump, setEpubJump] = useState<{ chapterId: string; query: string; nonce: number } | null>(null);
+  const [epubJump, setEpubJump] = useState<{ chapterId: string; query: string; nonce: number; index?: number } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [finePointer, setFinePointer] = useState(false);
+  /* find-in-page bar (round 8): index into the global match sequence */
+  const [findIdx, setFindIdx] = useState<number | null>(null);
+  /* matches marked in the CURRENT epub chapter (reported by EpubBookView) */
+  const [epubMarks, setEpubMarks] = useState(0);
+  /* focus timer: paused minutes don't tick the pill or the reading log */
+  const [sessionPaused, setSessionPaused] = useState(false);
+  /* daily-goal celebration overlay (fires once per reader mount when crossed) */
+  const [goalCelebrate, setGoalCelebrate] = useState(false);
+  const sessionPausedRef = useRef(false);
+  const goalCelebrateTimer = useRef<number | null>(null);
   const ttsRateTimer = useRef<number | null>(null);
   const tts = useTts();
 
@@ -420,6 +583,8 @@ export function ReaderScreen({
     setRotate(0);
     setAutoPlay(false);
     setScrollCmd({ page: p });
+    /* chapter-scoped find state: re-marked by the new chapter's jump effect */
+    setEpubMarks(0);
   }
 
   /* ----- progress persistence: page ratio on every page change (manga modes) ----- */
@@ -433,11 +598,30 @@ export function ReaderScreen({
     useApp.getState().pushHistory(workId, chapterId, page);
   }, [workId, chapterId]);
 
-  /* ----- reading-time log every 60s while open ----- */
+  /* ----- reading-time log every 60s while open (paused minutes excluded) -----
+     also fires the in-reader daily-goal celebration when the crossing happens */
   useEffect(() => {
-    const id = window.setInterval(() => useApp.getState().logReading(workId, 1, 0), 60_000);
+    const id = window.setInterval(() => {
+      if (sessionPausedRef.current) return;
+      const st = useApp.getState();
+      const today = new Date().toISOString().slice(0, 10);
+      const before = st.sessions.find((x) => x.date === today)?.minutes ?? 0;
+      const goal = st.settings.dailyGoalMin;
+      st.logReading(workId, 1, 0);
+      const after = useApp.getState().sessions.find((x) => x.date === today)?.minutes ?? 0;
+      if (goal > 0 && before < goal && after >= goal) {
+        setGoalCelebrate(true);
+        if (goalCelebrateTimer.current) window.clearTimeout(goalCelebrateTimer.current);
+        goalCelebrateTimer.current = window.setTimeout(() => setGoalCelebrate(false), 5200);
+      }
+    }, 60_000);
     return () => window.clearInterval(id);
   }, [workId]);
+
+  /* keep the pause ref in sync so the interval closure always sees it */
+  useEffect(() => {
+    sessionPausedRef.current = sessionPaused;
+  }, [sessionPaused]);
 
   /* ----- read-aloud (books): stop when chapter or reader closes ----- */
   useEffect(() => () => ttsStop(), [workId, chapterId]);
@@ -498,19 +682,96 @@ export function ReaderScreen({
     if (scrollable) setScrollCmd({ page: p });
   };
 
-  /* jump to a pdf search hit (1-based page) */
+  /* jump to a pdf search hit (1-based page) — tracks the global match index
+     for the find bar (all matches on earlier pages + offset within this page) */
   const jumpPdfHit = (hit: PdfSearchHit) => {
     setPdfSearchOpen(false);
     const p = Math.max(0, Math.min(total - 1, hit.page - 1));
     goToPage(p);
     if (scrollable) setScrollCmd({ page: p });
+    if (pdfHits) {
+      let before = 0;
+      for (const h of pdfHits) {
+        if (h.page === hit.page) break;
+        before += h.count;
+      }
+      setFindIdx(before);
+    }
   };
 
-  /* jump to a book (epub) search hit — switches chapter, then scrolls + flashes */
+  /* jump to a book (epub) search hit — switches chapter, then marks every
+     in-chapter match and activates the first one (find bar follows along) */
   const jumpEpubHit = (hit: EpubSearchHit) => {
     setEpubSearchOpen(false);
-    setEpubJump({ chapterId: hit.chapterId, query: epubQuery.trim(), nonce: Date.now() });
+    setEpubJump({ chapterId: hit.chapterId, query: epubQuery.trim(), nonce: Date.now(), index: 0 });
     if (hit.chapterId !== chapterId) openChapter(hit.chapterId);
+    if (epubHits) {
+      let before = 0;
+      for (const h of epubHits) {
+        if (h.chapterId === hit.chapterId) break;
+        before += h.count;
+      }
+      setFindIdx(before);
+    }
+  };
+
+  /* ----- find-in-page navigation (round 8) -----
+     A global match sequence is flattened from the search hits:
+     PDF → page repeated by its match count; EPUB → chapter × local matches.
+     prev/next walk the sequence (wrapping), jumping pages/chapters. */
+  const pdfSeq = useMemo<Array<{ page: number }>>(() => {
+    if (!pdfHits?.length) return [];
+    const seq: Array<{ page: number }> = [];
+    for (const h of pdfHits) for (let i = 0; i < h.count && seq.length < 1000; i++) seq.push({ page: h.page });
+    return seq;
+  }, [pdfHits]);
+
+  const epubSeq = useMemo<Array<{ chapterId: string; local: number }>>(() => {
+    if (!epubHits?.length) return [];
+    const seq: Array<{ chapterId: string; local: number }> = [];
+    for (const h of epubHits)
+      for (let i = 0; i < h.count && seq.length < 1000; i++) seq.push({ chapterId: h.chapterId, local: i });
+    return seq;
+  }, [epubHits]);
+
+  const findTotal = isPdf ? pdfSeq.length : epubSeq.length;
+  const findActive = findIdx !== null && findTotal > 0;
+
+  const findStep = (dir: 1 | -1) => {
+    if (isPdf) {
+      if (!pdfSeq.length || findIdx === null) return;
+      const next = (findIdx + dir + pdfSeq.length) % pdfSeq.length;
+      setFindIdx(next);
+      const p = Math.max(0, Math.min(total - 1, pdfSeq[next].page - 1));
+      goToPage(p);
+      if (scrollable) setScrollCmd({ page: p });
+    } else {
+      if (!epubSeq.length || findIdx === null) return;
+      const next = (findIdx + dir + epubSeq.length) % epubSeq.length;
+      setFindIdx(next);
+      const m = epubSeq[next];
+      setEpubJump({ chapterId: m.chapterId, query: epubQuery.trim(), nonce: Date.now(), index: m.local });
+      if (m.chapterId !== chapterId) openChapter(m.chapterId);
+    }
+  };
+
+  /* closing a search sheet with a live query keeps the matches active —
+     the find bar stays on screen (clearing the query hides it) */
+  const closePdfSheet = (open: boolean) => {
+    setPdfSearchOpen(open);
+    if (!open && pdfQuery.trim().length >= 2 && (pdfHits?.length ?? 0) > 0) {
+      setFindIdx((cur) => (cur === null ? 0 : Math.min(cur, pdfSeq.length - 1)));
+    }
+  };
+  const closeEpubSheet = (open: boolean) => {
+    setEpubSearchOpen(open);
+    if (!open && epubQuery.trim().length >= 2 && (epubHits?.length ?? 0) > 0) {
+      setFindIdx((cur) => (cur === null ? 0 : Math.min(cur, epubSeq.length - 1)));
+    }
+  };
+  const closeFindBar = () => {
+    setFindIdx(null);
+    setEpubJump(null);
   };
 
   /* open the full-text search sheet for the current content kind */
@@ -1046,7 +1307,12 @@ export function ReaderScreen({
             fontSize={epubFontSize}
             font={readerDefaults.epubFont ?? "serif"}
             theme={readerDefaults.epubTheme ?? "dark"}
-            jumpTarget={epubJump && epubJump.chapterId === chapterId ? { query: epubJump.query, nonce: epubJump.nonce } : null}
+            jumpTarget={
+              epubJump && epubJump.chapterId === chapterId
+                ? { query: epubJump.query, nonce: epubJump.nonce, index: epubJump.index }
+                : null
+            }
+            onMarksFound={setEpubMarks}
           />
         ) : scrollable && !isPdf ? (
           scrollView
@@ -1135,8 +1401,37 @@ export function ReaderScreen({
         </div>
       )}
 
-      {/* ============ live session timer pill ============ */}
-      <SessionPill title={t("rdr.session")} visible={controlsVisible} />
+      {/* ============ live session timer pill (tap = pause/resume) ============ */}
+      <SessionPill
+        title={t("rdr.session")}
+        visible={controlsVisible}
+        paused={sessionPaused}
+        onToggle={() => setSessionPaused((v) => !v)}
+        pausedLabel={t("rdr.sessionPaused")}
+      />
+
+      {/* ============ find-in-page bar (search matches active) ============ */}
+      {findActive && (
+        <FindBar
+          cur={(findIdx ?? 0) + 1}
+          total={findTotal}
+          onPrev={() => findStep(-1)}
+          onNext={() => findStep(1)}
+          onClose={closeFindBar}
+          labels={{
+            prev: t("rdr.findPrev"),
+            next: t("rdr.findNext"),
+            close: t("rdr.findClose"),
+            counter: t("rdr.matchOf", {
+              cur: lang === "fa" ? toFa((findIdx ?? 0) + 1) : (findIdx ?? 0) + 1,
+              total: lang === "fa" ? toFa(findTotal) : findTotal,
+            }),
+          }}
+        />
+      )}
+
+      {/* ============ daily-goal celebration (TRK-004/005) ============ */}
+      {goalCelebrate && <GoalCelebrationOverlay lang={lang} />}
 
       {/* ============ top bar (auto-hide) ============ */}
       <header
@@ -1587,7 +1882,7 @@ export function ReaderScreen({
       </Dialog>
 
       {/* ============ pdf full-text search sheet (RDR-015) ============ */}
-      <Dialog open={pdfSearchOpen} onOpenChange={setPdfSearchOpen}>
+      <Dialog open={pdfSearchOpen} onOpenChange={closePdfSheet}>
         <DialogContent
           showCloseButton={false}
           className="dark top-auto bottom-0 left-1/2 w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9"
@@ -1614,6 +1909,27 @@ export function ReaderScreen({
               className="h-11 w-full rounded-2xl border border-border bg-secondary/60 ps-10 pe-4 text-[13px] font-bold outline-none transition-colors placeholder:font-semibold placeholder:text-muted-foreground focus:border-primary/60 focus:bg-secondary"
             />
           </div>
+
+          {/* match summary (find bar continues after close) */}
+          {!pdfSearching && pdfHits && pdfHits.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-coral-soft">
+                <Search className="h-3 w-3 text-primary" />
+              </span>
+              <p className="text-[11px] font-extrabold text-foreground/80">
+                {t(
+                  pdfHits.length === 1 ? "rdr.pdfSummaryOne" : "rdr.pdfSummary",
+                  {
+                    n: lang === "fa" ? toFa(pdfSeq.length) : pdfSeq.length,
+                    p: lang === "fa" ? toFa(pdfHits.length) : pdfHits.length,
+                  }
+                )}
+              </p>
+              <span className="ms-auto rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold text-secondary-foreground">
+                {t("rdr.findKept")}
+              </span>
+            </div>
+          )}
 
           <div className="thin-scrollbar max-h-[42vh] space-y-1.5 overflow-y-auto pe-1">
             {pdfSearching && (
@@ -1655,7 +1971,7 @@ export function ReaderScreen({
       </Dialog>
 
       {/* ============ book (epub) full-text search sheet ============ */}
-      <Dialog open={epubSearchOpen} onOpenChange={setEpubSearchOpen}>
+      <Dialog open={epubSearchOpen} onOpenChange={closeEpubSheet}>
         <DialogContent
           showCloseButton={false}
           className="dark top-auto bottom-0 left-1/2 w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9"
@@ -1682,6 +1998,27 @@ export function ReaderScreen({
               className="h-11 w-full rounded-2xl border border-border bg-secondary/60 ps-10 pe-4 text-[13px] font-bold outline-none transition-colors placeholder:font-semibold placeholder:text-muted-foreground focus:border-primary/60 focus:bg-secondary"
             />
           </div>
+
+          {/* match summary (find bar continues after close) */}
+          {!epubSearching && epubHits && epubHits.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-coral-soft">
+                <Search className="h-3 w-3 text-primary" />
+              </span>
+              <p className="text-[11px] font-extrabold text-foreground/80">
+                {t(
+                  epubHits.length === 1 ? "rdr.epubSummaryOne" : "rdr.epubSummary",
+                  {
+                    n: lang === "fa" ? toFa(epubSeq.length) : epubSeq.length,
+                    c: lang === "fa" ? toFa(epubHits.length) : epubHits.length,
+                  }
+                )}
+              </p>
+              <span className="ms-auto rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold text-secondary-foreground">
+                {t("rdr.findKept")}
+              </span>
+            </div>
+          )}
 
           <div className="thin-scrollbar max-h-[42vh] space-y-1.5 overflow-y-auto pe-1">
             {epubSearching && (
