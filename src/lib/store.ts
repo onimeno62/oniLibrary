@@ -39,7 +39,8 @@ export type Tab = "home" | "library" | "discover" | "updates" | "downloads" | "m
 
 export type Overlay =
   | { kind: "details"; workId: string }
-  | { kind: "reader"; workId: string; chapterId: string; page?: number }
+  | { kind: "reader"; workId: string; chapterId: string; page?: number; highlightId?: string }
+  | { kind: "highlights"; workId?: string }
   | { kind: "search" }
   | { kind: "source"; sourceId: string }
   | { kind: "vault" }
@@ -141,6 +142,8 @@ interface AppState {
   setUserRating: (workId: string, rating: number) => void;
 
   logReading: (workId: string, minutes: number, chapters: number) => void;
+  /** manually adjust a day's logged minutes (heatmap day editing, round 11) */
+  adjustDay: (date: string, delta: number) => void;
   pushHistory: (workId: string, chapterId: string, page: number) => void;
   clearHistory: () => void;
 
@@ -633,6 +636,23 @@ export const useApp = create<AppState>()(
               });
             })();
           }
+          return { sessions };
+        }),
+      /* heatmap day editing (round 11): clamp at 0 so a day can be corrected
+         both ways without going negative; keeps the same 60-day window rule */
+      adjustDay: (date, delta) =>
+        set((s) => {
+          const sessions = [...s.sessions];
+          const idx = sessions.findIndex((x) => x.date === date);
+          if (idx >= 0) {
+            const minutes = Math.max(0, sessions[idx].minutes + delta);
+            sessions[idx] = { ...sessions[idx], minutes };
+          } else if (delta > 0) {
+            sessions.push({ date, minutes: delta, chapters: 0 });
+          } else {
+            return {}; // nothing to reduce on an empty day
+          }
+          if (sessions.length > 60) sessions.splice(0, sessions.length - 60);
           return { sessions };
         }),
       pushHistory: (workId, chapterId, page) =>

@@ -521,3 +521,58 @@ mark.oni-hl-fresh {
 }
 
 /* round-10 rebuild marker */
+
+/* ============================================================
+   round 11 — highlights manager + PDF rect highlights + heatmap
+   ============================================================ */
+
+/* highlight manager card entrance (staggered via inline delay when needed) */
+.oni-hl-card {
+  animation: oni-hl-card-in 320ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+@keyframes oni-hl-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* statistics day-detail panel */
+.oni-day-panel {
+  animation: oni-hl-card-in 280ms cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+
+/* heatmap: goal-reached days get a coral inner ring */
+.oni-heat-goal {
+  box-shadow: inset 0 0 0 1.5px rgba(248, 105, 76, 0.95), 0 0 5px rgba(248, 105, 76, 0.35);
+}
+
+/* PDF saved-highlight marks (round 11) */
+.oni-pdf-hl {
+  transition: background-color 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+}
+/* manager jump flash: breathing glow over the focused mark */
+.oni-pdf-hl-flash {
+  animation: oni-pdf-hl-flash 1600ms ease both;
+  z-index: 5;
+}
+@keyframes oni-pdf-hl-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(248, 105, 76, 0.75);
+  }
+  35% {
+    box-shadow: 0 0 0 6px rgba(248, 105, 76, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(248, 105, 76, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(248, 105, 76, 0);
+  }
+}
+
+/* round-11 rebuild marker */

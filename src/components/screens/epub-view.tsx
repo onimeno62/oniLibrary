@@ -328,6 +328,7 @@ export function EpubBookView({
   font = "serif",
   theme = "dark",
   jumpTarget = null,
+  focusHighlightId = null,
   onMarksFound,
 }: {
   work: Work;
@@ -337,6 +338,8 @@ export function EpubBookView({
   theme?: "dark" | "sepia" | "paper";
   /** search hit to scroll to — {query, nonce} so identical queries re-trigger; index selects the active match */
   jumpTarget?: { query: string; nonce: number; index?: number } | null;
+  /** highlight opened from the manager (round 11): flash + scroll the mark into view */
+  focusHighlightId?: string | null;
   /** reports how many in-chapter matches were just marked (drives the find bar) */
   onMarksFound?: (count: number) => void;
 }) {
@@ -483,6 +486,15 @@ export function EpubBookView({
       }
     }
 
+    // 2b) manager jump: flash + center the focused highlight (round 11)
+    if (focusHighlightId) {
+      const el = root.querySelector(`mark.oni-hl[data-hl-id="${focusHighlightId}"]`) as HTMLElement | null;
+      if (el) {
+        el.classList.add("oni-hl-fresh");
+        requestAnimationFrame(() => el.scrollIntoView({ block: "center", behavior: "smooth" }));
+      }
+    }
+
     // 3) live search matches
     if (!jumpTarget || !jumpTarget.query) {
       onMarksFound?.(0);
@@ -541,7 +553,7 @@ export function EpubBookView({
       active.classList.add("oni-find-active");
       requestAnimationFrame(() => active.scrollIntoView({ block: "center" }));
     }
-  }, [html, hlKey, jumpTarget?.nonce]);
+  }, [html, hlKey, jumpTarget?.nonce, focusHighlightId]);
 
   /* -------- selection → highlight popup -------- */
 

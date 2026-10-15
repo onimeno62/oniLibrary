@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import {
   Download,
   BarChart3,
+  Highlighter,
   ShieldCheck,
   Bookmark,
   Database,
@@ -73,6 +74,7 @@ export function MoreScreen() {
   const { t, lang } = useT();
   const userName = useApp((s) => s.settings.userName);
   const works = useApp((s) => s.works);
+  const hlCount = useApp((s) => s.highlights.length);
   const runUpdateCheck = useApp((s) => s.runUpdateCheck);
   const setTab = useNav((s) => s.setTab);
   const push = useNav((s) => s.push);
@@ -85,6 +87,12 @@ export function MoreScreen() {
   const menu = [
     { Icon: Download, label: t("more.downloads"), onClick: () => setTab("downloads") },
     { Icon: BarChart3, label: t("more.statistics"), onClick: () => push({ kind: "statistics" }) },
+    {
+      Icon: Highlighter,
+      label: t("nhl.title"),
+      badge: hlCount > 0 ? String(lang === "fa" ? toFa(hlCount) : hlCount) : undefined,
+      onClick: () => push({ kind: "highlights" }),
+    },
     { Icon: ShieldCheck, label: t("more.vault"), onClick: () => push({ kind: "vault" }) },
     { Icon: Bookmark, label: t("more.categories"), onClick: () => push({ kind: "categories" }) },
     {

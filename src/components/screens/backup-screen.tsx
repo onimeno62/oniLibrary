@@ -14,6 +14,7 @@ import {
 import { OverlayHeader } from "@/components/shared";
 import { useApp } from "@/lib/store";
 import { timeAgo } from "@/lib/store";
+import { downloadFile, nativeExport, toCsv } from "@/lib/export-file";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -73,50 +74,7 @@ export function BackupScreen() {
     return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
   };
 
-  /* UTF-8 → base64 (chunked to avoid stack overflow on big backups) */
-  const toBase64 = (bytes: Uint8Array) => {
-    let bin = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
-    }
-    return btoa(bin);
-  };
-
-  /* round 9: inside the APK the WebView can't download anchors — hand the
-     payload to the native bridge (MediaStore Downloads / share sheet) */
-  const nativeExport = (name: string, mime: string, bytes: Uint8Array): boolean => {
-    const bridge = (window as { OniAndroid?: { exportFile?: (b64: string, n: string, m: string) => string } })
-      .OniAndroid;
-    if (!bridge?.exportFile) return false;
-    try {
-      return bridge.exportFile(toBase64(bytes), name, mime.split(";")[0]) !== "error";
-    } catch {
-      return false;
-    }
-  };
-
-  const downloadFile = (name: string, mime: string, content: string) => {
-    const bytes = new TextEncoder().encode(content);
-    if (nativeExport(name, mime, bytes)) return;
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  };
-
-  /* CSV quoting: wrap when the value contains comma, quote or newline */
-  const csvEscape = (v: string | number) => {
-    const s = String(v ?? "");
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const toCsv = (rows: (string | number)[][]) =>
-    "\uFEFF" + rows.map((r) => r.map(csvEscape).join(",")).join("\n");
+  /* round 9/11: export helpers live in lib/export-file (native bridge aware) */
 
   const exportLibraryCsv = () => {
     const rows: (string | number)[][] = [

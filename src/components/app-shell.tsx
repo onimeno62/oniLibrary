@@ -25,6 +25,7 @@ import { ServersScreen } from "@/components/screens/servers-screen";
 import { FormatsScreen } from "@/components/screens/formats-screen";
 import { NotificationsScreen } from "@/components/screens/notifications-screen";
 import { DuplicatesScreen } from "@/components/screens/duplicates-screen";
+import { HighlightsScreen } from "@/components/screens/highlights-screen";
 import { useApp, useNav, type Overlay } from "@/lib/store";
 import { useT, useResolvedTheme, useMounted } from "@/lib/use-app";
 import { useClientEngine } from "@/lib/engine";
@@ -132,7 +133,9 @@ function OverlayRenderer({ overlay }: { overlay: Overlay }) {
     case "details":
       return <DetailsScreen workId={overlay.workId} />;
     case "reader":
-      return <ReaderScreen workId={overlay.workId} chapterId={overlay.chapterId} startPage={overlay.page} />;
+      return <ReaderScreen workId={overlay.workId} chapterId={overlay.chapterId} startPage={overlay.page} highlightId={overlay.highlightId} />;
+    case "highlights":
+      return <HighlightsScreen workId={overlay.workId} />;
     case "search":
       return <SearchScreen />;
     case "source":

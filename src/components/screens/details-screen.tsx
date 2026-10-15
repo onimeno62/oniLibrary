@@ -24,12 +24,13 @@ import {
   Trash2,
   Pencil,
   StickyNote,
+  Highlighter,
   ImagePlus,
   X,
 } from "lucide-react";
 import { WorkCover } from "@/components/shared";
 import { WorkMenu } from "@/components/screens/library-screen";
-import { useApp, useNav, continueReading, timeAgo, workProgress } from "@/lib/store";
+import { useApp, useNav, continueReading, timeAgo, workProgress, toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -64,6 +65,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
 
   const bookmarks = useApp((s) => s.bookmarks);
   const workBookmarkCount = bookmarks.filter((b) => b.workId === workId).length;
+  const workHighlightCount = useApp((s) => s.highlights.filter((h) => h.workId === workId).length);
 
   const chapters = useMemo(() => {
     if (!work) return [];
@@ -289,6 +291,23 @@ export function DetailsScreen({ workId }: { workId: string }) {
             >
               {work.personalNotes || t("det.notesEmpty")}
             </span>
+          </button>
+
+          {/* notes & highlights (round 11) */}
+          <button
+            onClick={() => push({ kind: "highlights", workId: work.id })}
+            className="mt-2.5 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-2.5 text-start transition-colors hover:bg-white/[0.07]"
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-coral-soft text-primary">
+              <Highlighter className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1 text-[13px] font-bold text-white/90">{t("nhl.title")}</span>
+            {workHighlightCount > 0 && (
+              <span className="shrink-0 rounded-full bg-coral-gradient px-2 py-0.5 text-[10px] font-black text-white shadow-[0_6px_14px_-6px_rgba(248,105,76,0.8)]">
+                {lang === "fa" ? toFa(workHighlightCount) : workHighlightCount}
+              </span>
+            )}
+            <ChevronRight className="h-4 w-4 shrink-0 text-white/40 rtl:rotate-180" />
           </button>
 
           {/* description */}

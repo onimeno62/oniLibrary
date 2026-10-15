@@ -164,7 +164,8 @@ export interface Bookmark {
 /** highlight annotation colors (books) */
 export type HighlightColor = "coral" | "mint" | "amber" | "violet";
 
-/** saved text-highlight annotation on an EPUB chapter (round 10) */
+/** saved text-highlight annotation on an EPUB chapter (round 10) /
+ *  rect highlight on a PDF page (round 11) — one interface, two anchor kinds */
 export interface Highlight {
   id: string;
   workId: string;
@@ -173,8 +174,14 @@ export interface Highlight {
   text: string; // the selected text (also the re-anchor fallback)
   note?: string; // optional annotation note
   createdAt: string;
-  /** stable anchor: global char offsets inside the chapter's concatenated text */
+  /** stable anchor: global char offsets inside the chapter's concatenated text (EPUB) */
   anchor: { start: number; end: number };
+  /** PDF highlights only: 1-based page the rect belongs to */
+  page?: number;
+  /** PDF highlights only: axis-aligned rect in UNROTATED scale-1 user space
+      (y grows up) — converted through the page viewport at render time, so
+      rotation/zoom stay in sync (same scheme as the find-in-page marks) */
+  rect?: { x1: number; y1: number; x2: number; y2: number };
 }
 
 export interface ServerEntry {

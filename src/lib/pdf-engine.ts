@@ -285,6 +285,47 @@ export interface PdfSearchHit {
   count: number; // ALL matches on this page (drives find-bar prev/next)
 }
 
+/**
+ * Best-effort plain text of the area covered by a user-space rect
+ * (round 11 — PDF highlights): collects every text item whose baseline
+ * origin + horizontal span intersects the rect, top-to-bottom. Used to
+ * caption saved rectangle highlights in the highlights manager.
+ */
+export async function getPdfTextInRect(
+  workId: string,
+  page: number, // 1-based
+  rect: { x1: number; y1: number; x2: number; y2: number }
+): Promise<string> {
+  try {
+    const doc = await loadPdfDoc(workId);
+    const pdfPage = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
+    const tc = await pdfPage.getTextContent();
+    const lo = Math.min(rect.y1, rect.y2);
+    const hi = Math.max(rect.y1, rect.y2);
+    const l = Math.min(rect.x1, rect.x2);
+    const r = Math.max(rect.x1, rect.x2);
+    const hits: { y: number; str: string; x: number }[] = [];
+    for (const item of tc.items) {
+      if (!("str" in item) || !item.str.trim()) continue;
+      const x = item.transform[4];
+      const y = item.transform[5];
+      const w = item.width;
+      if (y + item.height * 0.8 < lo || y - item.height * 0.3 > hi) continue;
+      if (x + w < l || x > r) continue;
+      hits.push({ y, x, str: item.str });
+    }
+    hits.sort((a, b) => b.y - a.y || a.x - b.x);
+    return hits
+      .map((h) => h.str)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 400);
+  } catch {
+    return "";
+  }
+}
+
 /** page text for read-aloud (1-based page) — cached with the search index */
 export async function getPdfPageText(workId: string, page: number): Promise<string> {
   const pages = await getPdfPageTexts(workId);

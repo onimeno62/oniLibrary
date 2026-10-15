@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, Tooltip } from "recharts";
-import { Clock3, BookOpen, LibraryBig, CheckCircle2, Flame, History, Target, Minus, Plus } from "lucide-react";
+import { Clock3, BookOpen, LibraryBig, CheckCircle2, Flame, History, Target, Minus, Plus, CalendarDays } from "lucide-react";
 import { OverlayHeader } from "@/components/shared";
 import { useApp, useNav } from "@/lib/store";
 import { toFa } from "@/lib/store";
@@ -187,6 +187,26 @@ export function StatisticsScreen() {
     }
     return weeks;
   }, [sessions]);
+
+  /* selected heatmap day → detail + per-day minute editing (round 11) */
+  const [selDay, setSelDay] = useState<string | null>(null);
+  const selSession = useMemo(
+    () => (selDay ? sessions.find((s) => s.date === selDay) : undefined),
+    [selDay, sessions]
+  );
+  const selLabel = useMemo(() => {
+    if (!selDay) return "";
+    const [y, m, d] = selDay.split("-").map(Number);
+    return new Date(y, (m ?? 1) - 1, d).toLocaleDateString(fa ? "fa" : "en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+    });
+  }, [selDay, fa]);
+  const adjustSel = (delta: number) => {
+    if (!selDay) return;
+    useApp.getState().adjustDay(selDay, delta);
+  };
   const activeDays = useMemo(
     () => heat.reduce((a, w) => a + w.cells.filter((c) => c.minutes > 0).length, 0),
     [heat]
@@ -331,7 +351,7 @@ export function StatisticsScreen() {
         </div>
       </section>
 
-      {/* reading activity heatmap (15 weeks) */}
+      {/* reading activity heatmap (15 weeks, tap a day to view/edit) */}
       <section className="mt-3 rounded-3xl border border-border bg-card p-4">
         <div className="flex items-center justify-between">
           <p className="text-[15px] font-extrabold tracking-tight">{t("stat.heatmap")}</p>
@@ -339,6 +359,7 @@ export function StatisticsScreen() {
             {num(activeDays)} {t("stat.activeDays")}
           </span>
         </div>
+        <p className="mt-0.5 text-[10.5px] font-semibold text-muted-foreground">{t("stat.tapDayHint")}</p>
         <div dir="ltr" className="mt-3 overflow-x-auto no-scrollbar">
           <div className="flex min-w-max flex-col gap-1">
             {/* month labels */}
@@ -357,24 +378,34 @@ export function StatisticsScreen() {
               {/* weekday letters */}
               <div className="flex w-[23px] flex-col gap-[3px] pe-0.5 text-end">
                 {weekdayLabels.map((lbl, i) => (
-                  <span key={i} className="h-2.5 text-[8px] font-bold leading-2.5 text-muted-foreground">
+                  <span key={i} className="h-[13px] text-[8px] font-bold leading-[13px] text-muted-foreground">
                     {i % 2 === 0 ? lbl : ""}
                   </span>
                 ))}
               </div>
               {heat.map((w, wi) => (
                 <div key={wi} className="flex flex-col gap-[3px]">
-                  {w.cells.map((c, ci) => (
-                    <span
-                      key={ci}
-                      title={`${c.label} · ${c.minutes} ${t("stat.minutesShort")}`}
-                      aria-label={`${c.label} — ${c.minutes} ${t("stat.minutesShort")}`}
-                      className={cn(
-                        "h-2.5 w-2.5 rounded-[3px] transition-colors",
-                        c.future ? "bg-transparent" : HEAT_CLASS[heatLevel(c.minutes)]
-                      )}
-                    />
-                  ))}
+                  {w.cells.map((c, ci) => {
+                    const goalMet = dailyGoalMin > 0 && c.minutes >= dailyGoalMin;
+                    return (
+                      <button
+                        key={ci}
+                        type="button"
+                        disabled={c.future}
+                        onClick={() => setSelDay((cur) => (cur === c.iso ? null : c.iso))}
+                        title={`${c.label} · ${c.minutes} ${t("stat.minutesShort")}${goalMet ? " · ✓" : ""}`}
+                        aria-label={`${c.label} — ${c.minutes} ${t("stat.minutesShort")}${goalMet ? ` — ${t("stat.goalDay")}` : ""}`}
+                        aria-pressed={selDay === c.iso}
+                        className={cn(
+                          "h-[13px] w-[13px] rounded-[4px] transition-all duration-150",
+                          !c.future && "hover:scale-125 active:scale-95",
+                          c.future ? "bg-transparent" : HEAT_CLASS[heatLevel(c.minutes)],
+                          goalMet && "oni-heat-goal",
+                          selDay === c.iso && "ring-2 ring-primary ring-offset-1 ring-offset-card"
+                        )}
+                      />
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -386,7 +417,95 @@ export function StatisticsScreen() {
             <span key={lv} className={cn("h-2.5 w-2.5 rounded-[3px]", HEAT_CLASS[lv])} />
           ))}
           <span className="text-[9px] font-bold text-muted-foreground">{t("stat.heatmapMore")}</span>
+          {dailyGoalMin > 0 && (
+            <span className="ms-2 flex items-center gap-1 text-[9px] font-bold text-muted-foreground">
+              <span className="oni-heat-goal h-2.5 w-2.5 rounded-[4px] bg-secondary" aria-hidden />
+              {t("stat.goalDay")}
+            </span>
+          )}
         </div>
+
+        {/* day detail + per-day editing (round 11) */}
+        {selDay && (
+          <div className="oni-day-panel mt-3 rounded-2xl border border-border bg-white/[0.03] p-3.5">
+            <div className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-coral-soft text-primary">
+                <CalendarDays className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-extrabold">{selLabel}</p>
+                <p className="text-[10.5px] font-semibold text-muted-foreground" dir="ltr">
+                  {selDay}
+                </p>
+              </div>
+              {dailyGoalMin > 0 && (selSession?.minutes ?? 0) >= dailyGoalMin && (
+                <span className="flex items-center gap-1 rounded-full bg-coral-soft px-2 py-1 text-[10px] font-extrabold text-primary">
+                  <Flame className="h-3 w-3" />
+                  {t("stat.goalDay")}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelDay(null)}
+                aria-label={t("common.close")}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary"
+              >
+                <Plus className="h-4 w-4 rotate-45" />
+              </button>
+            </div>
+
+            <div className="mt-2.5 flex items-end justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[22px] font-black leading-none text-foreground" dir="ltr">
+                  {num(selSession?.minutes ?? 0)}
+                  <span className="ms-1 text-[11px] font-bold text-muted-foreground">{t("stat.minutesUnit")}</span>
+                </p>
+                {dailyGoalMin > 0 && (
+                  <div className="mt-2 h-1.5 w-full max-w-[180px] overflow-hidden rounded-full bg-secondary">
+                    <div
+                      className="h-full rounded-full bg-coral-gradient transition-all duration-300"
+                      style={{ width: `${Math.min(100, ((selSession?.minutes ?? 0) / dailyGoalMin) * 100)}%` }}
+                    />
+                  </div>
+                )}
+                <p className="mt-1 text-[10.5px] font-semibold text-muted-foreground">
+                  {selSession?.chapters
+                    ? `${num(selSession.chapters)} ${t("stat.totalChapters").toLowerCase()}`
+                    : t("stat.noData")}
+                </p>
+              </div>
+
+              {/* adjust buttons */}
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => adjustSel(-5)}
+                  aria-label="-5"
+                  disabled={!selSession}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-all hover:bg-accent active:scale-90 disabled:opacity-40"
+                >
+                  <Minus className="h-4 w-4" />
+                </button>
+                {[5, 15].map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => adjustSel(d)}
+                    aria-label={`+${d}`}
+                    className={cn(
+                      "flex h-9 items-center rounded-full px-3 text-[12px] font-black transition-all active:scale-90",
+                      d === 15
+                        ? "bg-coral-gradient text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.8)]"
+                        : "bg-secondary text-secondary-foreground hover:bg-accent"
+                    )}
+                  >
+                    +{num(d)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* streak */}

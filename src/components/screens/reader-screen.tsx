@@ -25,6 +25,7 @@ import {
   Download,
   Ellipsis,
   Flame,
+  Highlighter,
   ImageOff,
   Keyboard,
   List,
@@ -470,10 +471,13 @@ export function ReaderScreen({
   workId,
   chapterId,
   startPage,
+  highlightId,
 }: {
   workId: string;
   chapterId: string;
   startPage?: number;
+  /** highlight opened from the notes & highlights manager (round 11) */
+  highlightId?: string;
 }) {
   const { t, lang } = useT();
 
@@ -484,6 +488,12 @@ export function ReaderScreen({
   );
   const readerDefaults = useApp((s) => s.settings.readerDefaults);
   const bookmarks = useApp((s) => s.bookmarks);
+  const allHighlights = useApp((s) => s.highlights);
+  /* PDF rect highlights for this work (stable selector + memo → getSnapshot safe) */
+  const pdfHighlights = useMemo(
+    () => allHighlights.filter((h) => h.workId === workId && h.page !== undefined),
+    [allHighlights, workId]
+  );
   const pop = useNav((s) => s.pop);
   const updateWork = useApp((s) => s.updateWork);
   const setReaderDefaults = useApp((s) => s.setReaderDefaults);
@@ -536,6 +546,11 @@ export function ReaderScreen({
   const [finePointer, setFinePointer] = useState(false);
   /* find-in-page bar (round 8): index into the global match sequence */
   const [findIdx, setFindIdx] = useState<number | null>(null);
+  /* PDF rect-highlight mode (round 11): drag on the page to select an area */
+  const [pdfHlMode, setPdfHlMode] = useState(false);
+  const pdfHlHintedRef = useRef(false);
+  /* focused highlight (manager jump): epub scrolls/flashes the mark, pdf jumps pages */
+  const [focusHlId, setFocusHlId] = useState<string | null>(null);
   /* matches marked in the CURRENT epub chapter (reported by EpubBookView) */
   const [epubMarks, setEpubMarks] = useState(0);
   /* focus timer: paused minutes don't tick the pill or the reading log */
@@ -688,6 +703,20 @@ export function ReaderScreen({
     }, 60_000);
     return () => window.clearInterval(id);
   }, [workId]);
+
+  /* jump straight to a highlight opened from the manager (round 11) */
+  useEffect(() => {
+    if (!highlightId) return;
+    const hl = useApp.getState().highlights.find((h) => h.id === highlightId);
+    if (!hl) return;
+    setFocusHlId(highlightId);
+    if (hl.page && isPdf) {
+      const p = Math.max(0, Math.min(total - 1, hl.page - 1));
+      goToPage(p);
+      if (scrollable) setScrollCmd({ page: p });
+    }
+     
+  }, [highlightId]);
 
   /* keep the pause ref in sync so the interval closure always sees it */
   useEffect(() => {
@@ -1335,7 +1364,18 @@ export function ReaderScreen({
   const renderPageEl = (i: number, fitOverride?: string) => {
     const cls = fitOverride ?? FIT_CLASS[fit];
     if (isPdf) {
-      return <PdfCanvas workId={work.id} page={i + 1} className={cls} highlight={pdfHighlightFor(i + 1)} />;
+      return (
+        <PdfCanvas
+          workId={work.id}
+          chapterId={chapterId}
+          page={i + 1}
+          className={cls}
+          highlight={pdfHighlightFor(i + 1)}
+          highlights={pdfHighlights.filter((h) => h.page === i + 1)}
+          highlightMode={pdfHlMode}
+          focusHighlightId={focusHlId}
+        />
+      );
     }
     if (isLocal && work.localPages?.[i]) {
       return <LocalPageImage storageKey={work.localPages[i]} className={cls} />;
@@ -1436,8 +1476,8 @@ export function ReaderScreen({
 
   const barPos = controlsVisible ? "translate-y-0 opacity-100" : "pointer-events-none opacity-0";
   const sliderMax = Math.max(0, total - 1);
-  // when the page can be panned, side tap zones must not eat the gestures
-  const panBlock = zoom > 1 || fit === "ORIGINAL";
+  // when the page can be panned (or lasso-highlighting), side tap zones must not eat the gestures
+  const panBlock = zoom > 1 || fit === "ORIGINAL" || (isPdf && pdfHlMode);
 
   return (
     <div className="dark relative flex h-full flex-col overflow-hidden bg-background text-foreground">
@@ -1460,6 +1500,7 @@ export function ReaderScreen({
                 ? { query: epubJump.query, nonce: epubJump.nonce, index: epubJump.index }
                 : null
             }
+            focusHighlightId={isEpub ? focusHlId : null}
             onMarksFound={setEpubMarks}
           />
         ) : scrollable && !isPdf ? (
@@ -1478,7 +1519,16 @@ export function ReaderScreen({
                   anchorsRef.current[i] = el;
                 }}
               >
-                <PdfCanvas workId={work.id} page={i + 1} className="block w-full" highlight={pdfHighlightFor(i + 1)} />
+                <PdfCanvas
+                  workId={work.id}
+                  chapterId={chapterId}
+                  page={i + 1}
+                  className="block w-full"
+                  highlight={pdfHighlightFor(i + 1)}
+                  highlights={pdfHighlights.filter((h) => h.page === i + 1)}
+                  highlightMode={pdfHlMode}
+                  focusHighlightId={focusHlId}
+                />
               </div>
             ))}
           </div>
@@ -1877,6 +1927,21 @@ export function ReaderScreen({
               active={pdfSearchOpen}
               onClick={openSearch}
               aria-label={t("rdr.pdfSearch")}
+            />
+          )}
+          {isPdf && (
+            <ToolbarBtn
+              icon={Highlighter}
+              label={t("pdfhl.mode")}
+              active={pdfHlMode}
+              onClick={() => {
+                setPdfHlMode((v) => !v);
+                if (!pdfHlMode && !pdfHlHintedRef.current) {
+                  pdfHlHintedRef.current = true;
+                  toast({ title: t("pdfhl.hint") });
+                }
+              }}
+              aria-label={t("pdfhl.mode")}
             />
           )}
           {isEpub && (

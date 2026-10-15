@@ -649,6 +649,30 @@ const en = {
   // read-aloud (PDF)
   "tts.page": "Page {n}",
   "tts.autoAdvance": "Auto-advance pages",
+  /* round 11 — notes & highlights manager */
+  "nhl.title": "Notes & highlights",
+  "nhl.count": "{n} highlights",
+  "nhl.countOne": "1 highlight",
+  "nhl.empty": "No highlights yet",
+  "nhl.emptyHint": "Select text in any book — or drag on a PDF page — to save your first highlight.",
+  "nhl.search": "Search highlights…",
+  "nhl.allWorks": "All works",
+  "nhl.allColors": "All colors",
+  "nhl.notedOnly": "With notes",
+  "nhl.open": "Open",
+  "nhl.copy": "Copy text",
+  "nhl.copied": "Text copied",
+  "nhl.editTitle": "Edit highlight",
+  "nhl.exportMd": "Export as Markdown",
+  "nhl.exportCsv": "Export as CSV",
+  "nhl.exported": "Exported",
+  /* round 11 — PDF rect highlights */
+  "pdfhl.mode": "Highlight",
+  "pdfhl.hint": "Drag on the page to select an area",
+  /* round 11 — statistics day editing */
+  "stat.tapDayHint": "Tap a day to view or edit",
+  "stat.goalDay": "Goal reached",
+  "stat.noData": "No reading logged",
 } ;
 
 export type TranslationKey = keyof typeof en;
@@ -1289,6 +1313,30 @@ const fa: Record<TranslationKey, string> = {
   // read-aloud (PDF)
   "tts.page": "صفحه {n}",
   "tts.autoAdvance": "رفتن خودکار به صفحه بعد",
+  /* round 11 — notes & highlights manager */
+  "nhl.title": "یادداشت‌ها و برجسته‌ها",
+  "nhl.count": "{n} برجسته",
+  "nhl.countOne": "۱ برجسته",
+  "nhl.empty": "هنوز برجسته‌ای وجود ندارد",
+  "nhl.emptyHint": "در هر کتاب متنی را انتخاب کنید یا روی صفحهٔ PDF بکشید تا نخستین برجسته را ذخیره کنید.",
+  "nhl.search": "جست‌وجوی برجسته‌ها…",
+  "nhl.allWorks": "همه آثار",
+  "nhl.allColors": "همه رنگ‌ها",
+  "nhl.notedOnly": "دارای یادداشت",
+  "nhl.open": "باز کردن",
+  "nhl.copy": "کپی متن",
+  "nhl.copied": "متن کپی شد",
+  "nhl.editTitle": "ویرایش برجسته",
+  "nhl.exportMd": "خروجی مارک‌داون",
+  "nhl.exportCsv": "خروجی CSV",
+  "nhl.exported": "خروجی گرفته شد",
+  /* round 11 — PDF rect highlights */
+  "pdfhl.mode": "برجسته",
+  "pdfhl.hint": "برای انتخاب ناحیه روی صفحه بکشید",
+  /* round 11 — statistics day editing */
+  "stat.tapDayHint": "برای مشاهده یا ویرایش روی یک روز بزنید",
+  "stat.goalDay": "هدف برآورده شد",
+  "stat.noData": "مطالعه‌ای ثبت نشده",
 };
 
 const dicts: Record<Lang, Record<TranslationKey, string>> = { en, fa };
