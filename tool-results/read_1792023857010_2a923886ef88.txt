@@ -1,0 +1,1579 @@
+     1→"use client";
+     2→
+     3→/* ============================================================
+     4→   oniLibrary — READER SCREEN (Task 2-a)
+     5→   Paged / double / continuous / webtoon engine (PRD §8):
+     6→   RDR-001 modes · RDR-002 direction · RDR-003 fit · RDR-004
+     7→   zoom · RDR-005 jump + chapter list · RDR-006 progress
+     8→   persistence · RDR-007 per-series settings · RDR-009
+     9→   brightness/background/keep-awake · RDR-011 chapter end card ·
+    10→   RDR-013 bookmarks · RDR-014 presets.
+    11→   ============================================================ */
+    12→
+    13→import { useEffect, useMemo, useRef, useState } from "react";
+    14→import {
+    15→  ALargeSmall,
+    16→  Bookmark,
+    17→  CheckCircle2,
+    18→  ChevronLeft,
+    19→  CirclePlay,
+    20→  Download,
+    21→  Ellipsis,
+    22→  ImageOff,
+    23→  List,
+    24→  ListTree,
+    25→  Loader2,
+    26→  MoreVertical,
+    27→  MoveHorizontal,
+    28→  Pause,
+    29→  Play,
+    30→  RotateCw,
+    31→  Settings,
+    32→  SkipBack,
+    33→  SkipForward,
+    34→  Square,
+    35→  Sun,
+    36→  Volume2,
+    37→  ZoomIn,
+    38→  type LucideIcon,
+    39→} from "lucide-react";
+    40→import { MangaPage, hashStr } from "@/lib/manga-page";
+    41→import { PdfCanvas } from "@/components/pdf-view";
+    42→import { useApp, useNav, toFa } from "@/lib/store";
+    43→import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSupported, useTts } from "@/lib/tts";
+    44→import type { PdfTocItem } from "@/lib/pdf-engine";
+    45→import { useT } from "@/lib/use-app";
+    46→import { cn } from "@/lib/utils";
+    47→import { toast } from "@/hooks/use-toast";
+    48→import { Slider } from "@/components/ui/slider";
+    49→import { EpubBookView } from "@/components/screens/epub-view";
+    50→import {
+    51→  Dialog,
+    52→  DialogContent,
+    53→  DialogDescription,
+    54→  DialogHeader,
+    55→  DialogTitle,
+    56→} from "@/components/ui/dialog";
+    57→import { Switch } from "@/components/ui/switch";
+    58→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+    59→import {
+    60→  DropdownMenu,
+    61→  DropdownMenuContent,
+    62→  DropdownMenuItem,
+    63→  DropdownMenuTrigger,
+    64→} from "@/components/ui/dropdown-menu";
+    65→import type { FitMode, ReaderMode, ReadingDirection } from "@/lib/types";
+    66→import type { TranslationKey } from "@/lib/i18n";
+    67→
+    68→/* ------------------------------------------------------------------ */
+    69→/* helpers                                                             */
+    70→/* ------------------------------------------------------------------ */
+    71→
+    72→type BgName = "black" | "gray" | "white" | "sepia";
+    73→
+    74→const BG_HEX: Record<BgName, string> = {
+    75→  black: "#000000",
+    76→  gray: "#2e2c2a",
+    77→  white: "#ffffff",
+    78→  sepia: "#f4ead3",
+    79→};
+    80→
+    81→/** how the page element sizes itself inside a slide (RDR-003) */
+    82→const FIT_CLASS: Record<FitMode, string> = {
+    83→  WIDTH: "block w-full h-auto",
+    84→  HEIGHT: "block h-full w-auto",
+    85→  SCREEN: "block h-full w-full object-contain",
+    86→  ORIGINAL: "block h-[1200px] w-[800px] max-w-none",
+    87→};
+    88→
+    89→interface ChapterLite {
+    90→  id: string;
+    91→  number: number;
+    92→  title: string;
+    93→  isRead: boolean;
+    94→}
+    95→
+    96→/* ------------------------------------------------------------------ */
+    97→/* small UI atoms                                                      */
+    98→/* ------------------------------------------------------------------ */
+    99→
+   100→function CtrlBtn({
+   101→  icon: Icon,
+   102→  label,
+   103→  active,
+   104→  ...props
+   105→}: { icon: LucideIcon; label: string; active?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+   106→  return (
+   107→    <button type="button" {...props} className={cn("flex flex-col items-center gap-1 py-0.5", props.className)}>
+   108→      <span
+   109→        className={cn(
+   110→          "flex h-10 w-10 items-center justify-center rounded-full transition-colors",
+   111→          active ? "bg-coral-gradient text-white shadow-[0_8px_20px_-8px_rgba(248,105,76,0.9)]" : "bg-white/8 text-white/90 hover:bg-white/15"
+   112→        )}
+   113→      >
+   114→        <Icon className="h-5 w-5" />
+   115→      </span>
+   116→      <span className="max-w-[76px] truncate text-[10px] font-semibold text-white/60">{label}</span>
+   117→    </button>
+   118→  );
+   119→}
+   120→
+   121→function ToolbarBtn({
+   122→  icon: Icon,
+   123→  label,
+   124→  active,
+   125→  ...props
+   126→}: { icon: LucideIcon; label: string; active?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+   127→  return (
+   128→    <button type="button" {...props} className={cn("flex flex-col items-center gap-1.5", props.className)}>
+   129→      <span
+   130→        className={cn(
+   131→          "flex h-10 w-10 items-center justify-center rounded-full transition-colors",
+   132→          active ? "bg-coral-gradient text-white" : "bg-white/8 text-white/90 hover:bg-white/15"
+   133→        )}
+   134→      >
+   135→        <Icon className="h-[18px] w-[18px]" />
+   136→      </span>
+   137→      <span className="max-w-[64px] truncate text-[10px] font-semibold text-white/60">{label}</span>
+   138→    </button>
+   139→  );
+   140→}
+   141→
+   142→function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+   143→  return (
+   144→    <button
+   145→      type="button"
+   146→      onClick={onClick}
+   147→      className={cn(
+   148→        "rounded-full px-3.5 py-1.5 text-[12px] font-bold transition-all",
+   149→        active
+   150→          ? "bg-coral-gradient text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.8)]"
+   151→          : "bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground"
+   152→      )}
+   153→    >
+   154→      {children}
+   155→    </button>
+   156→  );
+   157→}
+   158→
+   159→function SheetRow({ label, children }: { label: string; children: React.ReactNode }) {
+   160→  return (
+   161→    <div>
+   162→      <p className="mb-2 text-[12px] font-bold text-muted-foreground">{label}</p>
+   163→      <div className="flex flex-wrap gap-2">{children}</div>
+   164→    </div>
+   165→  );
+   166→}
+   167→
+   168→/* ------------------------------------------------------------------ */
+   169→/* local page (IndexedDB object URLs)                                  */
+   170→/* ------------------------------------------------------------------ */
+   171→
+   172→function LocalPageImage({ storageKey, className }: { storageKey: string; className?: string }) {
+   173→  const { t } = useT();
+   174→  const [url, setUrl] = useState<string | null>(null);
+   175→  const [failed, setFailed] = useState(false);
+   176→
+   177→  useEffect(() => {
+   178→    let alive = true;
+   179→    let made: string | null = null;
+   180→    setUrl(null);
+   181→    setFailed(false);
+   182→    (async () => {
+   183→      try {
+   184→        const { loadPageUrl } = await import("@/lib/importer");
+   185→        const u = await loadPageUrl(storageKey);
+   186→        if (!alive) {
+   187→          if (u) URL.revokeObjectURL(u);
+   188→          return;
+   189→        }
+   190→        if (u) {
+   191→          made = u;
+   192→          setUrl(u);
+   193→        } else {
+   194→          setFailed(true);
+   195→        }
+   196→      } catch {
+   197→        if (alive) setFailed(true);
+   198→      }
+   199→    })();
+   200→    return () => {
+   201→      alive = false;
+   202→      if (made) URL.revokeObjectURL(made);
+   203→    };
+   204→  }, [storageKey]);
+   205→
+   206→  if (failed) {
+   207→    return (
+   208→      <div className={cn("flex w-full flex-col items-center justify-center gap-2 bg-[#151312] p-6 text-center", className)}>
+   209→        <ImageOff className="h-8 w-8 text-white/25" />
+   210→        <p className="text-[13px] font-bold text-white/70">{t("rdr.localMissing")}</p>
+   211→        <p className="text-[11px] font-semibold text-white/40">{t("rdr.localMissingHint")}</p>
+   212→      </div>
+   213→    );
+   214→  }
+   215→  if (!url) {
+   216→    return (
+   217→      <div className={cn("flex w-full items-center justify-center bg-[#151312]", className)}>
+   218→        <Loader2 className="h-7 w-7 animate-spin text-white/35" />
+   219→      </div>
+   220→    );
+   221→  }
+   222→  return (
+   223→    <img src={url} alt="" draggable={false} className={className} />
+   224→  );
+   225→}
+   226→
+   227→/* ------------------------------------------------------------------ */
+   228→/* ReaderScreen                                                        */
+   229→/* ------------------------------------------------------------------ */
+   230→
+   231→export function ReaderScreen({
+   232→  workId,
+   233→  chapterId,
+   234→  startPage,
+   235→}: {
+   236→  workId: string;
+   237→  chapterId: string;
+   238→  startPage?: number;
+   239→}) {
+   240→  const { t, lang } = useT();
+   241→
+   242→  /* ----- store ----- */
+   243→  const work = useApp((s) => s.works.find((w) => w.id === workId));
+   244→  const chapter = useApp((s) =>
+   245→    s.works.find((w) => w.id === workId)?.chapters.find((c) => c.id === chapterId)
+   246→  );
+   247→  const readerDefaults = useApp((s) => s.settings.readerDefaults);
+   248→  const bookmarks = useApp((s) => s.bookmarks);
+   249→  const pop = useNav((s) => s.pop);
+   250→  const updateWork = useApp((s) => s.updateWork);
+   251→  const setReaderDefaults = useApp((s) => s.setReaderDefaults);
+   252→  const markChapterRead = useApp((s) => s.markChapterRead);
+   253→  const addBookmark = useApp((s) => s.addBookmark);
+   254→  const removeBookmark = useApp((s) => s.removeBookmark);
+   255→  const startDownload = useApp((s) => s.startDownload);
+   256→
+   257→  /** restored page index for the initially opened chapter (RDR-006) */
+   258→  const initial = useMemo(() => {
+   259→    const ch = useApp
+   260→      .getState()
+   261→      .works.find((x) => x.id === workId)
+   262→      ?.chapters.find((c) => c.id === chapterId);
+   263→    const t = ch?.pages ?? 0;
+   264→    let p = 0;
+   265→    if (typeof ch?.lastPage === "number" && ch.lastPage > 0) {
+   266→      p = ch.lastPage <= 1 ? Math.round(ch.lastPage * t) : Math.round(ch.lastPage);
+   267→    }
+   268→    return Math.max(0, Math.min(Math.max(0, t - 1), p));
+   269→  }, []);
+   270→
+   271→  /* ----- local ui state ----- */
+   272→  const [page, setPage] = useState(initial);
+   273→  // commanded scroll target (slider / nav / chapter restore) — vs. user scrolling
+   274→  const [scrollCmd, setScrollCmd] = useState<{ page: number } | null>(
+   275→    initial > 0 ? { page: initial } : null
+   276→  );
+   277→  const [controlsVisible, setControlsVisible] = useState(true);
+   278→  const [endCard, setEndCard] = useState(false);
+   279→  const [zoom, setZoom] = useState(1); // 1 → 1.5 → 2 (RDR-004)
+   280→  const [rotate, setRotate] = useState(0); // 0/90/180/270
+   281→  const [autoPlay, setAutoPlay] = useState(false);
+   282→  const [chapterSheet, setChapterSheet] = useState(false);
+   283→  const [settingsSheet, setSettingsSheet] = useState(false);
+   284→  const [brightOpen, setBrightOpen] = useState(false);
+   285→  const [ttsOpen, setTtsOpen] = useState(false);
+   286→  const [ttsRateDraft, setTtsRateDraft] = useState(1);
+   287→  const [pdfToc, setPdfToc] = useState<PdfTocItem[]>([]);
+   288→  const ttsRateTimer = useRef<number | null>(null);
+   289→  const tts = useTts();
+   290→
+   291→  /* ----- refs ----- */
+   292→  const contentRef = useRef<HTMLDivElement>(null);
+   293→  const scrollRef = useRef<HTMLDivElement>(null);
+   294→  const anchorsRef = useRef<(HTMLDivElement | null)[]>([]);
+   295→  const rafRef = useRef(0);
+   296→  const lastTapRef = useRef(0);
+   297→  const pendingNavRef = useRef(0);
+   298→  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+   299→
+   300→  /* ----- derived ----- */
+   301→  const total = Math.max(0, chapter?.pages ?? 0);
+   302→  const direction: ReadingDirection = work?.direction ?? "LTR";
+   303→  const rtl = direction === "RTL";
+   304→  const vertical = direction === "VERTICAL";
+   305→  const requestedMode: ReaderMode = work?.readerMode ?? readerDefaults.mode;
+   306→  const isEpub = work?.type === "EPUB" && work?.localPages?.[0] === "epub";
+   307→  const isPdf = work?.type === "PDF" && work?.localPages?.[0] === "pdf";
+   308→  const epubFontSize = readerDefaults.epubFontSize ?? 16;
+   309→
+   310→  const [landscape, setLandscape] = useState(false);
+   311→  useEffect(() => {
+   312→    const el = contentRef.current;
+   313→    if (!el) return;
+   314→    const update = () => setLandscape(el.clientWidth > el.clientHeight);
+   315→    update();
+   316→    const ro = new ResizeObserver(update);
+   317→    ro.observe(el);
+   318→    return () => ro.disconnect();
+   319→  }, []);
+   320→
+   321→  // DOUBLE falls back to PAGED on portrait containers
+   322→  const mode: ReaderMode = requestedMode === "DOUBLE" && !landscape ? "PAGED" : requestedMode;
+   323→  const paged = mode === "PAGED" || mode === "DOUBLE";
+   324→  const scrollable = mode === "CONTINUOUS" || mode === "WEBTOON";
+   325→  const isLocal = Boolean(work?.isLocal && work.localPages?.length);
+   326→
+   327→  const chaptersAsc = useMemo<ChapterLite[]>(
+   328→    () =>
+   329→      work
+   330→        ? [...work.chapters]
+   331→            .sort((a, b) => a.number - b.number)
+   332→            .map((c) => ({ id: c.id, number: c.number, title: c.title, isRead: c.isRead }))
+   333→        : [],
+   334→    [work]
+   335→  );
+   336→  const chaptersDesc = useMemo(() => [...chaptersAsc].reverse(), [chaptersAsc]);
+   337→  const curIdx = chaptersAsc.findIndex((c) => c.id === chapterId);
+   338→  const prevChapter = curIdx > 0 ? chaptersAsc[curIdx - 1] : undefined;
+   339→  const nextChapter = curIdx >= 0 && curIdx < chaptersAsc.length - 1 ? chaptersAsc[curIdx + 1] : undefined;
+   340→
+   341→  const currentBookmark = bookmarks.find(
+   342→    (b) => b.workId === workId && b.chapterId === chapterId && b.page === page
+   343→  );
+   344→
+   345→  /* ----- reset per-chapter state when the chapter changes -----
+   346→     (React "adjust state when props change" pattern — runs during render) */
+   347→  const navKey = `${workId}#${chapterId}${typeof startPage === "number" ? `#p${startPage}` : ""}`;
+   348→  const [stateKey, setStateKey] = useState(navKey);
+   349→  if (stateKey !== navKey) {
+   350→    setStateKey(navKey);
+   351→    const t = chapter?.pages ?? 0;
+   352→    let p = 0;
+   353→    if (typeof startPage === "number" && startPage > 0) {
+   354→      p = startPage;
+   355→    } else if (typeof chapter?.lastPage === "number" && chapter.lastPage > 0) {
+   356→      p = chapter.lastPage <= 1 ? Math.round(chapter.lastPage * t) : Math.round(chapter.lastPage);
+   357→    }
+   358→    p = Math.max(0, Math.min(Math.max(0, t - 1), p));
+   359→    setPage(p);
+   360→    setEndCard(false);
+   361→    setControlsVisible(true);
+   362→    setZoom(1);
+   363→    setRotate(0);
+   364→    setAutoPlay(false);
+   365→    setScrollCmd({ page: p });
+   366→  }
+   367→
+   368→  /* ----- progress persistence: page ratio on every page change (manga modes) ----- */
+   369→  useEffect(() => {
+   370→    if (total <= 0 || isEpub) return; // epub view manages its own scroll-ratio progress
+   371→    useApp.getState().setChapterProgress(workId, chapterId, Math.min(1, page / total));
+   372→  }, [page, total, workId, chapterId, isEpub]);
+   373→
+   374→  /* ----- history entry per opened chapter ----- */
+   375→  useEffect(() => {
+   376→    useApp.getState().pushHistory(workId, chapterId, page);
+   377→  }, [workId, chapterId]);
+   378→
+   379→  /* ----- reading-time log every 60s while open ----- */
+   380→  useEffect(() => {
+   381→    const id = window.setInterval(() => useApp.getState().logReading(workId, 1, 0), 60_000);
+   382→    return () => window.clearInterval(id);
+   383→  }, [workId]);
+   384→
+   385→  /* ----- read-aloud (books): stop when chapter or reader closes ----- */
+   386→  useEffect(() => () => ttsStop(), [workId, chapterId]);
+   387→
+   388→  /* ----- pdf outline (TOC) — loaded when the chapter sheet opens ----- */
+   389→  useEffect(() => {
+   390→    if (!chapterSheet || !isPdf) return;
+   391→    let alive = true;
+   392→    setPdfToc([]);
+   393→    void (async () => {
+   394→      try {
+   395→        const { getPdfToc } = await import("@/lib/pdf-engine");
+   396→        const toc = await getPdfToc(workId);
+   397→        if (alive) setPdfToc(toc);
+   398→      } catch {
+   399→        /* outline unavailable */
+   400→      }
+   401→    })();
+   402→    return () => {
+   403→      alive = false;
+   404→    };
+   405→  }, [chapterSheet, isPdf, workId]);
+   406→
+   407→  /* ----- mark chapter read when it was fully seen and we leave it -----
+   408→     (the persisted lastPage ratio reaching the final page counts as "seen all") */
+   409→  useEffect(() => {
+   410→    const wid = workId;
+   411→    const cid = chapterId;
+   412→    return () => {
+   413→      const st = useApp.getState();
+   414→      const ch = st.works.find((x) => x.id === wid)?.chapters.find((c) => c.id === cid);
+   415→      if (!ch || ch.pages <= 0) return;
+   416→      const seenAll = typeof ch.lastPage === "number" && ch.lastPage >= (ch.pages - 1) / ch.pages - 1e-6;
+   417→      if (seenAll) st.markChapterRead(wid, cid, true);
+   418→    };
+   419→  }, [workId, chapterId]);
+   420→
+   421→  /* ----- controls auto-hide (UX-005) ----- */
+   422→  useEffect(() => {
+   423→    if (!controlsVisible || endCard || chapterSheet || settingsSheet || brightOpen) return;
+   424→    const id = window.setTimeout(() => setControlsVisible(false), 4200);
+   425→    return () => window.clearTimeout(id);
+   426→  }, [controlsVisible, endCard, chapterSheet, settingsSheet, brightOpen, page]);
+   427→
+   428→  /* ----- navigation ----- */
+   429→  const goToPage = (p: number) => {
+   430→    if (total <= 0) return;
+   431→    const c = Math.max(0, Math.min(total - 1, p));
+   432→    setEndCard(false);
+   433→    setPage(c);
+   434→  };
+   435→
+   436→  /* jump to a PDF outline entry (1-based page) */
+   437→  const jumpPdfToc = (item: PdfTocItem) => {
+   438→    setChapterSheet(false);
+   439→    const p = Math.max(0, Math.min(total - 1, item.page - 1));
+   440→    goToPage(p);
+   441→    if (scrollable) setScrollCmd({ page: p });
+   442→  };
+   443→
+   444→  /* ----- read-aloud controls (books) ----- */
+   445→  const startTts = async () => {
+   446→    try {
+   447→      const { loadEpub } = await import("@/lib/importer");
+   448→      const doc = await loadEpub(workId);
+   449→      const ch = doc?.chapters.find((c) => c.id === chapterId);
+   450→      if (!ch?.html) {
+   451→        toast({ title: t("tts.empty") });
+   452→        return;
+   453→      }
+   454→      const dom = new DOMParser().parseFromString(ch.html, "text/html");
+   455→      dom.querySelectorAll("script,style").forEach((n) => n.remove());
+   456→      const sel = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,dd,dt,pre";
+   457→      const nodes = [...dom.querySelectorAll(sel)];
+   458→      const blocks = nodes.filter((n) => !nodes.some((m) => m !== n && m.contains(n)));
+   459→      const chunks = blocks.map((b) => (b.textContent ?? "").trim()).filter(Boolean);
+   460→      const rate = readerDefaults.ttsRate ?? 1;
+   461→      const ok = ttsStart(chunks.length ? chunks : [dom.body?.textContent ?? ""], {
+   462→        lang: work?.language,
+   463→        rate,
+   464→      });
+   465→      if (!ok) toast({ title: t("tts.empty") });
+   466→    } catch {
+   467→      toast({ title: t("tts.empty") });
+   468→    }
+   469→  };
+   470→
+   471→  const onTtsPrimary = () => {
+   472→    if (!ttsSupported()) {
+   473→      toast({ title: t("tts.unsupported") });
+   474→      return;
+   475→    }
+   476→    if (tts.status === "playing") {
+   477→      ttsPause();
+   478→      return;
+   479→    }
+   480→    if (tts.status === "paused") {
+   481→      ttsResume();
+   482→      return;
+   483→    }
+   484→    void startTts();
+   485→  };
+   486→
+   487→  const applyTtsRate = (v: number) => {
+   488→    setTtsRateDraft(v);
+   489→    if (ttsRateTimer.current) window.clearTimeout(ttsRateTimer.current);
+   490→    ttsRateTimer.current = window.setTimeout(() => {
+   491→      ttsSetRate(v);
+   492→      useApp.getState().setReaderDefaults({ ttsRate: v });
+   493→    }, 250);
+   494→  };
+   495→
+   496→  const openChapter = (targetId: string, atEnd = false) => {
+   497→    setChapterSheet(false);
+   498→    setEndCard(false);
+   499→    setAutoPlay(false);
+   500→    if (atEnd) {
+   501→      // resume the previous chapter at its final page
+   502→      const st = useApp.getState();
+   503→      const ch = st.works.find((x) => x.id === workId)?.chapters.find((c) => c.id === targetId);
+   504→      if (ch) st.setChapterProgress(workId, targetId, 1);
+   505→    }
+   506→    // replace the top of the nav stack (details stays underneath)
+   507→    useNav.setState((st) => ({
+   508→      stack: [...st.stack.slice(0, -1), { kind: "reader" as const, workId, chapterId: targetId }],
+   509→    }));
+   510→  };
+   511→
+   512→  const next = (forced = false) => {
+   513→    if (total <= 0) return;
+   514→    if (scrollable) {
+   515→      const p = Math.min(total - 1, page + 1);
+   516→      goToPage(p);
+   517→      setScrollCmd({ page: p });
+   518→      return;
+   519→    }
+   520→    const step = mode === "DOUBLE" ? 2 : 1;
+   521→    if (page + step <= total - 1) {
+   522→      goToPage(page + step);
+   523→      return;
+   524→    }
+   525→    if (nextChapter && (forced || readerDefaults.autoNext)) {
+   526→      openChapter(nextChapter.id); // RDR-011 auto-advance
+   527→    } else {
+   528→      setEndCard(true);
+   529→    }
+   530→  };
+   531→
+   532→  const prev = () => {
+   533→    if (total <= 0) return;
+   534→    if (scrollable) {
+   535→      const p = Math.max(0, page - 1);
+   536→      goToPage(p);
+   537→      setScrollCmd({ page: p });
+   538→      return;
+   539→    }
+   540→    const step = mode === "DOUBLE" ? 2 : 1;
+   541→    if (page - step >= 0) {
+   542→      goToPage(page - step);
+   543→    } else if (prevChapter) {
+   544→      openChapter(prevChapter.id, true);
+   545→    }
+   546→  };
+   547→
+   548→  const nextRef = useRef<() => void>(() => undefined);
+   549→  useEffect(() => {
+   550→    nextRef.current = () => next(false);
+   551→  });
+   552→
+   553→  useEffect(() => {
+   554→    if (!autoPlay) return;
+   555→    const id = window.setInterval(() => nextRef.current(), 3200);
+   556→    return () => window.clearInterval(id);
+   557→  }, [autoPlay]);
+   558→
+   559→  /* ----- keyboard: direction-aware arrows (Escape handled by app shell) ----- */
+   560→  useEffect(() => {
+   561→    const fn = (e: KeyboardEvent) => {
+   562→      if (e.defaultPrevented || e.metaKey || e.ctrlKey) return;
+   563→      if (e.key === "ArrowRight") {
+   564→        if (rtl) prev();
+   565→        else next();
+   566→      } else if (e.key === "ArrowLeft") {
+   567→        if (rtl) next();
+   568→        else prev();
+   569→      }
+   570→    };
+   571→    window.addEventListener("keydown", fn);
+   572→    return () => window.removeEventListener("keydown", fn);
+   573→  });
+   574→
+   575→  /* ----- continuous scroll → current page (rAF throttled) ----- */
+   576→  const onScroll = () => {
+   577→    if (rafRef.current) return;
+   578→    rafRef.current = window.requestAnimationFrame(() => {
+   579→      rafRef.current = 0;
+   580→      const sc = scrollRef.current;
+   581→      if (!sc) return;
+   582→      const mid = sc.scrollTop + sc.clientHeight / 2;
+   583→      let best = 0;
+   584→      let bestD = Number.POSITIVE_INFINITY;
+   585→      anchorsRef.current.forEach((a, i) => {
+   586→        if (!a) return;
+   587→        const d = Math.abs(a.offsetTop + a.offsetHeight / 2 - mid);
+   588→        if (d < bestD) {
+   589→          bestD = d;
+   590→          best = i;
+   591→        }
+   592→      });
+   593→      setPage((cur) => (cur === best ? cur : best));
+   594→    });
+   595→  };
+   596→  useEffect(
+   597→    () => () => {
+   598→      if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
+   599→    },
+   600→    []
+   601→  );
+   602→
+   603→  // commanded scrolling (slider / chapter restore / next-prev in scrollable modes);
+   604→  // fires once per command object identity — user scrolling never sets scrollCmd
+   605→  useEffect(() => {
+   606→    if (!scrollable || !scrollCmd) return;
+   607→    const el = anchorsRef.current[scrollCmd.page];
+   608→    const sc = scrollRef.current;
+   609→    if (el && sc) sc.scrollTo({ top: Math.max(0, el.offsetTop - 8) });
+   610→  }, [scrollCmd, scrollable]);
+   611→
+   612→  /* ----- zoom (double-tap + button) ----- */
+   613→  const cycleZoom = () => {
+   614→    setZoom((z) => (z === 1 ? 1.5 : z === 1.5 ? 2 : 1));
+   615→    setControlsVisible(true);
+   616→  };
+   617→
+   618→  /* ----- tap zones: center toggles chrome, sides flip pages (UX-005) ----- */
+   619→  const handleZone = (zone: "start" | "center" | "end") => {
+   620→    const now = Date.now();
+   621→    if (now - lastTapRef.current < 320) {
+   622→      // double tap → zoom toggle (RDR-004)
+   623→      lastTapRef.current = 0;
+   624→      if (pendingNavRef.current) {
+   625→        window.clearTimeout(pendingNavRef.current);
+   626→        pendingNavRef.current = 0;
+   627→      }
+   628→      cycleZoom();
+   629→      return;
+   630→    }
+   631→    lastTapRef.current = now;
+   632→    if (pendingNavRef.current) window.clearTimeout(pendingNavRef.current);
+   633→    pendingNavRef.current = window.setTimeout(() => {
+   634→      pendingNavRef.current = 0;
+   635→      if (zone === "center") {
+   636→        setControlsVisible((v) => !v);
+   637→        return;
+   638→      }
+   639→      if (vertical || scrollable) return;
+   640→      const forward = rtl ? zone === "start" : zone === "end";
+   641→      if (forward) next();
+   642→      else prev();
+   643→    }, 280);
+   644→  };
+   645→
+   646→  /* ----- bookmarks (RDR-013) ----- */
+   647→  const toggleBookmark = () => {
+   648→    const st = useApp.getState();
+   649→    const bm = st.bookmarks.find(
+   650→      (b) => b.workId === workId && b.chapterId === chapterId && b.page === page
+   651→    );
+   652→    if (bm) {
+   653→      st.removeBookmark(bm.id);
+   654→      toast({ title: t("rdr.bookmarkRemoved") });
+   655→    } else {
+   656→      st.addBookmark(workId, chapterId, page);
+   657→      toast({ title: t("rdr.bookmarkAdded") });
+   658→    }
+   659→  };
+   660→
+   661→  /* ----- keep awake (RDR-009) ----- */
+   662→  const applyKeepAwake = (v: boolean) => {
+   663→    setReaderDefaults({ keepAwake: v });
+   664→    try {
+   665→      const nav = navigator as Navigator & {
+   666→        wakeLock?: { request: (type: string) => Promise<{ release: () => Promise<void> }> };
+   667→      };
+   668→      if (v) {
+   669→        nav.wakeLock
+   670→          ?.request("screen")
+   671→          .then((s) => {
+   672→            wakeLockRef.current = s;
+   673→          })
+   674→          .catch(() => undefined);
+   675→      } else {
+   676→        void wakeLockRef.current?.release().catch(() => undefined);
+   677→        wakeLockRef.current = null;
+   678→      }
+   679→    } catch {
+   680→      /* wakeLock unsupported — ignore */
+   681→    }
+   682→  };
+   683→
+   684→  /* ----- presets (RDR-014): documented combos ----- */
+   685→  const PRESETS: { key: TranslationKey; apply: () => void }[] = [
+   686→    {
+   687→      // Manga: RTL paged, black bg
+   688→      key: "rdr.preset.manga",
+   689→      apply: () => {
+   690→        updateWork(workId, { readerMode: "PAGED", direction: "RTL", fitMode: "WIDTH" });
+   691→        setReaderDefaults({ bg: "black", brightness: 100, autoNext: false, cropBorders: false });
+   692→      },
+   693→    },
+   694→    {
+   695→      // Western comics: LTR paged, white bg
+   696→      key: "rdr.preset.comics",
+   697→      apply: () => {
+   698→        updateWork(workId, { readerMode: "PAGED", direction: "LTR", fitMode: "WIDTH" });
+   699→        setReaderDefaults({ bg: "white", brightness: 100, autoNext: false, cropBorders: false });
+   700→      },
+   701→    },
+   702→    {
+   703→      // Webtoon: vertical continuous, no gaps
+   704→      key: "rdr.preset.webtoon",
+   705→      apply: () => {
+   706→        updateWork(workId, { readerMode: "WEBTOON", direction: "VERTICAL", fitMode: "WIDTH" });
+   707→        setReaderDefaults({ bg: "black", brightness: 100, autoNext: true, cropBorders: false });
+   708→      },
+   709→    },
+   710→    {
+   711→      // One-handed: larger pages, fewer taps, auto-advance on
+   712→      key: "rdr.preset.oneHand",
+   713→      apply: () => {
+   714→        updateWork(workId, { readerMode: "PAGED", direction: "RTL", fitMode: "SCREEN" });
+   715→        setReaderDefaults({ bg: "gray", brightness: 85, autoNext: true, cropBorders: true });
+   716→      },
+   717→    },
+   718→  ];
+   719→
+   720→  /* ------------------------------------------------------------------ */
+   721→  /* guards                                                              */
+   722→  /* ------------------------------------------------------------------ */
+   723→  if (!work || !chapter) {
+   724→    return (
+   725→      <div className="dark relative flex h-full flex-col overflow-hidden bg-background text-foreground">
+   726→        <div className="flex items-center p-4">
+   727→          <button
+   728→            onClick={pop}
+   729→            aria-label={t("common.back")}
+   730→            className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/10"
+   731→          >
+   732→            <ChevronLeft className="h-6 w-6 rtl:rotate-180" />
+   733→          </button>
+   734→        </div>
+   735→        <p className="mt-24 text-center text-sm font-semibold text-muted-foreground">{t("common.unknown")}</p>
+   736→      </div>
+   737→    );
+   738→  }
+   739→
+   740→  const crop = readerDefaults.cropBorders;
+   741→  const dim = ((100 - readerDefaults.brightness) / 100) * 0.7;
+   742→  const fit = work.fitMode;
+   743→
+   744→  /* ----- single page element (generated SVG, local image or pdf canvas) ----- */
+   745→  const renderPageEl = (i: number, fitOverride?: string) => {
+   746→    const cls = fitOverride ?? FIT_CLASS[fit];
+   747→    if (isPdf) {
+   748→      return <PdfCanvas workId={work.id} page={i + 1} className={cls} />;
+   749→    }
+   750→    if (isLocal && work.localPages?.[i]) {
+   751→      return <LocalPageImage storageKey={work.localPages[i]} className={cls} />;
+   752→    }
+   753→    return (
+   754→      <MangaPage
+   755→        seed={hashStr(work.id)}
+   756→        pageNumber={i + 1}
+   757→        totalPages={total}
+   758→        workTitle={work.title}
+   759→        chapterTitle={chapter.title}
+   760→        className={cls}
+   761→      />
+   762→    );
+   763→  };
+   764→
+   765→  /* ----- one slide of the paged track ----- */
+   766→  const renderSlide = (i: number) => {
+   767→    const pageTf = `rotate(${rotate}deg)${crop ? " scale(1.04)" : ""}`;
+   768→    if (zoom > 1 || fit === "ORIGINAL") {
+   769→      // zoomed / original: layout-sized child inside an overflow-auto container so it can be panned
+   770→      return (
+   771→        <div
+   772→          className="absolute inset-0 overflow-auto no-scrollbar"
+   773→          onDoubleClick={cycleZoom}
+   774→        >
+   775→          <div
+   776→            className={cn("mx-auto", fit === "ORIGINAL" && zoom === 1 && "w-max py-4")}
+   777→            style={fit === "ORIGINAL" && zoom === 1 ? undefined : { width: `${zoom * 100}%` }}
+   778→          >
+   779→            <div className="origin-center" style={{ transform: pageTf }}>
+   780→              {renderPageEl(i, zoom > 1 ? "block w-full h-auto" : undefined)}
+   781→            </div>
+   782→          </div>
+   783→        </div>
+   784→      );
+   785→    }
+   786→    return (
+   787→      <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+   788→        <div className={cn("origin-center transition-transform duration-200", FIT_CLASS[fit])} style={{ transform: pageTf }}>
+   789→          {renderPageEl(i)}
+   790→        </div>
+   791→      </div>
+   792→    );
+   793→  };
+   794→
+   795→  /* ----- paged track (RDR-001/002: snap + direction aware) ----- */
+   796→  const slideIndex = mode === "DOUBLE" ? Math.floor(page / 2) : page;
+   797→  const slideCount = mode === "DOUBLE" ? Math.ceil(total / 2) : total;
+   798→
+   799→  const pagedView = (
+   800→    <div key={`${chapterId}-${mode}`} className="absolute inset-0 overflow-hidden">
+   801→      <div
+   802→        className="absolute inset-0 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+   803→        style={{ transform: `translateX(${(rtl ? slideIndex : -slideIndex) * 100}%)` }}
+   804→      >
+   805→        {Array.from({ length: slideCount }, (_, i) => (
+   806→          <div key={i} className="absolute inset-y-0 w-full" style={{ left: `${(rtl ? -i : i) * 100}%` }}>
+   807→            {Math.abs(i - slideIndex) <= 2 ? ( // preload ±2 (RDR-012)
+   808→              mode === "DOUBLE" ? (
+   809→                <div className={cn("flex h-full w-full", rtl && "flex-row-reverse")}>
+   810→                  <div className="relative h-full w-1/2">{i * 2 < total ? renderSlide(i * 2) : null}</div>
+   811→                  <div className="relative h-full w-1/2">{i * 2 + 1 < total ? renderSlide(i * 2 + 1) : null}</div>
+   812→                </div>
+   813→              ) : (
+   814→                renderSlide(i)
+   815→              )
+   816→            ) : null}
+   817→          </div>
+   818→        ))}
+   819→      </div>
+   820→    </div>
+   821→  );
+   822→
+   823→  /* ----- continuous / webtoon vertical scroll ----- */
+   824→  const scrollView = (
+   825→    <div
+   826→      ref={scrollRef}
+   827→      onScroll={onScroll}
+   828→      className={cn(
+   829→        "absolute inset-0 overflow-y-auto no-scrollbar",
+   830→        mode === "CONTINUOUS" && "space-y-2.5 py-2.5"
+   831→      )}
+   832→    >
+   833→      {Array.from({ length: total }, (_, i) => (
+   834→        <div
+   835→          key={i}
+   836→          ref={(el) => {
+   837→            anchorsRef.current[i] = el;
+   838→          }}
+   839→        >
+   840→          {/* vertical modes always width-fit so anchors have real height */}
+   841→          {renderPageEl(i, "block w-full h-auto")}
+   842→        </div>
+   843→      ))}
+   844→    </div>
+   845→  );
+   846→
+   847→  const barPos = controlsVisible ? "translate-y-0 opacity-100" : "pointer-events-none opacity-0";
+   848→  const sliderMax = Math.max(0, total - 1);
+   849→  // when the page can be panned, side tap zones must not eat the gestures
+   850→  const panBlock = zoom > 1 || fit === "ORIGINAL";
+   851→
+   852→  return (
+   853→    <div className="dark relative flex h-full flex-col overflow-hidden bg-background text-foreground">
+   854→      {/* ============ content area (full bleed) ============ */}
+   855→      <div
+   856→        ref={contentRef}
+   857→        className="relative flex-1 overflow-hidden"
+   858→        style={{ backgroundColor: BG_HEX[readerDefaults.bg] }}
+   859→      >
+   860→        {/* ============ content ============ */}
+   861→        {isEpub ? (
+   862→          <EpubBookView
+   863→            work={work!}
+   864→            chapterId={chapterId}
+   865→            fontSize={epubFontSize}
+   866→            font={readerDefaults.epubFont ?? "serif"}
+   867→            theme={readerDefaults.epubTheme ?? "dark"}
+   868→          />
+   869→        ) : scrollable && !isPdf ? (
+   870→          scrollView
+   871→        ) : scrollable && isPdf ? (
+   872→          /* PDF vertical scroll: same anchors but sized canvases */
+   873→          <div
+   874→            ref={scrollRef}
+   875→            onScroll={onScroll}
+   876→            className={cn("absolute inset-0 overflow-y-auto no-scrollbar", mode === "CONTINUOUS" && "space-y-2.5 bg-[#151312] py-2.5")}
+   877→          >
+   878→            {Array.from({ length: total }, (_, i) => (
+   879→              <div
+   880→                key={i}
+   881→                ref={(el) => {
+   882→                  anchorsRef.current[i] = el;
+   883→                }}
+   884→              >
+   885→                <PdfCanvas workId={work.id} page={i + 1} className="block w-full" />
+   886→              </div>
+   887→            ))}
+   888→          </div>
+   889→        ) : (
+   890→          pagedView
+   891→        )}
+   892→
+   893→        {/* epub: top strip toggles chrome without blocking text scrolling */}
+   894→        {isEpub && (
+   895→          <button
+   896→            type="button"
+   897→            aria-label={t("common.more")}
+   898→            className="absolute inset-x-0 top-0 z-10 h-[16%]"
+   899→            onClick={() => setControlsVisible((v) => !v)}
+   900→          />
+   901→        )}
+   902→        {/* tap zones (none in webtoon; sides disabled while panning) */}
+   903→        {!vertical && !scrollable && (
+   904→          <div className="absolute inset-0 z-10 flex">
+   905→            <button
+   906→              type="button"
+   907→              tabIndex={-1}
+   908→              aria-label={rtl ? t("rdr.next") : t("rdr.previous")}
+   909→              className={cn("h-full w-1/3", panBlock && "pointer-events-none")}
+   910→              onClick={() => handleZone("start")}
+   911→            />
+   912→            <button
+   913→              type="button"
+   914→              aria-label={t("common.close")}
+   915→              className="h-full flex-1"
+   916→              onClick={() => handleZone("center")}
+   917→            />
+   918→            <button
+   919→              type="button"
+   920→              tabIndex={-1}
+   921→              aria-label={rtl ? t("rdr.previous") : t("rdr.next")}
+   922→              className={cn("h-full w-1/3", panBlock && "pointer-events-none")}
+   923→              onClick={() => handleZone("end")}
+   924→            />
+   925→          </div>
+   926→        )}
+   927→        {scrollable && zoom === 1 && !isEpub && (
+   928→          <button
+   929→            type="button"
+   930→            aria-label={t("common.more")}
+   931→            className="absolute inset-x-0 top-0 z-10 h-[16%]"
+   932→            onClick={() => setControlsVisible((v) => !v)}
+   933→          />
+   934→        )}
+   935→
+   936→        {/* brightness dim overlay (RDR-009) */}
+   937→        <div
+   938→          className="pointer-events-none absolute inset-0 z-20 bg-black transition-opacity duration-200"
+   939→          style={{ opacity: dim }}
+   940→        />
+   941→      </div>
+   942→
+   943→      {/* ============ offline badge ============ */}
+   944→      {chapter.download === "DONE" && (
+   945→        <div
+   946→          className={cn(
+   947→            "absolute right-3 top-14 z-30 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-[10px] font-bold text-white/85 backdrop-blur transition-opacity duration-300",
+   948→            controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
+   949→          )}
+   950→        >
+   951→          <Download className="h-3 w-3" />
+   952→          {t("rdr.offlineReading")}
+   953→        </div>
+   954→      )}
+   955→
+   956→      {/* ============ top bar (auto-hide) ============ */}
+   957→      <header
+   958→        className={cn(
+   959→          "absolute inset-x-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/85 via-black/45 to-transparent px-2 pb-7 pt-2 transition-all duration-300",
+   960→          barPos,
+   961→          !controlsVisible && "-translate-y-full"
+   962→        )}
+   963→      >
+   964→        <button
+   965→          onClick={pop}
+   966→          aria-label={t("common.back")}
+   967→          className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
+   968→        >
+   969→          <ChevronLeft className="h-6 w-6 rtl:rotate-180" />
+   970→        </button>
+   971→
+   972→        <div className="pointer-events-none absolute left-1/2 top-1.5 -translate-x-1/2 text-center">
+   973→          <p className="text-[15px] font-extrabold leading-tight text-white">
+   974→            {t("common.chapter")} {chapter.number}
+   975→          </p>
+   976→          <p className="max-w-[230px] truncate text-[11px] font-semibold text-white/55">{chapter.title}</p>
+   977→        </div>
+   978→
+   979→        <div className="flex items-center">
+   980→          <button
+   981→            onClick={() => setSettingsSheet(true)}
+   982→            aria-label={t("rdr.readingMode")}
+   983→            className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
+   984→          >
+   985→            <Settings className="h-5 w-5" />
+   986→          </button>
+   987→          <button
+   988→            onClick={toggleBookmark}
+   989→            aria-label={t("rdr.bookmarkAdded")}
+   990→            className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
+   991→          >
+   992→            <Bookmark className={cn("h-5 w-5", currentBookmark && "fill-primary text-primary")} />
+   993→          </button>
+   994→          <DropdownMenu>
+   995→            <DropdownMenuTrigger asChild>
+   996→              <button
+   997→                aria-label={t("common.more")}
+   998→                className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/15"
+   999→              >
+  1000→                <MoreVertical className="h-5 w-5" />
+  1001→              </button>
+  1002→            </DropdownMenuTrigger>
+  1003→            <DropdownMenuContent align="end" className="dark rounded-2xl border-border">
+  1004→              <DropdownMenuItem
+  1005→                onClick={() => markChapterRead(workId, chapterId, !chapter.isRead, true)}
+  1006→                className="gap-2.5 rounded-xl text-[13px] font-semibold"
+  1007→              >
+  1008→                <CheckCircle2 className="h-4 w-4 text-primary" />
+  1009→                {chapter.isRead ? t("upd.markUnread") : t("upd.markRead")}
+  1010→              </DropdownMenuItem>
+  1011→              <DropdownMenuItem
+  1012→                onClick={() => {
+  1013→                  startDownload(workId, chapterId);
+  1014→                  toast({ title: `${t("det.download")} · ${t("common.chapter")} ${chapter.number}` });
+  1015→                }}
+  1016→                className="gap-2.5 rounded-xl text-[13px] font-semibold"
+  1017→              >
+  1018→                <Download className="h-4 w-4 text-primary" />
+  1019→                {t("det.download")}
+  1020→              </DropdownMenuItem>
+  1021→            </DropdownMenuContent>
+  1022→          </DropdownMenu>
+  1023→        </div>
+  1024→      </header>
+  1025→
+  1026→      {/* ============ bottom overlay (auto-hide) ============ */}
+  1027→      <footer
+  1028→        className={cn(
+  1029→          "absolute inset-x-0 bottom-0 z-40 bg-gradient-to-t from-black/95 via-black/80 to-transparent px-4 pt-10 transition-all duration-300",
+  1030→          barPos,
+  1031→          !controlsVisible && "translate-y-full"
+  1032→        )}
+  1033→        style={{ paddingBottom: "calc(1rem + env(safe-area-inset-bottom))" }}
+  1034→      >
+  1035→        {/* slider row (EPUB: chapter navigation) */}
+  1036→        <div className="flex items-center gap-3">
+  1037→          {isEpub && work ? (
+  1038→            <>
+  1039→              <Slider
+  1040→                value={[curIdx]}
+  1041→                min={0}
+  1042→                max={Math.max(0, chaptersAsc.length - 1)}
+  1043→                step={1}
+  1044→                aria-label={t("rdr.chapterList")}
+  1045→                onValueChange={(v) => {
+  1046→                  const idx = v[0] ?? 0;
+  1047→                  const target = chaptersAsc[idx];
+  1048→                  if (target && target.id !== chapterId) openChapter(target.id);
+  1049→                }}
+  1050→                className={cn(
+  1051→                  "flex-1",
+  1052→                  "[&_[data-slot=slider-track]]:bg-white/15",
+  1053→                  "[&_[data-slot=slider-range]]:bg-[#f8694c]",
+  1054→                  "[&_[data-slot=slider-thumb]]:size-4 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
+  1055→                )}
+  1056→              />
+  1057→              <span className="min-w-14 text-end text-[13px] font-extrabold text-white">
+  1058→                {t("rdr.pageOf", { p: Math.max(1, curIdx + 1), t: chaptersAsc.length })}
+  1059→              </span>
+  1060→            </>
+  1061→          ) : (
+  1062→            <>
+  1063→              {total > 0 && (
+  1064→                <Slider
+  1065→                  value={[Math.min(page, sliderMax)]}
+  1066→                  min={0}
+  1067→                  max={sliderMax}
+  1068→                  step={1}
+  1069→                  aria-label={t("rdr.slider")}
+  1070→                  onValueChange={(v) => {
+  1071→                    const p = v[0] ?? 0;
+  1072→                    goToPage(p);
+  1073→                    if (scrollable) setScrollCmd({ page: p });
+  1074→                  }}
+  1075→                  className={cn(
+  1076→                    "flex-1",
+  1077→                    "[&_[data-slot=slider-track]]:bg-white/15",
+  1078→                    "[&_[data-slot=slider-range]]:bg-[#f8694c]",
+  1079→                    "[&_[data-slot=slider-thumb]]:size-4 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
+  1080→                  )}
+  1081→                />
+  1082→              )}
+  1083→              <span className="min-w-14 text-end text-[13px] font-extrabold text-white">
+  1084→                {t("rdr.pageOf", { p: page + 1, t: total })}
+  1085→              </span>
+  1086→            </>
+  1087→          )}
+  1088→        </div>
+  1089→
+  1090→        {/* controls row */}
+  1091→        <div className="mt-2 grid grid-cols-4 justify-items-center">
+  1092→          <CtrlBtn
+  1093→            icon={SkipBack}
+  1094→            label={t("rdr.previous")}
+  1095→            onClick={() => (isEpub ? prevChapter && openChapter(prevChapter.id) : prev())}
+  1096→            aria-label={t("rdr.previous")}
+  1097→            disabled={isEpub && !prevChapter}
+  1098→          />
+  1099→          {!isEpub && (
+  1100→            <CtrlBtn
+  1101→              icon={CirclePlay}
+  1102→              label={t("rdr.auto")}
+  1103→              active={autoPlay}
+  1104→              onClick={() => setAutoPlay((v) => !v)}
+  1105→              aria-label={t("rdr.auto")}
+  1106→            />
+  1107→          )}
+  1108→          {isEpub && (
+  1109→            <CtrlBtn
+  1110→              icon={ALargeSmall}
+  1111→              label={t("rdr.textSize")}
+  1112→              onClick={() => {
+  1113→                const next = epubFontSize >= 22 ? 14 : epubFontSize + 2;
+  1114→                useApp.getState().setReaderDefaults({ epubFontSize: next });
+  1115→                toast({ title: `${t("rdr.textSize")}: ${next}px` });
+  1116→              }}
+  1117→              aria-label={t("rdr.textSize")}
+  1118→            />
+  1119→          )}
+  1120→          <CtrlBtn
+  1121→            icon={List}
+  1122→            label={t("rdr.chapterList")}
+  1123→            onClick={() => setChapterSheet(true)}
+  1124→            aria-label={t("rdr.chapterList")}
+  1125→          />
+  1126→          <CtrlBtn
+  1127→            icon={SkipForward}
+  1128→            label={t("rdr.next")}
+  1129→            onClick={() => (isEpub ? nextChapter && openChapter(nextChapter.id) : next(true))}
+  1130→            aria-label={t("rdr.next")}
+  1131→            disabled={isEpub && !nextChapter}
+  1132→          />
+  1133→        </div>
+  1134→
+  1135→        {/* toolbar row */}
+  1136→        <div className="mt-2 flex items-start justify-between px-1">
+  1137→          {isEpub && (
+  1138→            <Popover
+  1139→              open={ttsOpen}
+  1140→              onOpenChange={(v) => {
+  1141→                setTtsOpen(v);
+  1142→                if (v) setTtsRateDraft(readerDefaults.ttsRate ?? 1);
+  1143→              }}
+  1144→            >
+  1145→              <PopoverTrigger asChild>
+  1146→                <ToolbarBtn
+  1147→                  icon={Volume2}
+  1148→                  label={t("tts.readAloud")}
+  1149→                  active={ttsOpen || tts.status !== "idle"}
+  1150→                  aria-label={t("tts.readAloud")}
+  1151→                />
+  1152→              </PopoverTrigger>
+  1153→              <PopoverContent side="top" align="start" className="dark w-[252px] rounded-2xl border-border bg-popover p-4">
+  1154→                <p className="flex items-center gap-1.5 text-[12px] font-bold text-foreground">
+  1155→                  <Volume2 className={cn("h-3.5 w-3.5", tts.status === "playing" ? "animate-pulse text-primary" : "text-primary")} />
+  1156→                  {t("tts.readAloud")}
+  1157→                </p>
+  1158→                <p className="mt-0.5 text-[11px] font-semibold text-muted-foreground">
+  1159→                  {tts.status === "playing"
+  1160→                    ? t("tts.playing")
+  1161→                    : tts.status === "paused"
+  1162→                      ? t("tts.paused")
+  1163→                      : t("tts.idle")}
+  1164→                  {tts.status !== "idle" && tts.total > 0 && (
+  1165→                    <span className="ms-1 font-extrabold text-primary">
+  1166→                      · {t("tts.para", {
+  1167→                        p: lang === "fa" ? toFa(tts.idx + 1) : tts.idx + 1,
+  1168→                        t: lang === "fa" ? toFa(tts.total) : tts.total,
+  1169→                      })}
+  1170→                    </span>
+  1171→                  )}
+  1172→                </p>
+  1173→                <div className="mt-3 flex gap-2">
+  1174→                  <button
+  1175→                    type="button"
+  1176→                    onClick={onTtsPrimary}
+  1177→                    aria-label={tts.status === "playing" ? t("tts.pause") : t("tts.play")}
+  1178→                    className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-coral-gradient text-[12px] font-extrabold text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.8)] transition-transform active:scale-95"
+  1179→                  >
+  1180→                    {tts.status === "playing" ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
+  1181→                    {tts.status === "playing" ? t("tts.pause") : tts.status === "paused" ? t("tts.play") : t("tts.play")}
+  1182→                  </button>
+  1183→                  <button
+  1184→                    type="button"
+  1185→                    onClick={() => ttsStop()}
+  1186→                    disabled={tts.status === "idle"}
+  1187→                    aria-label={t("tts.stop")}
+  1188→                    className="flex h-9 items-center justify-center gap-1.5 rounded-full border border-border px-3 text-[12px] font-extrabold text-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+  1189→                  >
+  1190→                    <Square className="h-3 w-3 fill-current" />
+  1191→                    {t("tts.stop")}
+  1192→                  </button>
+  1193→                </div>
+  1194→                <div className="mt-3">
+  1195→                  <p className="mb-1.5 flex items-center justify-between text-[11px] font-bold text-muted-foreground">
+  1196→                    {t("tts.speed")}
+  1197→                    <span className="text-[11px] font-extrabold text-foreground">{ttsRateDraft.toFixed(1)}×</span>
+  1198→                  </p>
+  1199→                  <Slider
+  1200→                    value={[ttsRateDraft]}
+  1201→                    min={0.6}
+  1202→                    max={1.8}
+  1203→                    step={0.1}
+  1204→                    aria-label={t("tts.speed")}
+  1205→                    onValueChange={(v) => applyTtsRate(v[0] ?? 1)}
+  1206→                    className="[&_[data-slot=slider-track]]:bg-white/15 [&_[data-slot=slider-range]]:bg-[#f8694c] [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
+  1207→                  />
+  1208→                </div>
+  1209→              </PopoverContent>
+  1210→            </Popover>
+  1211→          )}
+  1212→          <ToolbarBtn
+  1213→            icon={MoveHorizontal}
+  1214→            label={t(`rdr.fit.${fit}` as TranslationKey)}
+  1215→            onClick={() => {
+  1216→              const order: FitMode[] = ["WIDTH", "HEIGHT", "SCREEN", "ORIGINAL"];
+  1217→              const nxt = order[(order.indexOf(fit) + 1) % order.length];
+  1218→              updateWork(workId, { fitMode: nxt });
+  1219→            }}
+  1220→            aria-label={t("rdr.fit")}
+  1221→          />
+  1222→          <ToolbarBtn
+  1223→            icon={ZoomIn}
+  1224→            label={zoom > 1 ? `${zoom}×` : t("rdr.zoom")}
+  1225→            active={zoom > 1}
+  1226→            onClick={cycleZoom}
+  1227→            aria-label={t("rdr.zoom")}
+  1228→          />
+  1229→          <ToolbarBtn
+  1230→            icon={RotateCw}
+  1231→            label={t("rdr.rotate")}
+  1232→            onClick={() => setRotate((r) => (r + 90) % 360)}
+  1233→            aria-label={t("rdr.rotate")}
+  1234→          />
+  1235→          <Popover open={brightOpen} onOpenChange={setBrightOpen}>
+  1236→            <PopoverTrigger asChild>
+  1237→              <ToolbarBtn icon={Sun} label={t("rdr.brightness")} active={brightOpen} aria-label={t("rdr.brightness")} />
+  1238→            </PopoverTrigger>
+  1239→            <PopoverContent side="top" align="center" className="dark w-[230px] rounded-2xl border-border bg-popover p-4">
+  1240→              <p className="mb-3 flex items-center gap-1.5 text-[12px] font-bold text-foreground">
+  1241→                <Sun className="h-3.5 w-3.5 text-primary" />
+  1242→                {t("rdr.brightnessLabel")}
+  1243→                <span className="ms-auto text-[11px] font-extrabold text-muted-foreground">{readerDefaults.brightness}%</span>
+  1244→              </p>
+  1245→              <Slider
+  1246→                value={[readerDefaults.brightness]}
+  1247→                min={30}
+  1248→                max={100}
+  1249→                step={1}
+  1250→                aria-label={t("rdr.brightnessLabel")}
+  1251→                onValueChange={(v) => setReaderDefaults({ brightness: v[0] ?? 100 })}
+  1252→              />
+  1253→            </PopoverContent>
+  1254→          </Popover>
+  1255→          <ToolbarBtn
+  1256→            icon={Ellipsis}
+  1257→            label={t("rdr.more")}
+  1258→            onClick={() => setSettingsSheet(true)}
+  1259→            aria-label={t("rdr.more")}
+  1260→          />
+  1261→        </div>
+  1262→      </footer>
+  1263→
+  1264→      {/* ============ end-of-chapter card (RDR-011) ============ */}
+  1265→      {endCard && (
+  1266→        <div
+  1267→          className="absolute inset-0 z-50 flex items-center justify-center bg-black/65 p-6"
+  1268→          onClick={() => setEndCard(false)}
+  1269→          role="dialog"
+  1270→          aria-label={t("rdr.endOfChapter")}
+  1271→        >
+  1272→          <div
+  1273→            className="w-full max-w-[300px] rounded-3xl border border-white/10 bg-[#1c1a18] p-6 text-center shadow-2xl"
+  1274→            onClick={(e) => e.stopPropagation()}
+  1275→          >
+  1276→            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/15">
+  1277→              <CheckCircle2 className="h-6 w-6 text-primary" />
+  1278→            </span>
+  1279→            <h2 className="mt-3 text-[17px] font-extrabold text-white">
+  1280→              {t("rdr.chapterComplete", { n: chapter.number })}
+  1281→            </h2>
+  1282→            <p className="mt-1 text-[12px] font-semibold text-white/55">{t("rdr.endOfChapter")}</p>
+  1283→            {nextChapter && (
+  1284→              <button
+  1285→                onClick={() => openChapter(nextChapter.id)}
+  1286→                className="mt-5 w-full rounded-full bg-coral-gradient py-3 text-[14px] font-extrabold text-white shadow-[0_14px_30px_-10px_rgba(248,105,76,0.8)] transition-transform hover:scale-[1.02]"
+  1287→              >
+  1288→                {t("rdr.nextChapterCta")}
+  1289→              </button>
+  1290→            )}
+  1291→            <button
+  1292→              onClick={pop}
+  1293→              className="mt-2.5 w-full rounded-full border border-white/15 py-3 text-[13px] font-bold text-white/80 transition-colors hover:bg-white/10"
+  1294→            >
+  1295→              {t("rdr.backToDetails")}
+  1296→            </button>
+  1297→          </div>
+  1298→        </div>
+  1299→      )}
+  1300→
+  1301→      {/* ============ chapter list sheet (RDR-005) ============ */}
+  1302→      <Dialog open={chapterSheet} onOpenChange={setChapterSheet}>
+  1303→        <DialogContent
+  1304→          showCloseButton={false}
+  1305→          className="dark top-auto bottom-0 left-1/2 w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9"
+  1306→        >
+  1307→          <DialogHeader>
+  1308→            <DialogTitle className="text-start text-[16px] font-extrabold">
+  1309→              {t("rdr.chapterList")} · {work.title}
+  1310→            </DialogTitle>
+  1311→            <DialogDescription className="sr-only">{t("det.chapters")}</DialogDescription>
+  1312→          </DialogHeader>
+  1313→
+  1314→          {/* pdf outline (TOC) — shown when the document defines one */}
+  1315→          {isPdf && pdfToc.length > 0 && (
+  1316→            <div className="mb-3 rounded-2xl border border-border bg-white/[0.03] p-2.5">
+  1317→              <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] font-black uppercase tracking-[0.14em] text-muted-foreground">
+  1318→                <ListTree className="h-3.5 w-3.5 text-primary" />
+  1319→                {t("pdf.outline")}
+  1320→              </p>
+  1321→              <div className="thin-scrollbar max-h-[24vh] space-y-0.5 overflow-y-auto">
+  1322→                {pdfToc.map((item, i) => (
+  1323→                  <button
+  1324→                    key={i}
+  1325→                    onClick={() => jumpPdfToc(item)}
+  1326→                    className="flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-start transition-colors hover:bg-secondary/60"
+  1327→                    style={{ paddingInlineStart: 8 + item.depth * 14 }}
+  1328→                  >
+  1329→                    <span
+  1330→                      className={cn(
+  1331→                        "h-1.5 w-1.5 shrink-0 rounded-full",
+  1332→                        item.depth === 0 ? "bg-primary" : "bg-muted-foreground/50"
+  1333→                      )}
+  1334→                    />
+  1335→                    <span className={cn("min-w-0 flex-1 truncate text-[12.5px] font-bold", item.depth > 0 && "font-semibold text-muted-foreground")}>
+  1336→                      {item.title}
+  1337→                    </span>
+  1338→                    <span className="shrink-0 rounded-full bg-coral-soft px-2 py-0.5 text-[10px] font-extrabold text-primary">
+  1339→                      {t("pdf.jumpPage", { n: lang === "fa" ? toFa(item.page) : item.page })}
+  1340→                    </span>
+  1341→                  </button>
+  1342→                ))}
+  1343→              </div>
+  1344→            </div>
+  1345→          )}
+  1346→
+  1347→          <div className="thin-scrollbar max-h-[46vh] space-y-1.5 overflow-y-auto pe-1">
+  1348→            {chaptersDesc.map((ch) => (
+  1349→              <button
+  1350→                key={ch.id}
+  1351→                onClick={() => {
+  1352→                  if (ch.id !== chapterId) openChapter(ch.id);
+  1353→                  else setChapterSheet(false);
+  1354→                }}
+  1355→                className={cn(
+  1356→                  "flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-start transition-colors",
+  1357→                  ch.id === chapterId ? "bg-primary/10" : "hover:bg-secondary/60"
+  1358→                )}
+  1359→              >
+  1360→                <span
+  1361→                  className={cn(
+  1362→                    "w-11 shrink-0 text-[15px] font-black",
+  1363→                    ch.id === chapterId ? "text-primary" : "text-foreground/80"
+  1364→                  )}
+  1365→                >
+  1366→                  {ch.number}
+  1367→                </span>
+  1368→                <span className="min-w-0 flex-1">
+  1369→                  <span
+  1370→                    className={cn(
+  1371→                      "block truncate text-[13px] font-extrabold",
+  1372→                      ch.id === chapterId ? "text-primary" : "text-foreground"
+  1373→                    )}
+  1374→                  >
+  1375→                    {t("common.chapter")} {ch.number}
+  1376→                  </span>
+  1377→                  <span className="block truncate text-[11px] font-semibold text-muted-foreground">{ch.title}</span>
+  1378→                </span>
+  1379→                {ch.isRead && <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />}
+  1380→              </button>
+  1381→            ))}
+  1382→          </div>
+  1383→        </DialogContent>
+  1384→      </Dialog>
+  1385→
+  1386→      {/* ============ reader settings sheet (RDR-007/009/014) ============ */}
+  1387→      <Dialog open={settingsSheet} onOpenChange={setSettingsSheet}>
+  1388→        <DialogContent
+  1389→          showCloseButton={false}
+  1390→          className="dark top-auto bottom-0 left-1/2 max-h-[88%] w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 overflow-y-auto rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9 thin-scrollbar"
+  1391→        >
+  1392→          <DialogHeader>
+  1393→            <DialogTitle className="text-start text-[16px] font-extrabold">{t("rdr.readingMode")}</DialogTitle>
+  1394→            <DialogDescription className="text-[11px] font-semibold">{t("rdr.savePerSeries")}</DialogDescription>
+  1395→          </DialogHeader>
+  1396→
+  1397→          <div className="space-y-4">
+  1398→            {/* book-only: font + page theme (FMT-002 typography) */}
+  1399→            {isEpub && (
+  1400→              <>
+  1401→                <SheetRow label={t("rdr.bookFont")}>
+  1402→                  {(
+  1403→                    [
+  1404→                      ["serif", "rdr.fontSerif"],
+  1405→                      ["sans", "rdr.fontSans"],
+  1406→                    ] as ["serif" | "sans", TranslationKey][]
+  1407→                  ).map(([id, key]) => (
+  1408→                    <Chip
+  1409→                      key={id}
+  1410→                      active={(readerDefaults.epubFont ?? "serif") === id}
+  1411→                      onClick={() => setReaderDefaults({ epubFont: id })}
+  1412→                    >
+  1413→                      <span style={id === "serif" ? { fontFamily: "Georgia, serif" } : { fontFamily: "var(--font-nunito), sans-serif" }}>
+  1414→                        {t(key)}
+  1415→                      </span>
+  1416→                    </Chip>
+  1417→                  ))}
+  1418→                </SheetRow>
+  1419→                <SheetRow label={t("rdr.bookTheme")}>
+  1420→                  <div className="flex items-start gap-3">
+  1421→                    {(
+  1422→                      [
+  1423→                        ["dark", "#141414"],
+  1424→                        ["sepia", "#f3e8d5"],
+  1425→                        ["paper", "#faf7f0"],
+  1426→                      ] as ["dark" | "sepia" | "paper", string][]
+  1427→                    ).map(([b, hex]) => (
+  1428→                      <button
+  1429→                        key={b}
+  1430→                        type="button"
+  1431→                        onClick={() => setReaderDefaults({ epubTheme: b })}
+  1432→                        aria-label={t(`rdr.btheme.${b}` as TranslationKey)}
+  1433→                        className="flex flex-col items-center gap-1"
+  1434→                      >
+  1435→                        <span
+  1436→                          className={cn(
+  1437→                            "h-8 w-8 rounded-full border border-white/15 transition-shadow",
+  1438→                            (readerDefaults.epubTheme ?? "dark") === b && "ring-2 ring-primary ring-offset-2 ring-offset-card"
+  1439→                          )}
+  1440→                          style={{ backgroundColor: hex }}
+  1441→                        />
+  1442→                        <span className="text-[9px] font-bold text-muted-foreground">{t(`rdr.btheme.${b}` as TranslationKey)}</span>
+  1443→                      </button>
+  1444→                    ))}
+  1445→                  </div>
+  1446→                </SheetRow>
+  1447→              </>
+  1448→            )}
+  1449→
+  1450→            {/* presets */}
+  1451→            <SheetRow label={t("rdr.preset")}>
+  1452→              {PRESETS.map((p) => (
+  1453→                <Chip key={p.key} active={false} onClick={p.apply}>
+  1454→                  {t(p.key)}
+  1455→                </Chip>
+  1456→              ))}
+  1457→            </SheetRow>
+  1458→
+  1459→            {/* per-series mode */}
+  1460→            <SheetRow label={t("rdr.readingMode")}>
+  1461→              {(
+  1462→                [
+  1463→                  ["PAGED", "rdr.mode.paged"],
+  1464→                  ["DOUBLE", "rdr.mode.double"],
+  1465→                  ["CONTINUOUS", "rdr.mode.continuous"],
+  1466→                  ["WEBTOON", "rdr.mode.webtoon"],
+  1467→                ] as [ReaderMode, TranslationKey][]
+  1468→              ).map(([id, key]) => (
+  1469→                <Chip key={id} active={work.readerMode === id} onClick={() => updateWork(workId, { readerMode: id })}>
+  1470→                  {t(key)}
+  1471→                </Chip>
+  1472→              ))}
+  1473→            </SheetRow>
+  1474→
+  1475→            {/* per-series direction */}
+  1476→            <SheetRow label={t("rdr.direction")}>
+  1477→              {(
+  1478→                [
+  1479→                  ["RTL", "rdr.dir.rtl"],
+  1480→                  ["LTR", "rdr.dir.ltr"],
+  1481→                  ["VERTICAL", "rdr.mode.webtoon"],
+  1482→                ] as [ReadingDirection, TranslationKey][]
+  1483→              ).map(([id, key]) => (
+  1484→                <Chip key={id} active={work.direction === id} onClick={() => updateWork(workId, { direction: id })}>
+  1485→                  {t(key)}
+  1486→                </Chip>
+  1487→              ))}
+  1488→            </SheetRow>
+  1489→
+  1490→            {/* per-series fit */}
+  1491→            <SheetRow label={t("rdr.fit")}>
+  1492→              {(
+  1493→                [
+  1494→                  ["WIDTH", "rdr.fit.WIDTH"],
+  1495→                  ["HEIGHT", "rdr.fit.HEIGHT"],
+  1496→                  ["SCREEN", "rdr.fit.SCREEN"],
+  1497→                  ["ORIGINAL", "rdr.fit.ORIGINAL"],
+  1498→                ] as [FitMode, TranslationKey][]
+  1499→              ).map(([id, key]) => (
+  1500→                <Chip key={id} active={work.fitMode === id} onClick={() => updateWork(workId, { fitMode: id })}>
+  1501→                  {t(key)}
+  1502→                </Chip>
+  1503→              ))}
+  1504→            </SheetRow>
+  1505→
+  1506→            {/* app-level: background */}
+  1507→            <SheetRow label={t("rdr.background")}>
+  1508→              <div className="flex items-start gap-3">
+  1509→                {(["black", "gray", "white", "sepia"] as BgName[]).map((b) => (
+  1510→                  <button
+  1511→                    key={b}
+  1512→                    type="button"
+  1513→                    onClick={() => setReaderDefaults({ bg: b })}
+  1514→                    aria-label={t(`rdr.bg.${b}` as TranslationKey)}
+  1515→                    className="flex flex-col items-center gap-1"
+  1516→                  >
+  1517→                    <span
+  1518→                      className={cn(
+  1519→                        "h-8 w-8 rounded-full border border-white/15 transition-shadow",
+  1520→                        readerDefaults.bg === b && "ring-2 ring-primary ring-offset-2 ring-offset-card"
+  1521→                      )}
+  1522→                      style={{ backgroundColor: BG_HEX[b] }}
+  1523→                    />
+  1524→                    <span className="text-[9px] font-bold text-muted-foreground">{t(`rdr.bg.${b}` as TranslationKey)}</span>
+  1525→                  </button>
+  1526→                ))}
+  1527→              </div>
+  1528→            </SheetRow>
+  1529→
+  1530→            {/* app-level: brightness */}
+  1531→            <div>
+  1532→              <p className="mb-2 flex items-center justify-between text-[12px] font-bold text-muted-foreground">
+  1533→                {t("rdr.brightnessLabel")}
+  1534→                <span className="text-[11px] font-extrabold">{readerDefaults.brightness}%</span>
+  1535→              </p>
+  1536→              <Slider
+  1537→                value={[readerDefaults.brightness]}
+  1538→                min={30}
+  1539→                max={100}
+  1540→                step={1}
+  1541→                aria-label={t("rdr.brightnessLabel")}
+  1542→                onValueChange={(v) => setReaderDefaults({ brightness: v[0] ?? 100 })}
+  1543→              />
+  1544→            </div>
+  1545→
+  1546→            {/* app-level switches */}
+  1547→            <div className="space-y-3 rounded-2xl border border-border bg-white/[0.03] p-3.5">
+  1548→              <label className="flex items-center justify-between gap-3">
+  1549→                <span className="text-[13px] font-bold">{t("rdr.autoNext")}</span>
+  1550→                <Switch
+  1551→                  checked={readerDefaults.autoNext}
+  1552→                  onCheckedChange={(v) => setReaderDefaults({ autoNext: v })}
+  1553→                  aria-label={t("rdr.autoNext")}
+  1554→                />
+  1555→              </label>
+  1556→              <label className="flex items-center justify-between gap-3">
+  1557→                <span className="text-[13px] font-bold">{t("rdr.cropBorders")}</span>
+  1558→                <Switch
+  1559→                  checked={readerDefaults.cropBorders}
+  1560→                  onCheckedChange={(v) => setReaderDefaults({ cropBorders: v })}
+  1561→                  aria-label={t("rdr.cropBorders")}
+  1562→                />
+  1563→              </label>
+  1564→              <label className="flex items-center justify-between gap-3">
+  1565→                <span className="text-[13px] font-bold">{t("rdr.keepAwake")}</span>
+  1566→                <Switch
+  1567→                  checked={readerDefaults.keepAwake}
+  1568→                  onCheckedChange={applyKeepAwake}
+  1569→                  aria-label={t("rdr.keepAwake")}
+  1570→                />
+  1571→              </label>
+  1572→            </div>
+  1573→          </div>
+  1574→        </DialogContent>
+  1575→      </Dialog>
+  1576→    </div>
+  1577→  );
+  1578→}
+  1579→

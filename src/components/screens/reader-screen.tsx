@@ -20,6 +20,7 @@ import {
   Download,
   Ellipsis,
   ImageOff,
+  Keyboard,
   List,
   ListTree,
   Loader2,
@@ -28,6 +29,7 @@ import {
   Pause,
   Play,
   RotateCw,
+  Search,
   Settings,
   SkipBack,
   SkipForward,
@@ -41,7 +43,7 @@ import { MangaPage, hashStr } from "@/lib/manga-page";
 import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav, toFa } from "@/lib/store";
 import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSupported, useTts } from "@/lib/tts";
-import type { PdfTocItem } from "@/lib/pdf-engine";
+import type { PdfSearchHit, PdfTocItem } from "@/lib/pdf-engine";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -91,6 +93,23 @@ interface ChapterLite {
   number: number;
   title: string;
   isRead: boolean;
+}
+
+/** split a search snippet around the query and highlight matches */
+function highlightSnippet(snippet: string, query: string): React.ReactNode[] {
+  const q = query.trim();
+  if (!q) return [snippet];
+  const esc = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = snippet.split(new RegExp(`(${esc})`, "ig"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <mark key={i} className="rounded bg-coral-soft px-0.5 font-black text-primary">
+        {part}
+      </mark>
+    ) : (
+      <span key={i}>{part}</span>
+    )
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -285,6 +304,12 @@ export function ReaderScreen({
   const [ttsOpen, setTtsOpen] = useState(false);
   const [ttsRateDraft, setTtsRateDraft] = useState(1);
   const [pdfToc, setPdfToc] = useState<PdfTocItem[]>([]);
+  const [pdfSearchOpen, setPdfSearchOpen] = useState(false);
+  const [pdfQuery, setPdfQuery] = useState("");
+  const [pdfHits, setPdfHits] = useState<PdfSearchHit[] | null>(null);
+  const [pdfSearching, setPdfSearching] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [finePointer, setFinePointer] = useState(false);
   const ttsRateTimer = useRef<number | null>(null);
   const tts = useTts();
 
@@ -441,6 +466,14 @@ export function ReaderScreen({
     if (scrollable) setScrollCmd({ page: p });
   };
 
+  /* jump to a pdf search hit (1-based page) */
+  const jumpPdfHit = (hit: PdfSearchHit) => {
+    setPdfSearchOpen(false);
+    const p = Math.max(0, Math.min(total - 1, hit.page - 1));
+    goToPage(p);
+    if (scrollable) setScrollCmd({ page: p });
+  };
+
   /* ----- read-aloud controls (books) ----- */
   const startTts = async () => {
     try {
@@ -556,21 +589,80 @@ export function ReaderScreen({
     return () => window.clearInterval(id);
   }, [autoPlay]);
 
-  /* ----- keyboard: direction-aware arrows (Escape handled by app shell) ----- */
+  /* ----- fine-pointer detection (desktop-only affordances) ----- */
+  useEffect(() => {
+    const mq = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const upd = () => setFinePointer(mq.matches);
+    upd();
+    mq.addEventListener?.("change", upd);
+    return () => mq.removeEventListener?.("change", upd);
+  }, []);
+
+  /* ----- keyboard: direction-aware arrows + shortcuts (Escape handled by app shell) ----- */
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey) return;
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const tg = e.target as HTMLElement | null;
+      if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.isContentEditable)) return;
       if (e.key === "ArrowRight") {
         if (rtl) prev();
         else next();
       } else if (e.key === "ArrowLeft") {
         if (rtl) next();
         else prev();
+      } else if (e.key === " ") {
+        e.preventDefault();
+        if (e.shiftKey) prev();
+        else next();
+      } else if (e.key === "b" || e.key === "B") {
+        toggleBookmark();
+      } else if (e.key === "z" || e.key === "Z") {
+        cycleZoom();
+      } else if (e.key === "c" || e.key === "C") {
+        setChapterSheet(true);
+      } else if (e.key === "s" || e.key === "S") {
+        setSettingsSheet(true);
+      } else if (e.key === "?") {
+        setHelpOpen(true);
       }
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
   });
+
+  /* ----- pdf full-text search (RDR-015): debounced committed query ----- */
+  useEffect(() => {
+    if (!pdfSearchOpen || !isPdf) return;
+    const q = pdfQuery.trim();
+    if (q.length < 2) {
+      setPdfHits(null);
+      setPdfSearching(false);
+      return;
+    }
+    setPdfSearching(true);
+    let alive = true;
+    const id = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { searchPdfText } = await import("@/lib/pdf-engine");
+          const hits = await searchPdfText(workId, q);
+          if (alive) {
+            setPdfHits(hits);
+            setPdfSearching(false);
+          }
+        } catch {
+          if (alive) {
+            setPdfHits([]);
+            setPdfSearching(false);
+          }
+        }
+      })();
+    }, 380);
+    return () => {
+      alive = false;
+      window.clearTimeout(id);
+    };
+  }, [pdfQuery, pdfSearchOpen, isPdf, workId]);
 
   /* ----- continuous scroll → current page (rAF throttled) ----- */
   const onScroll = () => {
@@ -1219,6 +1311,19 @@ export function ReaderScreen({
             }}
             aria-label={t("rdr.fit")}
           />
+          {isPdf && (
+            <ToolbarBtn
+              icon={Search}
+              label={t("rdr.pdfSearch")}
+              active={pdfSearchOpen}
+              onClick={() => {
+                setPdfQuery("");
+                setPdfHits(null);
+                setPdfSearchOpen(true);
+              }}
+              aria-label={t("rdr.pdfSearch")}
+            />
+          )}
           <ToolbarBtn
             icon={ZoomIn}
             label={zoom > 1 ? `${zoom}×` : t("rdr.zoom")}
@@ -1383,6 +1488,114 @@ export function ReaderScreen({
         </DialogContent>
       </Dialog>
 
+      {/* ============ pdf full-text search sheet (RDR-015) ============ */}
+      <Dialog open={pdfSearchOpen} onOpenChange={setPdfSearchOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="dark top-auto bottom-0 left-1/2 w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9"
+        >
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-start text-[16px] font-extrabold">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-coral-soft text-primary">
+                <Search className="h-4 w-4" />
+              </span>
+              {t("rdr.pdfSearch")}
+            </DialogTitle>
+            <DialogDescription className="text-[11px] font-semibold">{t("rdr.pdfSearchHint")}</DialogDescription>
+          </DialogHeader>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute start-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={pdfQuery}
+              onChange={(e) => setPdfQuery(e.target.value)}
+              placeholder={t("rdr.pdfSearchPlaceholder")}
+              aria-label={t("rdr.pdfSearch")}
+              autoFocus
+              dir="auto"
+              className="h-11 w-full rounded-2xl border border-border bg-secondary/60 ps-10 pe-4 text-[13px] font-bold outline-none transition-colors placeholder:font-semibold placeholder:text-muted-foreground focus:border-primary/60 focus:bg-secondary"
+            />
+          </div>
+
+          <div className="thin-scrollbar max-h-[42vh] space-y-1.5 overflow-y-auto pe-1">
+            {pdfSearching && (
+              <div className="flex items-center justify-center gap-2 py-8 text-[12px] font-bold text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                {t("common.loading")}
+              </div>
+            )}
+            {!pdfSearching && pdfHits && pdfHits.length === 0 && (
+              <div className="flex flex-col items-center gap-1.5 py-8 text-center">
+                <Search className="h-7 w-7 text-muted-foreground/40" />
+                <p className="text-[13px] font-bold text-muted-foreground">
+                  {pdfQuery.trim().length < 2 ? t("rdr.pdfSearchHint") : t("rdr.pdfSearchEmpty")}
+                </p>
+              </div>
+            )}
+            {!pdfSearching &&
+              pdfHits?.map((hit) => (
+                <button
+                  key={hit.page}
+                  onClick={() => jumpPdfHit(hit)}
+                  className="flex w-full items-start gap-3 rounded-2xl border border-border bg-white/[0.02] px-3 py-2.5 text-start transition-colors hover:bg-secondary/60"
+                >
+                  <span className="mt-0.5 shrink-0 rounded-full bg-coral-soft px-2.5 py-1 text-[10px] font-black text-primary">
+                    {t("pdf.jumpPage", { n: lang === "fa" ? toFa(hit.page) : hit.page })}
+                  </span>
+                  <span className="min-w-0 flex-1 text-[12px] font-semibold leading-relaxed text-foreground/85" dir="auto">
+                    {highlightSnippet(hit.snippet, pdfQuery.trim())}
+                  </span>
+                  {hit.count > 1 && (
+                    <span className="mt-0.5 shrink-0 rounded-full bg-secondary px-2 py-0.5 text-[10px] font-black text-secondary-foreground">
+                      ×{lang === "fa" ? toFa(hit.count) : hit.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ============ keyboard shortcuts help (desktop) ============ */}
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="dark top-auto bottom-0 left-1/2 w-full max-w-[440px] sm:max-w-[440px] -translate-x-1/2 translate-y-0 rounded-b-none rounded-t-[2rem] border-border bg-card p-5 pb-9"
+        >
+          <DialogHeader>
+            <DialogTitle className="text-start text-[16px] font-extrabold">{t("rdr.shortcuts")}</DialogTitle>
+            <DialogDescription className="sr-only">{t("rdr.shortcuts")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            {(
+              [
+                [["←", "→"], "rdr.sc.turn"],
+                [["Space"], "rdr.sc.next"],
+                [["⇧", "Space"], "rdr.sc.prev"],
+                [["B"], "rdr.sc.bookmark"],
+                [["Z"], "rdr.sc.zoom"],
+                [["C"], "rdr.sc.chapters"],
+                [["S"], "rdr.sc.settings"],
+              ] as [string[], TranslationKey][]
+            ).map(([keys, label]) => (
+              <div key={label} className="flex items-center justify-between gap-3 rounded-2xl bg-white/[0.03] px-3.5 py-2.5">
+                <span className="text-[13px] font-bold text-foreground/90">{t(label)}</span>
+                <span className="flex shrink-0 items-center gap-1" dir="ltr">
+                  {keys.map((k, i) => (
+                    <span key={i} className="flex items-center gap-1">
+                      {i > 0 && <span className="text-[10px] font-bold text-muted-foreground">+</span>}
+                      <kbd className="min-w-7 rounded-lg border border-border bg-secondary px-2 py-1 text-center text-[11px] font-black text-secondary-foreground shadow-[inset_0_-2px_0_rgba(0,0,0,0.12)]">
+                        {k}
+                      </kbd>
+                    </span>
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ============ reader settings sheet (RDR-007/009/014) ============ */}
       <Dialog open={settingsSheet} onOpenChange={setSettingsSheet}>
         <DialogContent
@@ -1542,6 +1755,26 @@ export function ReaderScreen({
                 onValueChange={(v) => setReaderDefaults({ brightness: v[0] ?? 100 })}
               />
             </div>
+
+            {/* keyboard shortcuts (desktop only) */}
+            {finePointer && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsSheet(false);
+                  setHelpOpen(true);
+                }}
+                className="flex w-full items-center gap-3 rounded-2xl border border-border bg-white/[0.03] px-4 py-3 text-start transition-colors hover:bg-secondary/60"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-coral-soft text-primary">
+                  <Keyboard className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1 text-[13px] font-bold">{t("rdr.shortcuts")}</span>
+                <kbd className="rounded-lg border border-border bg-secondary px-2 py-1 text-[11px] font-black text-secondary-foreground" dir="ltr">
+                  ?
+                </kbd>
+              </button>
+            )}
 
             {/* app-level switches */}
             <div className="space-y-3 rounded-2xl border border-border bg-white/[0.03] p-3.5">

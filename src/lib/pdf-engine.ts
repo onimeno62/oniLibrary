@@ -145,6 +145,84 @@ export async function getPdfToc(workId: string): Promise<PdfTocItem[]> {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* full-text search (RDR-015)                                          */
+/* ------------------------------------------------------------------ */
+
+/** per-page plain text cache: workId → string per page (1-based → index-1) */
+const textCache = new Map<string, Promise<string[]>>();
+
+/** drop cached page text (call when a work is removed/imported anew) */
+export function dropPdfText(workId: string): void {
+  textCache.delete(workId);
+}
+
+/** extract (and cache) the text of every page via pdf.js getTextContent */
+async function getPdfPageTexts(workId: string): Promise<string[]> {
+  let p = textCache.get(workId);
+  if (!p) {
+    p = (async () => {
+      const doc = await loadPdfDoc(workId);
+      const pages: string[] = [];
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        const tc = await page.getTextContent();
+        pages.push(
+          tc.items
+            .map((it) => ("str" in it ? it.str : ""))
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim()
+        );
+      }
+      return pages;
+    })().catch((err) => {
+      textCache.delete(workId);
+      throw err;
+    });
+    textCache.set(workId, p);
+  }
+  return p;
+}
+
+export interface PdfSearchHit {
+  page: number; // 1-based
+  snippet: string; // trimmed context around the first match on that page
+  count: number; // matches on this page (first 3 counted per page)
+}
+
+/** search the whole document — up to 3 snippet hits per page, 80 pages capped */
+export async function searchPdfText(workId: string, rawQuery: string): Promise<PdfSearchHit[]> {
+  const q = rawQuery.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const pages = await getPdfPageTexts(workId);
+  const hits: PdfSearchHit[] = [];
+  for (let i = 0; i < pages.length; i++) {
+    const lower = pages[i].toLowerCase();
+    let from = 0;
+    let count = 0;
+    let snippet = "";
+    while (count < 3) {
+      const at = lower.indexOf(q, from);
+      if (at < 0) break;
+      if (count === 0) {
+        const start = Math.max(0, at - 42);
+        const end = Math.min(pages[i].length, at + q.length + 46);
+        snippet = `${start > 0 ? "…" : ""}${pages[i].slice(start, end).replace(/\s+/g, " ")}${
+          end < pages[i].length ? "…" : ""
+        }`;
+      }
+      from = at + q.length;
+      count++;
+    }
+    if (count > 0) {
+      hits.push({ page: i + 1, snippet, count });
+      if (hits.length >= 80) break;
+    }
+  }
+  return hits;
+}
+
 /** parse a PDF blob: page count, info metadata and a small cover thumbnail */
 export async function readPdfMeta(blob: Blob): Promise<PdfMeta> {
   const lib = await getLib();

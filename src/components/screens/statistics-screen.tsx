@@ -7,13 +7,39 @@ import { OverlayHeader } from "@/components/shared";
 import { useApp, useNav } from "@/lib/store";
 import { toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
+import { cn } from "@/lib/utils";
 import type { WorkType } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
 import { toast } from "@/hooks/use-toast";
 
 /* ============================================================
-   StatisticsScreen — totals, 14-day chart, streak, by type
+   StatisticsScreen — totals, 14-day chart, heatmap, streak, by type
    ============================================================ */
+
+const HEAT_WEEKS = 15;
+
+interface HeatCell {
+  iso: string; // YYYY-MM-DD (utc-day key, consistent with sessions)
+  minutes: number;
+  future: boolean;
+  label: string; // "May 12" style for tooltip
+}
+
+function heatLevel(minutes: number): 0 | 1 | 2 | 3 | 4 {
+  if (minutes <= 0) return 0;
+  if (minutes < 15) return 1;
+  if (minutes < 30) return 2;
+  if (minutes < 60) return 3;
+  return 4;
+}
+
+const HEAT_CLASS: Record<0 | 1 | 2 | 3 | 4, string> = {
+  0: "bg-secondary",
+  1: "bg-[#f8694c]/25",
+  2: "bg-[#f8694c]/50",
+  3: "bg-[#f8694c]/75",
+  4: "bg-coral-gradient shadow-[0_0_6px_rgba(248,105,76,0.45)]",
+};
 
 function utcDay(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -127,6 +153,50 @@ export function StatisticsScreen() {
     [publicWorks]
   );
   const maxType = Math.max(1, ...typeGroups.map((g) => g.count));
+
+  /* heatmap grid — HEAT_WEEKS columns of 7 days (Mon..Sun) ending this week */
+  const heat = useMemo(() => {
+    const byDate = new Map(sessions.map((s) => [s.date, s.minutes]));
+    const dowMon0 = (d: Date) => (d.getDay() + 6) % 7; // Mon = 0
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    start.setDate(start.getDate() - dowMon0(start) - (HEAT_WEEKS - 1) * 7);
+    const weeks: { cells: HeatCell[]; monthLabel: string | null }[] = [];
+    let prevMonth = -1;
+    for (let w = 0; w < HEAT_WEEKS; w++) {
+      const cells: HeatCell[] = [];
+      let monthLabel: string | null = null;
+      for (let d = 0; d < 7; d++) {
+        const day = new Date(start);
+        day.setDate(start.getDate() + w * 7 + d);
+        const iso = utcDay(day);
+        const future = day.getTime() > today.getTime();
+        if (day.getMonth() !== prevMonth) {
+          prevMonth = day.getMonth();
+          // label the column with the month in which the change actually occurs
+          monthLabel = day.toLocaleDateString("en-US", { month: "short" });
+        }
+        cells.push({
+          iso,
+          minutes: byDate.get(iso) ?? 0,
+          future,
+          label: day.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        });
+      }
+      weeks.push({ cells, monthLabel });
+    }
+    return weeks;
+  }, [sessions]);
+  const activeDays = useMemo(
+    () => heat.reduce((a, w) => a + w.cells.filter((c) => c.minutes > 0).length, 0),
+    [heat]
+  );
+  const weekdayLabels = useMemo(() => {
+    // Jan 1 2024 = Monday → narrow weekday letters Mon..Sun in the active locale
+    return Array.from({ length: 7 }, (_, i) =>
+      new Date(2024, 0, 1 + i).toLocaleDateString(fa ? "fa" : "en-US", { weekday: "narrow" })
+    );
+  }, [fa]);
 
   /* daily goal */
   const dailyGoalMin = useApp((s) => s.settings.dailyGoalMin ?? 0);
@@ -258,6 +328,64 @@ export function StatisticsScreen() {
               <Bar dataKey="minutes" fill="#f8694c" radius={[6, 6, 0, 0]} maxBarSize={22} />
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      </section>
+
+      {/* reading activity heatmap (15 weeks) */}
+      <section className="mt-3 rounded-3xl border border-border bg-card p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-[15px] font-extrabold tracking-tight">{t("stat.heatmap")}</p>
+          <span className="rounded-full bg-coral-soft px-2.5 py-1 text-[10px] font-bold text-primary">
+            {num(activeDays)} {t("stat.activeDays")}
+          </span>
+        </div>
+        <div dir="ltr" className="mt-3 overflow-x-auto no-scrollbar">
+          <div className="flex min-w-max flex-col gap-1">
+            {/* month labels */}
+            <div className="flex gap-[3px] ps-[26px]">
+              {heat.map((w, i) => (
+                <div key={`m${i}`} className="relative h-3 w-2.5">
+                  {w.monthLabel && (
+                    <span className="absolute left-0 top-0 whitespace-nowrap text-[8.5px] font-bold uppercase tracking-wide text-muted-foreground">
+                      {w.monthLabel}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-[3px]">
+              {/* weekday letters */}
+              <div className="flex w-[23px] flex-col gap-[3px] pe-0.5 text-end">
+                {weekdayLabels.map((lbl, i) => (
+                  <span key={i} className="h-2.5 text-[8px] font-bold leading-2.5 text-muted-foreground">
+                    {i % 2 === 0 ? lbl : ""}
+                  </span>
+                ))}
+              </div>
+              {heat.map((w, wi) => (
+                <div key={wi} className="flex flex-col gap-[3px]">
+                  {w.cells.map((c, ci) => (
+                    <span
+                      key={ci}
+                      title={`${c.label} · ${c.minutes} ${t("stat.minutesShort")}`}
+                      aria-label={`${c.label} — ${c.minutes} ${t("stat.minutesShort")}`}
+                      className={cn(
+                        "h-2.5 w-2.5 rounded-[3px] transition-colors",
+                        c.future ? "bg-transparent" : HEAT_CLASS[heatLevel(c.minutes)]
+                      )}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="mt-2.5 flex items-center justify-end gap-1.5" dir="ltr">
+          <span className="text-[9px] font-bold text-muted-foreground">{t("stat.heatmapLess")}</span>
+          {([0, 1, 2, 3, 4] as const).map((lv) => (
+            <span key={lv} className={cn("h-2.5 w-2.5 rounded-[3px]", HEAT_CLASS[lv])} />
+          ))}
+          <span className="text-[9px] font-bold text-muted-foreground">{t("stat.heatmapMore")}</span>
         </div>
       </section>
 

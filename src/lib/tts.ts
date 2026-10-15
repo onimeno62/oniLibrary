@@ -1,11 +1,17 @@
 "use client";
 
 /* ============================================================
-   oniLibrary — read-aloud engine (Web Speech API)
+   oniLibrary — read-aloud engine
+   Two backends behind one chunk queue:
+   1. Web Speech API (browser)
+   2. Android native TTS via the OniAndroid JS bridge (APK) —
+      the shell exposes ttsSpeak/ttsStop and reports progress
+      through window.OniNativeTts.done() from
+      UtteranceProgressListener.
    Small singleton that speaks a queue of text chunks with
    play/pause/stop + adjustable rate. Used by the book (EPUB)
-   reader. Gracefully reports "unsupported" when the browser
-   (or APK WebView) has no speechSynthesis.
+   reader. Gracefully reports "unsupported" when neither
+   backend exists.
    ============================================================ */
 
 import { useSyncExternalStore } from "react";
@@ -44,8 +50,52 @@ function getSnapshot(): TtsSnapshot {
   return snapshot;
 }
 
+/* ------------------------------------------------------------------ */
+/* Android native bridge (window.OniAndroid, injected by the shell)    */
+/* ------------------------------------------------------------------ */
+
+interface NativeTts {
+  ttsAvailable: () => number;
+  ttsSpeak: (text: string, lang: string, rate: number) => void;
+  ttsStop: () => void;
+}
+
+function nativeTts(): NativeTts | null {
+  if (typeof window === "undefined") return null;
+  const b = (window as unknown as { OniAndroid?: Partial<NativeTts> }).OniAndroid;
+  if (
+    b &&
+    typeof b.ttsAvailable === "function" &&
+    typeof b.ttsSpeak === "function" &&
+    typeof b.ttsStop === "function" &&
+    b.ttsAvailable() === 1
+  ) {
+    return b as NativeTts;
+  }
+  return null;
+}
+
+/** hook the native progress callbacks (installed once, first use) */
+let nativeHooked = false;
+function ensureNativeHook() {
+  if (nativeHooked || typeof window === "undefined") return;
+  nativeHooked = true;
+  const w = window as unknown as { OniNativeTts?: { done: () => void } };
+  w.OniNativeTts = {
+    // native chunk finished (or errored) → advance the queue
+    done: () => {
+      if (status === "playing") speakFrom(idx + 1);
+    },
+  };
+}
+
 export function ttsSupported(): boolean {
-  return typeof window !== "undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined";
+  if (nativeTts()) return true;
+  return (
+    typeof window !== "undefined" &&
+    "speechSynthesis" in window &&
+    typeof SpeechSynthesisUtterance !== "undefined"
+  );
 }
 
 /** split one paragraph into speakable chunks (sentence-ish, ≤ 260 chars) */
@@ -77,6 +127,16 @@ function speakFrom(i: number) {
     return;
   }
   emit();
+
+  const native = nativeTts();
+  if (native) {
+    ensureNativeHook();
+    // the shell flushes the queue per call → one chunk in flight;
+    // UtteranceProgressListener calls OniNativeTts.done() when finished
+    native.ttsSpeak(paras[i], lang ?? "", rate);
+    return;
+  }
+
   const u = new SpeechSynthesisUtterance(paras[i]);
   u.rate = rate;
   u.pitch = 1;
@@ -98,7 +158,8 @@ export function ttsStart(chunks: string[], opts?: { lang?: string; rate?: number
   if (!ttsSupported()) return false;
   const list = chunks.flatMap(chunkPara).filter(Boolean);
   if (!list.length) return false;
-  window.speechSynthesis.cancel();
+  const native = nativeTts();
+  if (!native) window.speechSynthesis.cancel();
   paras = list;
   lang = opts?.lang;
   rate = opts?.rate ?? 1;
@@ -108,23 +169,43 @@ export function ttsStart(chunks: string[], opts?: { lang?: string; rate?: number
 }
 
 export function ttsPause() {
-  if (!ttsSupported() || status !== "playing") return;
+  if (status !== "playing") return;
+  const native = nativeTts();
+  if (native) {
+    // Android TTS has no pause — halt the chunk; resume re-speaks it
+    native.ttsStop();
+    status = "paused";
+    emit();
+    return;
+  }
+  if (!ttsSupported()) return;
   window.speechSynthesis.pause();
   status = "paused";
   emit();
 }
 
 export function ttsResume() {
-  if (!ttsSupported() || status !== "paused") return;
+  if (status !== "paused") return;
+  const native = nativeTts();
+  if (native) {
+    status = "playing";
+    speakFrom(idx);
+    return;
+  }
+  if (!ttsSupported()) return;
   window.speechSynthesis.resume();
   status = "playing";
   emit();
 }
 
 export function ttsStop() {
-  if (!ttsSupported()) return;
   gen++;
-  window.speechSynthesis.cancel();
+  const native = nativeTts();
+  if (native) {
+    native.ttsStop();
+  } else if (ttsSupported()) {
+    window.speechSynthesis.cancel();
+  }
   paras = [];
   idx = 0;
   status = "idle";
@@ -134,13 +215,19 @@ export function ttsStop() {
 /** change speed — restarts the current chunk with the new rate */
 export function ttsSetRate(r: number) {
   rate = Math.min(2, Math.max(0.5, r));
-  if (!ttsSupported()) return;
   if (status === "playing") {
-    window.speechSynthesis.cancel();
-    speakFrom(idx);
+    const native = nativeTts();
+    if (native) {
+      speakFrom(idx); // restart current chunk at the new rate
+    } else if (ttsSupported()) {
+      window.speechSynthesis.cancel();
+      speakFrom(idx);
+    }
   } else if (status === "paused") {
     // resuming later would keep the old rate — restart chunk silently
-    window.speechSynthesis.cancel();
+    const native = nativeTts();
+    if (native) native.ttsStop();
+    else if (ttsSupported()) window.speechSynthesis.cancel();
     status = "idle";
     emit();
   }

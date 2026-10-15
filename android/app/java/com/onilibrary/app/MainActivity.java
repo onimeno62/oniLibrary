@@ -4,6 +4,10 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -19,6 +23,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -34,6 +39,9 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private volatile int overlayDepth = 0;
+    private TextToSpeech tts;
+    private volatile boolean ttsReady = false;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private static final Map<String, String> MIME = new HashMap<>();
     static {
@@ -91,6 +99,23 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new Bridge(), "OniAndroid");
 
+        // native text-to-speech for the read-aloud feature (APK fallback —
+        // WebView builds usually ship no browser voices)
+        tts = new TextToSpeech(this, status -> {
+            ttsReady = status == TextToSpeech.SUCCESS;
+            if (ttsReady) {
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String utteranceId) { }
+                    @Override public void onDone(String utteranceId) {
+                        notifyTtsDone();
+                    }
+                    @Override public void onError(String utteranceId) {
+                        notifyTtsDone();
+                    }
+                });
+            }
+        });
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -121,6 +146,38 @@ public class MainActivity extends Activity {
         public void setOverlayDepth(int depth) {
             overlayDepth = depth;
         }
+
+        @JavascriptInterface
+        public int ttsAvailable() {
+            return ttsReady ? 1 : 0;
+        }
+
+        /** speak one chunk — the JS queue calls this per paragraph chunk */
+        @JavascriptInterface
+        public void ttsSpeak(String text, String lang, float rate) {
+            if (!ttsReady || tts == null || text == null || text.isEmpty()) return;
+            Locale loc = (lang == null || lang.isEmpty()) ? Locale.getDefault() : Locale.forLanguageTag(lang);
+            try {
+                tts.setLanguage(loc);
+            } catch (Exception ignored) { }
+            tts.setSpeechRate(Math.max(0.5f, Math.min(2.0f, rate)));
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "oni-" + System.nanoTime());
+        }
+
+        @JavascriptInterface
+        public void ttsStop() {
+            if (tts != null) tts.stop();
+        }
+    }
+
+    /** report chunk completion back into the JS read-aloud queue */
+    private void notifyTtsDone() {
+        mainHandler.post(() -> {
+            if (webView != null) {
+                webView.evaluateJavascript(
+                    "window.OniNativeTts&&window.OniNativeTts.done()", null);
+            }
+        });
     }
 
     private WebResourceResponse serveAsset(String url) {
@@ -167,7 +224,20 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (tts != null) tts.stop(); // silence read-aloud when the app backgrounds
         webView.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (tts != null) {
+            try {
+                tts.stop();
+                tts.shutdown();
+            } catch (Exception ignored) { }
+            tts = null;
+        }
+        super.onDestroy();
     }
 
     @Override

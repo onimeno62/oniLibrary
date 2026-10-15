@@ -188,10 +188,13 @@ export function AppShell() {
   const readerOpen = overlay?.kind === "reader";
   useClientEngine(readerOpen);
 
-  // ESC to go back
+  // ESC to go back — but let open dialogs/sheets consume Escape first
+  // (radix closes them itself; previously sheet + reader popped together)
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && stack.length > 0) pop();
+      if (e.key !== "Escape") return;
+      if (document.querySelector("[role=dialog]")) return;
+      if (stack.length > 0) pop();
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);

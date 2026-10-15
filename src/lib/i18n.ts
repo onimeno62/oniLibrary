@@ -367,6 +367,10 @@ const en = {
   "stat.last14": "Last 14 days",
   "stat.streak": "Current streak",
   "stat.daysUnit": "days",
+  "stat.heatmap": "Reading activity",
+  "stat.activeDays": "active days",
+  "stat.heatmapLess": "Less",
+  "stat.heatmapMore": "More",
   "stat.totalChapters": "Chapters read",
   "stat.totalTime": "Total time",
   "stat.totalWorks": "In library",
@@ -591,9 +595,23 @@ const en = {
   "tts.unsupported": "Text-to-speech isn’t available in this browser",
   "tts.empty": "This chapter has no readable text",
 
-  // pdf outline
+  // pdf outline + full-text search (RDR-015)
   "pdf.outline": "Outline",
   "pdf.jumpPage": "Page {n}",
+
+  // reader extras
+  "rdr.pdfSearch": "Search in document",
+  "rdr.pdfSearchHint": "Type at least 2 characters to search every page.",
+  "rdr.pdfSearchPlaceholder": "Search this document…",
+  "rdr.pdfSearchEmpty": "No matches found",
+  "rdr.shortcuts": "Keyboard shortcuts",
+  "rdr.sc.turn": "Previous / next page",
+  "rdr.sc.next": "Next page",
+  "rdr.sc.prev": "Previous page",
+  "rdr.sc.bookmark": "Add or remove bookmark",
+  "rdr.sc.zoom": "Cycle zoom",
+  "rdr.sc.chapters": "Chapter list",
+  "rdr.sc.settings": "Reader settings",
 } ;
 
 export type TranslationKey = keyof typeof en;
@@ -954,6 +972,10 @@ const fa: Record<TranslationKey, string> = {
   "stat.last14": "۱۴ روز گذشته",
   "stat.streak": "زنجیره فعلی",
   "stat.daysUnit": "روز",
+  "stat.heatmap": "فعالیت خواندن",
+  "stat.activeDays": "روز فعال",
+  "stat.heatmapLess": "کمتر",
+  "stat.heatmapMore": "بیشتر",
   "stat.totalChapters": "فصل خوانده‌شده",
   "stat.totalTime": "زمان کل",
   "stat.totalWorks": "در کتابخانه",
@@ -1176,9 +1198,23 @@ const fa: Record<TranslationKey, string> = {
   "tts.unsupported": "تبدیل متن به گفتار در این مرورگر موجود نیست",
   "tts.empty": "این فصل متن قابل خواندنی ندارد",
 
-  // pdf outline
+  // pdf outline + full-text search (RDR-015)
   "pdf.outline": "فهرست",
   "pdf.jumpPage": "صفحه {n}",
+
+  // reader extras
+  "rdr.pdfSearch": "جست‌وجو در سند",
+  "rdr.pdfSearchHint": "برای جست‌وجو در همهٔ صفحه‌ها دست‌کم ۲ نویسه بنویسید.",
+  "rdr.pdfSearchPlaceholder": "جست‌وجو در این سند…",
+  "rdr.pdfSearchEmpty": "نتیجه‌ای پیدا نشد",
+  "rdr.shortcuts": "میان‌برهای صفحه‌کلید",
+  "rdr.sc.turn": "صفحهٔ قبلی / بعدی",
+  "rdr.sc.next": "صفحهٔ بعدی",
+  "rdr.sc.prev": "صفحهٔ قبلی",
+  "rdr.sc.bookmark": "افزودن یا برداشتن نشانک",
+  "rdr.sc.zoom": "تغییر بزرگ‌نمایی",
+  "rdr.sc.chapters": "فهرست فصل‌ها",
+  "rdr.sc.settings": "تنظیمات خواننده",
 };
 
 const dicts: Record<Lang, Record<TranslationKey, string>> = { en, fa };

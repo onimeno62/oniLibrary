@@ -1,0 +1,702 @@
+    56→    56→} from "@/components/ui/dialog";
+    57→    57→import { Switch } from "@/components/ui/switch";
+    58→    58→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+    59→    59→import {
+    60→    60→  DropdownMenu,
+    61→    61→  DropdownMenuContent,
+    62→    62→  DropdownMenuItem,
+    63→    63→  DropdownMenuTrigger,
+    64→    64→} from "@/components/ui/dropdown-menu";
+    65→    65→import type { FitMode, ReaderMode, ReadingDirection } from "@/lib/types";
+    66→    66→import type { TranslationKey } from "@/lib/i18n";
+    67→    67→
+    68→    68→/* ------------------------------------------------------------------ */
+    69→    69→/* helpers                                                             */
+    70→    70→/* ------------------------------------------------------------------ */
+    71→    71→
+    72→    72→type BgName = "black" | "gray" | "white" | "sepia";
+    73→    73→
+    74→    74→const BG_HEX: Record<BgName, string> = {
+    75→    75→  black: "#000000",
+    76→    76→  gray: "#2e2c2a",
+    77→    77→  white: "#ffffff",
+    78→    78→  sepia: "#f4ead3",
+    79→    79→};
+    80→    80→
+    81→    81→/** how the page element sizes itself inside a slide (RDR-003) */
+    82→    82→const FIT_CLASS: Record<FitMode, string> = {
+    83→    83→  WIDTH: "block w-full h-auto",
+    84→    84→  HEIGHT: "block h-full w-auto",
+    85→    85→  SCREEN: "block h-full w-full object-contain",
+    86→    86→  ORIGINAL: "block h-[1200px] w-[800px] max-w-none",
+    87→    87→};
+    88→    88→
+    89→    89→interface ChapterLite {
+    90→    90→  id: string;
+    91→    91→  number: number;
+    92→    92→  title: string;
+    93→    93→  isRead: boolean;
+    94→    94→}
+    95→    95→
+    96→    96→/* ------------------------------------------------------------------ */
+    97→    97→/* small UI atoms                                                      */
+    98→    98→/* ------------------------------------------------------------------ */
+    99→    99→
+   100→   100→function CtrlBtn({
+   101→   101→  icon: Icon,
+   102→   102→  label,
+   103→   103→  active,
+   104→   104→  ...props
+   105→   105→}: { icon: LucideIcon; label: string; active?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+   106→   106→  return (
+   107→   107→    <button type="button" {...props} className={cn("flex flex-col items-center gap-1 py-0.5", props.className)}>
+   108→   108→      <span
+   109→   109→        className={cn(
+   110→   110→          "flex h-10 w-10 items-center justify-center rounded-full transition-colors",
+   111→   111→          active ? "bg-coral-gradient text-white shadow-[0_8px_20px_-8px_rgba(248,105,76,0.9)]" : "bg-white/8 text-white/90 hover:bg-white/15"
+   112→   112→        )}
+   113→   113→      >
+   114→   114→        <Icon className="h-5 w-5" />
+   115→   115→      </span>
+   116→   116→      <span className="max-w-[76px] truncate text-[10px] font-semibold text-white/60">{label}</span>
+   117→   117→    </button>
+   118→   118→  );
+   119→   119→}
+   120→   120→
+   121→   121→function ToolbarBtn({
+   122→   122→  icon: Icon,
+   123→   123→  label,
+   124→   124→  active,
+   125→   125→  ...props
+   126→   126→}: { icon: LucideIcon; label: string; active?: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+   127→   127→  return (
+   128→   128→    <button type="button" {...props} className={cn("flex flex-col items-center gap-1.5", props.className)}>
+   129→   129→      <span
+   130→   130→        className={cn(
+   131→   131→          "flex h-10 w-10 items-center justify-center rounded-full transition-colors",
+   132→   132→          active ? "bg-coral-gradient text-white" : "bg-white/8 text-white/90 hover:bg-white/15"
+   133→   133→        )}
+   134→   134→      >
+   135→   135→        <Icon className="h-[18px] w-[18px]" />
+   136→   136→      </span>
+   137→   137→      <span className="max-w-[64px] truncate text-[10px] font-semibold text-white/60">{label}</span>
+   138→   138→    </button>
+   139→   139→  );
+   140→   140→}
+   141→   141→
+   142→   142→function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+   143→   143→  return (
+   144→   144→    <button
+   145→   145→      type="button"
+   146→   146→      onClick={onClick}
+   147→   147→      className={cn(
+   148→   148→        "rounded-full px-3.5 py-1.5 text-[12px] font-bold transition-all",
+   149→   149→        active
+   150→   150→          ? "bg-coral-gradient text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.8)]"
+   151→   151→          : "bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground"
+   152→   152→      )}
+   153→   153→    >
+   154→   154→      {children}
+   155→   155→    </button>
+   156→   156→  );
+   157→   157→}
+   158→   158→
+   159→   159→function SheetRow({ label, children }: { label: string; children: React.ReactNode }) {
+   160→   160→  return (
+   161→   161→    <div>
+   162→   162→      <p className="mb-2 text-[12px] font-bold text-muted-foreground">{label}</p>
+   163→   163→      <div className="flex flex-wrap gap-2">{children}</div>
+   164→   164→    </div>
+   165→   165→  );
+   166→   166→}
+   167→   167→
+   168→   168→/* ------------------------------------------------------------------ */
+   169→   169→/* local page (IndexedDB object URLs)                                  */
+   170→   170→/* ------------------------------------------------------------------ */
+   171→   171→
+   172→   172→function LocalPageImage({ storageKey, className }: { storageKey: string; className?: string }) {
+   173→   173→  const { t } = useT();
+   174→   174→  const [url, setUrl] = useState<string | null>(null);
+   175→   175→  const [failed, setFailed] = useState(false);
+   176→   176→
+   177→   177→  useEffect(() => {
+   178→   178→    let alive = true;
+   179→   179→    let made: string | null = null;
+   180→   180→    setUrl(null);
+   181→   181→    setFailed(false);
+   182→   182→    (async () => {
+   183→   183→      try {
+   184→   184→        const { loadPageUrl } = await import("@/lib/importer");
+   185→   185→        const u = await loadPageUrl(storageKey);
+   186→   186→        if (!alive) {
+   187→   187→          if (u) URL.revokeObjectURL(u);
+   188→   188→          return;
+   189→   189→        }
+   190→   190→        if (u) {
+   191→   191→          made = u;
+   192→   192→          setUrl(u);
+   193→   193→        } else {
+   194→   194→          setFailed(true);
+   195→   195→        }
+   196→   196→      } catch {
+   197→   197→        if (alive) setFailed(true);
+   198→   198→      }
+   199→   199→    })();
+   200→   200→    return () => {
+   201→   201→      alive = false;
+   202→   202→      if (made) URL.revokeObjectURL(made);
+   203→   203→    };
+   204→   204→  }, [storageKey]);
+   205→   205→
+   206→   206→  if (failed) {
+   207→   207→    return (
+   208→   208→      <div className={cn("flex w-full flex-col items-center justify-center gap-2 bg-[#151312] p-6 text-center", className)}>
+   209→   209→        <ImageOff className="h-8 w-8 text-white/25" />
+   210→   210→        <p className="text-[13px] font-bold text-white/70">{t("rdr.localMissing")}</p>
+   211→   211→        <p className="text-[11px] font-semibold text-white/40">{t("rdr.localMissingHint")}</p>
+   212→   212→      </div>
+   213→   213→    );
+   214→   214→  }
+   215→   215→  if (!url) {
+   216→   216→    return (
+   217→   217→      <div className={cn("flex w-full items-center justify-center bg-[#151312]", className)}>
+   218→   218→        <Loader2 className="h-7 w-7 animate-spin text-white/35" />
+   219→   219→      </div>
+   220→   220→    );
+   221→   221→  }
+   222→   222→  return (
+   223→   223→    <img src={url} alt="" draggable={false} className={className} />
+   224→   224→  );
+   225→   225→}
+   226→   226→
+   227→   227→/* ------------------------------------------------------------------ */
+   228→   228→/* ReaderScreen                                                        */
+   229→   229→/* ------------------------------------------------------------------ */
+   230→   230→
+   231→   231→export function ReaderScreen({
+   232→   232→  workId,
+   233→   233→  chapterId,
+   234→   234→  startPage,
+   235→   235→}: {
+   236→   236→  workId: string;
+   237→   237→  chapterId: string;
+   238→   238→  startPage?: number;
+   239→   239→}) {
+   240→   240→  const { t, lang } = useT();
+   241→   241→
+   242→   242→  /* ----- store ----- */
+   243→   243→  const work = useApp((s) => s.works.find((w) => w.id === workId));
+   244→   244→  const chapter = useApp((s) =>
+   245→   245→    s.works.find((w) => w.id === workId)?.chapters.find((c) => c.id === chapterId)
+   246→   246→  );
+   247→   247→  const readerDefaults = useApp((s) => s.settings.readerDefaults);
+   248→   248→  const bookmarks = useApp((s) => s.bookmarks);
+   249→   249→  const pop = useNav((s) => s.pop);
+   250→   250→  const updateWork = useApp((s) => s.updateWork);
+   251→   251→  const setReaderDefaults = useApp((s) => s.setReaderDefaults);
+   252→   252→  const markChapterRead = useApp((s) => s.markChapterRead);
+   253→   253→  const addBookmark = useApp((s) => s.addBookmark);
+   254→   254→  const removeBookmark = useApp((s) => s.removeBookmark);
+   255→   255→  const startDownload = useApp((s) => s.startDownload);
+   256→   256→
+   257→   257→  /** restored page index for the initially opened chapter (RDR-006) */
+   258→   258→  const initial = useMemo(() => {
+   259→   259→    const ch = useApp
+   260→   260→      .getState()
+   261→   261→      .works.find((x) => x.id === workId)
+   262→   262→      ?.chapters.find((c) => c.id === chapterId);
+   263→   263→    const t = ch?.pages ?? 0;
+   264→   264→    let p = 0;
+   265→   265→    if (typeof ch?.lastPage === "number" && ch.lastPage > 0) {
+   266→   266→      p = ch.lastPage <= 1 ? Math.round(ch.lastPage * t) : Math.round(ch.lastPage);
+   267→   267→    }
+   268→   268→    return Math.max(0, Math.min(Math.max(0, t - 1), p));
+   269→   269→  }, []);
+   270→   270→
+   271→   271→  /* ----- local ui state ----- */
+   272→   272→  const [page, setPage] = useState(initial);
+   273→   273→  // commanded scroll target (slider / nav / chapter restore) — vs. user scrolling
+   274→   274→  const [scrollCmd, setScrollCmd] = useState<{ page: number } | null>(
+   275→   275→    initial > 0 ? { page: initial } : null
+   276→   276→  );
+   277→   277→  const [controlsVisible, setControlsVisible] = useState(true);
+   278→   278→  const [endCard, setEndCard] = useState(false);
+   279→   279→  const [zoom, setZoom] = useState(1); // 1 → 1.5 → 2 (RDR-004)
+   280→   280→  const [rotate, setRotate] = useState(0); // 0/90/180/270
+   281→   281→  const [autoPlay, setAutoPlay] = useState(false);
+   282→   282→  const [chapterSheet, setChapterSheet] = useState(false);
+   283→   283→  const [settingsSheet, setSettingsSheet] = useState(false);
+   284→   284→  const [brightOpen, setBrightOpen] = useState(false);
+   285→   285→  const [ttsOpen, setTtsOpen] = useState(false);
+   286→   286→  const [ttsRateDraft, setTtsRateDraft] = useState(1);
+   287→   287→  const [pdfToc, setPdfToc] = useState<PdfTocItem[]>([]);
+   288→   288→  const ttsRateTimer = useRef<number | null>(null);
+   289→   289→  const tts = useTts();
+   290→   290→
+   291→   291→  /* ----- refs ----- */
+   292→   292→  const contentRef = useRef<HTMLDivElement>(null);
+   293→   293→  const scrollRef = useRef<HTMLDivElement>(null);
+   294→   294→  const anchorsRef = useRef<(HTMLDivElement | null)[]>([]);
+   295→   295→  const rafRef = useRef(0);
+   296→   296→  const lastTapRef = useRef(0);
+   297→   297→  const pendingNavRef = useRef(0);
+   298→   298→  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+   299→   299→
+   300→   300→  /* ----- derived ----- */
+   301→   301→  const total = Math.max(0, chapter?.pages ?? 0);
+   302→   302→  const direction: ReadingDirection = work?.direction ?? "LTR";
+   303→   303→  const rtl = direction === "RTL";
+   304→   304→  const vertical = direction === "VERTICAL";
+   305→   305→  const requestedMode: ReaderMode = work?.readerMode ?? readerDefaults.mode;
+   306→   306→  const isEpub = work?.type === "EPUB" && work?.localPages?.[0] === "epub";
+   307→   307→  const isPdf = work?.type === "PDF" && work?.localPages?.[0] === "pdf";
+   308→   308→  const epubFontSize = readerDefaults.epubFontSize ?? 16;
+   309→   309→
+   310→   310→  const [landscape, setLandscape] = useState(false);
+   311→   311→  useEffect(() => {
+   312→   312→    const el = contentRef.current;
+   313→   313→    if (!el) return;
+   314→   314→    const update = () => setLandscape(el.clientWidth > el.clientHeight);
+   315→   315→    update();
+   316→   316→    const ro = new ResizeObserver(update);
+   317→   317→    ro.observe(el);
+   318→   318→    return () => ro.disconnect();
+   319→   319→  }, []);
+   320→   320→
+   321→   321→  // DOUBLE falls back to PAGED on portrait containers
+   322→   322→  const mode: ReaderMode = requestedMode === "DOUBLE" && !landscape ? "PAGED" : requestedMode;
+   323→   323→  const paged = mode === "PAGED" || mode === "DOUBLE";
+   324→   324→  const scrollable = mode === "CONTINUOUS" || mode === "WEBTOON";
+   325→   325→  const isLocal = Boolean(work?.isLocal && work.localPages?.length);
+   326→   326→
+   327→   327→  const chaptersAsc = useMemo<ChapterLite[]>(
+   328→   328→    () =>
+   329→   329→      work
+   330→   330→        ? [...work.chapters]
+   331→   331→            .sort((a, b) => a.number - b.number)
+   332→   332→            .map((c) => ({ id: c.id, number: c.number, title: c.title, isRead: c.isRead }))
+   333→   333→        : [],
+   334→   334→    [work]
+   335→   335→  );
+   336→   336→  const chaptersDesc = useMemo(() => [...chaptersAsc].reverse(), [chaptersAsc]);
+   337→   337→  const curIdx = chaptersAsc.findIndex((c) => c.id === chapterId);
+   338→   338→  const prevChapter = curIdx > 0 ? chaptersAsc[curIdx - 1] : undefined;
+   339→   339→  const nextChapter = curIdx >= 0 && curIdx < chaptersAsc.length - 1 ? chaptersAsc[curIdx + 1] : undefined;
+   340→   340→
+   341→   341→  const currentBookmark = bookmarks.find(
+   342→   342→    (b) => b.workId === workId && b.chapterId === chapterId && b.page === page
+   343→   343→  );
+   344→   344→
+   345→   345→  /* ----- reset per-chapter state when the chapter changes -----
+   346→   346→     (React "adjust state when props change" pattern — runs during render) */
+   347→   347→  const navKey = `${workId}#${chapterId}${typeof startPage === "number" ? `#p${startPage}` : ""}`;
+   348→   348→  const [stateKey, setStateKey] = useState(navKey);
+   349→   349→  if (stateKey !== navKey) {
+   350→   350→    setStateKey(navKey);
+   351→   351→    const t = chapter?.pages ?? 0;
+   352→   352→    let p = 0;
+   353→   353→    if (typeof startPage === "number" && startPage > 0) {
+   354→   354→      p = startPage;
+   355→   355→    } else if (typeof chapter?.lastPage === "number" && chapter.lastPage > 0) {
+   356→   356→      p = chapter.lastPage <= 1 ? Math.round(chapter.lastPage * t) : Math.round(chapter.lastPage);
+   357→   357→    }
+   358→   358→    p = Math.max(0, Math.min(Math.max(0, t - 1), p));
+   359→   359→    setPage(p);
+   360→   360→    setEndCard(false);
+   361→   361→    setControlsVisible(true);
+   362→   362→    setZoom(1);
+   363→   363→    setRotate(0);
+   364→   364→    setAutoPlay(false);
+   365→   365→    setScrollCmd({ page: p });
+   366→   366→  }
+   367→   367→
+   368→   368→  /* ----- progress persistence: page ratio on every page change (manga modes) ----- */
+   369→   369→  useEffect(() => {
+   370→   370→    if (total <= 0 || isEpub) return; // epub view manages its own scroll-ratio progress
+   371→   371→    useApp.getState().setChapterProgress(workId, chapterId, Math.min(1, page / total));
+   372→   372→  }, [page, total, workId, chapterId, isEpub]);
+   373→   373→
+   374→   374→  /* ----- history entry per opened chapter ----- */
+   375→   375→  useEffect(() => {
+   376→   376→    useApp.getState().pushHistory(workId, chapterId, page);
+   377→   377→  }, [workId, chapterId]);
+   378→   378→
+   379→   379→  /* ----- reading-time log every 60s while open ----- */
+   380→   380→  useEffect(() => {
+   381→   381→    const id = window.setInterval(() => useApp.getState().logReading(workId, 1, 0), 60_000);
+   382→   382→    return () => window.clearInterval(id);
+   383→   383→  }, [workId]);
+   384→   384→
+   385→   385→  /* ----- read-aloud (books): stop when chapter or reader closes ----- */
+   386→   386→  useEffect(() => () => ttsStop(), [workId, chapterId]);
+   387→   387→
+   388→   388→  /* ----- pdf outline (TOC) — loaded when the chapter sheet opens ----- */
+   389→   389→  useEffect(() => {
+   390→   390→    if (!chapterSheet || !isPdf) return;
+   391→   391→    let alive = true;
+   392→   392→    setPdfToc([]);
+   393→   393→    void (async () => {
+   394→   394→      try {
+   395→   395→        const { getPdfToc } = await import("@/lib/pdf-engine");
+   396→   396→        const toc = await getPdfToc(workId);
+   397→   397→        if (alive) setPdfToc(toc);
+   398→   398→      } catch {
+   399→   399→        /* outline unavailable */
+   400→   400→      }
+   401→   401→    })();
+   402→   402→    return () => {
+   403→   403→      alive = false;
+   404→   404→    };
+   405→   405→  }, [chapterSheet, isPdf, workId]);
+   406→   406→
+   407→   407→  /* ----- mark chapter read when it was fully seen and we leave it -----
+   408→   408→     (the persisted lastPage ratio reaching the final page counts as "seen all") */
+   409→   409→  useEffect(() => {
+   410→   410→    const wid = workId;
+   411→   411→    const cid = chapterId;
+   412→   412→    return () => {
+   413→   413→      const st = useApp.getState();
+   414→   414→      const ch = st.works.find((x) => x.id === wid)?.chapters.find((c) => c.id === cid);
+   415→   415→      if (!ch || ch.pages <= 0) return;
+   416→   416→      const seenAll = typeof ch.lastPage === "number" && ch.lastPage >= (ch.pages - 1) / ch.pages - 1e-6;
+   417→   417→      if (seenAll) st.markChapterRead(wid, cid, true);
+   418→   418→    };
+   419→   419→  }, [workId, chapterId]);
+   420→   420→
+   421→   421→  /* ----- controls auto-hide (UX-005) ----- */
+   422→   422→  useEffect(() => {
+   423→   423→    if (!controlsVisible || endCard || chapterSheet || settingsSheet || brightOpen) return;
+   424→   424→    const id = window.setTimeout(() => setControlsVisible(false), 4200);
+   425→   425→    return () => window.clearTimeout(id);
+   426→   426→  }, [controlsVisible, endCard, chapterSheet, settingsSheet, brightOpen, page]);
+   427→   427→
+   428→   428→  /* ----- navigation ----- */
+   429→   429→  const goToPage = (p: number) => {
+   430→   430→    if (total <= 0) return;
+   431→   431→    const c = Math.max(0, Math.min(total - 1, p));
+   432→   432→    setEndCard(false);
+   433→   433→    setPage(c);
+   434→   434→  };
+   435→   435→
+   436→   436→  /* jump to a PDF outline entry (1-based page) */
+   437→   437→  const jumpPdfToc = (item: PdfTocItem) => {
+   438→   438→    setChapterSheet(false);
+   439→   439→    const p = Math.max(0, Math.min(total - 1, item.page - 1));
+   440→   440→    goToPage(p);
+   441→   441→    if (scrollable) setScrollCmd({ page: p });
+   442→   442→  };
+   443→   443→
+   444→   444→  /* ----- read-aloud controls (books) ----- */
+   445→   445→  const startTts = async () => {
+   446→   446→    try {
+   447→   447→      const { loadEpub } = await import("@/lib/importer");
+   448→   448→      const doc = await loadEpub(workId);
+   449→   449→      const ch = doc?.chapters.find((c) => c.id === chapterId);
+   450→   450→      if (!ch?.html) {
+   451→   451→        toast({ title: t("tts.empty") });
+   452→   452→        return;
+   453→   453→      }
+   454→   454→      const dom = new DOMParser().parseFromString(ch.html, "text/html");
+   455→   455→      dom.querySelectorAll("script,style").forEach((n) => n.remove());
+   456→   456→      const sel = "h1,h2,h3,h4,h5,h6,p,li,blockquote,figcaption,dd,dt,pre";
+   457→   457→      const nodes = [...dom.querySelectorAll(sel)];
+   458→   458→      const blocks = nodes.filter((n) => !nodes.some((m) => m !== n && m.contains(n)));
+   459→   459→      const chunks = blocks.map((b) => (b.textContent ?? "").trim()).filter(Boolean);
+   460→   460→      const rate = readerDefaults.ttsRate ?? 1;
+   461→   461→      const ok = ttsStart(chunks.length ? chunks : [dom.body?.textContent ?? ""], {
+   462→   462→        lang: work?.language,
+   463→   463→        rate,
+   464→   464→      });
+   465→   465→      if (!ok) toast({ title: t("tts.empty") });
+   466→   466→    } catch {
+   467→   467→      toast({ title: t("tts.empty") });
+   468→   468→    }
+   469→   469→  };
+   470→   470→
+   471→   471→  const onTtsPrimary = () => {
+   472→   472→    if (!ttsSupported()) {
+   473→   473→      toast({ title: t("tts.unsupported") });
+   474→   474→      return;
+   475→   475→    }
+   476→   476→    if (tts.status === "playing") {
+   477→   477→      ttsPause();
+   478→   478→      return;
+   479→   479→    }
+   480→   480→    if (tts.status === "paused") {
+   481→   481→      ttsResume();
+   482→   482→      return;
+   483→   483→    }
+   484→   484→    void startTts();
+   485→   485→  };
+   486→   486→
+   487→   487→  const applyTtsRate = (v: number) => {
+   488→   488→    setTtsRateDraft(v);
+   489→   489→    if (ttsRateTimer.current) window.clearTimeout(ttsRateTimer.current);
+   490→   490→    ttsRateTimer.current = window.setTimeout(() => {
+   491→   491→      ttsSetRate(v);
+   492→   492→      useApp.getState().setReaderDefaults({ ttsRate: v });
+   493→   493→    }, 250);
+   494→   494→  };
+   495→   495→
+   496→   496→  const openChapter = (targetId: string, atEnd = false) => {
+   497→   497→    setChapterSheet(false);
+   498→   498→    setEndCard(false);
+   499→   499→    setAutoPlay(false);
+   500→   500→    if (atEnd) {
+   501→   501→      // resume the previous chapter at its final page
+   502→   502→      const st = useApp.getState();
+   503→   503→      const ch = st.works.find((x) => x.id === workId)?.chapters.find((c) => c.id === targetId);
+   504→   504→      if (ch) st.setChapterProgress(workId, targetId, 1);
+   505→   505→    }
+   506→   506→    // replace the top of the nav stack (details stays underneath)
+   507→   507→    useNav.setState((st) => ({
+   508→   508→      stack: [...st.stack.slice(0, -1), { kind: "reader" as const, workId, chapterId: targetId }],
+   509→   509→    }));
+   510→   510→  };
+   511→   511→
+   512→   512→  const next = (forced = false) => {
+   513→   513→    if (total <= 0) return;
+   514→   514→    if (scrollable) {
+   515→   515→      const p = Math.min(total - 1, page + 1);
+   516→   516→      goToPage(p);
+   517→   517→      setScrollCmd({ page: p });
+   518→   518→      return;
+   519→   519→    }
+   520→   520→    const step = mode === "DOUBLE" ? 2 : 1;
+   521→   521→    if (page + step <= total - 1) {
+   522→   522→      goToPage(page + step);
+   523→   523→      return;
+   524→   524→    }
+   525→   525→    if (nextChapter && (forced || readerDefaults.autoNext)) {
+   526→   526→      openChapter(nextChapter.id); // RDR-011 auto-advance
+   527→   527→    } else {
+   528→   528→      setEndCard(true);
+   529→   529→    }
+   530→   530→  };
+   531→   531→
+   532→   532→  const prev = () => {
+   533→   533→    if (total <= 0) return;
+   534→   534→    if (scrollable) {
+   535→   535→      const p = Math.max(0, page - 1);
+   536→   536→      goToPage(p);
+   537→   537→      setScrollCmd({ page: p });
+   538→   538→      return;
+   539→   539→    }
+   540→   540→    const step = mode === "DOUBLE" ? 2 : 1;
+   541→   541→    if (page - step >= 0) {
+   542→   542→      goToPage(page - step);
+   543→   543→    } else if (prevChapter) {
+   544→   544→      openChapter(prevChapter.id, true);
+   545→   545→    }
+   546→   546→  };
+   547→   547→
+   548→   548→  const nextRef = useRef<() => void>(() => undefined);
+   549→   549→  useEffect(() => {
+   550→   550→    nextRef.current = () => next(false);
+   551→   551→  });
+   552→   552→
+   553→   553→  useEffect(() => {
+   554→   554→    if (!autoPlay) return;
+   555→   555→    const id = window.setInterval(() => nextRef.current(), 3200);
+   556→   556→    return () => window.clearInterval(id);
+   557→   557→  }, [autoPlay]);
+   558→   558→
+   559→   559→  /* ----- keyboard: direction-aware arrows (Escape handled by app shell) ----- */
+   560→   560→  useEffect(() => {
+   561→   561→    const fn = (e: KeyboardEvent) => {
+   562→   562→      if (e.defaultPrevented || e.metaKey || e.ctrlKey) return;
+   563→   563→      if (e.key === "ArrowRight") {
+   564→   564→        if (rtl) prev();
+   565→   565→        else next();
+   566→   566→      } else if (e.key === "ArrowLeft") {
+   567→   567→        if (rtl) next();
+   568→   568→        else prev();
+   569→   569→      }
+   570→   570→    };
+   571→   571→    window.addEventListener("keydown", fn);
+   572→   572→    return () => window.removeEventListener("keydown", fn);
+   573→   573→  });
+   574→   574→
+   575→   575→  /* ----- continuous scroll → current page (rAF throttled) ----- */
+   576→   576→  const onScroll = () => {
+   577→   577→    if (rafRef.current) return;
+   578→   578→    rafRef.current = window.requestAnimationFrame(() => {
+   579→   579→      rafRef.current = 0;
+   580→   580→      const sc = scrollRef.current;
+   581→   581→      if (!sc) return;
+   582→   582→      const mid = sc.scrollTop + sc.clientHeight / 2;
+   583→   583→      let best = 0;
+   584→   584→      let bestD = Number.POSITIVE_INFINITY;
+   585→   585→      anchorsRef.current.forEach((a, i) => {
+   586→   586→        if (!a) return;
+   587→   587→        const d = Math.abs(a.offsetTop + a.offsetHeight / 2 - mid);
+   588→   588→        if (d < bestD) {
+   589→   589→          bestD = d;
+   590→   590→          best = i;
+   591→   591→        }
+   592→   592→      });
+   593→   593→      setPage((cur) => (cur === best ? cur : best));
+   594→   594→    });
+   595→   595→  };
+   596→   596→  useEffect(
+   597→   597→    () => () => {
+   598→   598→      if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
+   599→   599→    },
+   600→   600→    []
+   601→   601→  );
+   602→   602→
+   603→   603→  // commanded scrolling (slider / chapter restore / next-prev in scrollable modes);
+   604→   604→  // fires once per command object identity — user scrolling never sets scrollCmd
+   605→   605→  useEffect(() => {
+   606→   606→    if (!scrollable || !scrollCmd) return;
+   607→   607→    const el = anchorsRef.current[scrollCmd.page];
+   608→   608→    const sc = scrollRef.current;
+   609→   609→    if (el && sc) sc.scrollTo({ top: Math.max(0, el.offsetTop - 8) });
+   610→   610→  }, [scrollCmd, scrollable]);
+   611→   611→
+   612→   612→  /* ----- zoom (double-tap + button) ----- */
+   613→   613→  const cycleZoom = () => {
+   614→   614→    setZoom((z) => (z === 1 ? 1.5 : z === 1.5 ? 2 : 1));
+   615→   615→    setControlsVisible(true);
+   616→   616→  };
+   617→   617→
+   618→   618→  /* ----- tap zones: center toggles chrome, sides flip pages (UX-005) ----- */
+   619→   619→  const handleZone = (zone: "start" | "center" | "end") => {
+   620→   620→    const now = Date.now();
+   621→   621→    if (now - lastTapRef.current < 320) {
+   622→   622→      // double tap → zoom toggle (RDR-004)
+   623→   623→      lastTapRef.current = 0;
+   624→   624→      if (pendingNavRef.current) {
+   625→   625→        window.clearTimeout(pendingNavRef.current);
+   626→   626→        pendingNavRef.current = 0;
+   627→   627→      }
+   628→   628→      cycleZoom();
+   629→   629→      return;
+   630→   630→    }
+   631→   631→    lastTapRef.current = now;
+   632→   632→    if (pendingNavRef.current) window.clearTimeout(pendingNavRef.current);
+   633→   633→    pendingNavRef.current = window.setTimeout(() => {
+   634→   634→      pendingNavRef.current = 0;
+   635→   635→      if (zone === "center") {
+   636→   636→        setControlsVisible((v) => !v);
+   637→   637→        return;
+   638→   638→      }
+   639→   639→      if (vertical || scrollable) return;
+   640→   640→      const forward = rtl ? zone === "start" : zone === "end";
+   641→   641→      if (forward) next();
+   642→   642→      else prev();
+   643→   643→    }, 280);
+   644→   644→  };
+   645→   645→
+   646→   646→  /* ----- bookmarks (RDR-013) ----- */
+   647→   647→  const toggleBookmark = () => {
+   648→   648→    const st = useApp.getState();
+   649→   649→    const bm = st.bookmarks.find(
+   650→   650→      (b) => b.workId === workId && b.chapterId === chapterId && b.page === page
+   651→   651→    );
+   652→   652→    if (bm) {
+   653→   653→      st.removeBookmark(bm.id);
+   654→   654→      toast({ title: t("rdr.bookmarkRemoved") });
+   655→   655→    } else {
+   656→   656→      st.addBookmark(workId, chapterId, page);
+   657→   657→      toast({ title: t("rdr.bookmarkAdded") });
+   658→   658→    }
+   659→   659→  };
+   660→   660→
+   661→   661→  /* ----- keep awake (RDR-009) ----- */
+   662→   662→  const applyKeepAwake = (v: boolean) => {
+   663→   663→    setReaderDefaults({ keepAwake: v });
+   664→   664→    try {
+   665→   665→      const nav = navigator as Navigator & {
+   666→   666→        wakeLock?: { request: (type: string) => Promise<{ release: () => Promise<void> }> };
+   667→   667→      };
+   668→   668→      if (v) {
+   669→   669→        nav.wakeLock
+   670→   670→          ?.request("screen")
+   671→   671→          .then((s) => {
+   672→   672→            wakeLockRef.current = s;
+   673→   673→          })
+   674→   674→          .catch(() => undefined);
+   675→   675→      } else {
+   676→   676→        void wakeLockRef.current?.release().catch(() => undefined);
+   677→   677→        wakeLockRef.current = null;
+   678→   678→      }
+   679→   679→    } catch {
+   680→   680→      /* wakeLock unsupported — ignore */
+   681→   681→    }
+   682→   682→  };
+   683→   683→
+   684→   684→  /* ----- presets (RDR-014): documented combos ----- */
+   685→   685→  const PRESETS: { key: TranslationKey; apply: () => void }[] = [
+   686→   686→    {
+   687→   687→      // Manga: RTL paged, black bg
+   688→   688→      key: "rdr.preset.manga",
+   689→   689→      apply: () => {
+   690→   690→        updateWork(workId, { readerMode: "PAGED", direction: "RTL", fitMode: "WIDTH" });
+   691→   691→        setReaderDefaults({ bg: "black", brightness: 100, autoNext: false, cropBorders: false });
+   692→   692→      },
+   693→   693→    },
+   694→   694→    {
+   695→   695→      // Western comics: LTR paged, white bg
+   696→   696→      key: "rdr.preset.comics",
+   697→   697→      apply: () => {
+   698→   698→        updateWork(workId, { readerMode: "PAGED", direction: "LTR", fitMode: "WIDTH" });
+   699→   699→        setReaderDefaults({ bg: "white", brightness: 100, autoNext: false, cropBorders: false });
+   700→   700→      },
+   701→   701→    },
+   702→   702→    {
+   703→   703→      // Webtoon: vertical continuous, no gaps
+   704→   704→      key: "rdr.preset.webtoon",
+   705→   705→      apply: () => {
+   706→   706→        updateWork(workId, { readerMode: "WEBTOON", direction: "VERTICAL", fitMode: "WIDTH" });
+   707→   707→        setReaderDefaults({ bg: "black", brightness: 100, autoNext: true, cropBorders: false });
+   708→   708→      },
+   709→   709→    },
+   710→   710→    {
+   711→   711→      // One-handed: larger pages, fewer taps, auto-advance on
+   712→   712→      key: "rdr.preset.oneHand",
+   713→   713→      apply: () => {
+   714→   714→        updateWork(workId, { readerMode: "PAGED", direction: "RTL", fitMode: "SCREEN" });
+   715→   715→        setReaderDefaults({ bg: "gray", brightness: 85, autoNext: true, cropBorders: true });
+   716→   716→      },
+   717→   717→    },
+   718→   718→  ];
+   719→   719→
+   720→   720→  /* ------------------------------------------------------------------ */
+   721→   721→  /* guards                                                              */
+   722→   722→  /* ------------------------------------------------------------------ */
+   723→   723→  if (!work || !chapter) {
+   724→   724→    return (
+   725→   725→      <div className="dark relative flex h-full flex-col overflow-hidden bg-background text-foreground">
+   726→   726→        <div className="flex items-center p-4">
+   727→   727→          <button
+   728→   728→            onClick={pop}
+   729→   729→            aria-label={t("common.back")}
+   730→   730→            className="flex h-10 w-10 items-center justify-center rounded-full text-white transition-colors hover:bg-white/10"
+   731→   731→          >
+   732→   732→            <ChevronLeft className="h-6 w-6 rtl:rotate-180" />
+   733→   733→          </button>
+   734→   734→        </div>
+   735→   735→        <p className="mt-24 text-center text-sm font-semibold text-muted-foreground">{t("common.unknown")}</p>
+   736→   736→      </div>
+   737→   737→    );
+   738→   738→  }
+   739→   739→
+   740→   740→  const crop = readerDefaults.cropBorders;
+   741→   741→  const dim = ((100 - readerDefaults.brightness) / 100) * 0.7;
+   742→   742→  const fit = work.fitMode;
+   743→   743→
+   744→   744→  /* ----- single page element (generated SVG, local image or pdf canvas) ----- */
+   745→   745→  const renderPageEl = (i: number, fitOverride?: string) => {
+   746→   746→    const cls = fitOverride ?? FIT_CLASS[fit];
+   747→   747→    if (isPdf) {
+   748→   748→      return <PdfCanvas workId={work.id} page={i + 1} className={cls} />;
+   749→   749→    }
+   750→   750→    if (isLocal && work.localPages?.[i]) {
+   751→   751→      return <LocalPageImage storageKey={work.localPages[i]} className={cls} />;
+   752→   752→    }
+   753→   753→    return (
+   754→   754→      <MangaPage
+   755→   755→        seed={hashStr(work.id)}
+
+[showing lines 56-755 of 1579; use offset=756 with limit to continue reading]
