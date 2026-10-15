@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ALargeSmall,
   Bookmark,
+  BookOpenCheck,
   CalendarCheck,
   CheckCircle2,
   ChevronDown,
@@ -49,7 +50,7 @@ import {
 import { MangaPage, hashStr } from "@/lib/manga-page";
 import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav, toFa } from "@/lib/store";
-import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSupported, useTts } from "@/lib/tts";
+import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSetEndListener, ttsSupported, useTts } from "@/lib/tts";
 import type { PdfSearchHit, PdfTocItem } from "@/lib/pdf-engine";
 import type { EpubSearchHit } from "@/lib/importer";
 import { useT } from "@/lib/use-app";
@@ -547,6 +548,10 @@ export function ReaderScreen({
   const goalCelebrateTimer = useRef<number | null>(null);
   const ttsRateTimer = useRef<number | null>(null);
   const tts = useTts();
+  /* PDF read-aloud (round 10): armed while playing a PDF page; auto-advance
+     flips pages as each one finishes speaking */
+  const pdfTtsRef = useRef(false);
+  const lastSpokenPageRef = useRef(-1);
 
   /* ----- refs ----- */
   const contentRef = useRef<HTMLDivElement>(null);
@@ -690,7 +695,13 @@ export function ReaderScreen({
   }, [sessionPaused]);
 
   /* ----- read-aloud (books): stop when chapter or reader closes ----- */
-  useEffect(() => () => ttsStop(), [workId, chapterId]);
+  useEffect(
+    () => () => {
+      ttsStop();
+      pdfTtsRef.current = false;
+    },
+    [workId, chapterId]
+  );
 
   /* ----- pdf outline (TOC) — loaded when the chapter sheet opens ----- */
   useEffect(() => {
@@ -873,9 +884,31 @@ export function ReaderScreen({
     }
   };
 
-  /* ----- read-aloud controls (books) ----- */
+  /* ----- read-aloud controls (books + PDF pages) ----- */
+  /* speak one PDF page (1-based page = p + 1); false when the page has no text */
+  const speakPdfPage = async (p: number): Promise<boolean> => {
+    try {
+      const { getPdfPageText } = await import("@/lib/pdf-engine");
+      const text = await getPdfPageText(workId, p + 1);
+      if (!text.trim()) return false;
+      return ttsStart([text], { lang: work?.language, rate: readerDefaults.ttsRate ?? 1 });
+    } catch {
+      return false;
+    }
+  };
+
   const startTts = async () => {
     try {
+      if (isPdf) {
+        pdfTtsRef.current = true;
+        lastSpokenPageRef.current = page;
+        const ok = await speakPdfPage(page);
+        if (!ok) {
+          pdfTtsRef.current = false;
+          toast({ title: t("tts.empty") });
+        }
+        return;
+      }
       const { loadEpub } = await import("@/lib/importer");
       const doc = await loadEpub(workId);
       const ch = doc?.chapters.find((c) => c.id === chapterId);
@@ -899,6 +932,35 @@ export function ReaderScreen({
       toast({ title: t("tts.empty") });
     }
   };
+
+  /* PDF auto-advance: the tts engine fires the end listener when a page's
+     queue finishes NATURALLY (never on stop/pause) — flip + speak the next
+     page while auto-advance is on. A ref-indirection keeps the closure fresh
+     without re-subscribing. */
+  const pdfAdvanceRef = useRef<() => void>(() => undefined);
+  pdfAdvanceRef.current = () => {
+    if (!isPdf || !pdfTtsRef.current) return;
+    if ((readerDefaults.ttsAutoAdvance ?? true) && page < total - 1) {
+      const target = page + 1;
+      lastSpokenPageRef.current = target;
+      void speakPdfPage(target);
+      goToPage(target);
+    } else {
+      pdfTtsRef.current = false; // end of document (or auto-advance off) — disarm
+    }
+  };
+  useEffect(() => {
+    ttsSetEndListener(() => pdfAdvanceRef.current());
+    return () => ttsSetEndListener(null);
+  }, []);
+
+  /* page flipped while playing → keep reading on the new page */
+  useEffect(() => {
+    if (!isPdf || !pdfTtsRef.current || tts.status !== "playing") return;
+    if (lastSpokenPageRef.current === page) return;
+    lastSpokenPageRef.current = page;
+    void speakPdfPage(page);
+  }, [page, tts.status, isPdf]);
 
   const onTtsPrimary = () => {
     if (!ttsSupported()) {
@@ -1700,7 +1762,7 @@ export function ReaderScreen({
 
         {/* toolbar row */}
         <div className="mt-2 flex items-start justify-between px-1">
-          {isEpub && (
+          {(isEpub || isPdf) && (
             <Popover
               open={ttsOpen}
               onOpenChange={(v) => {
@@ -1727,7 +1789,12 @@ export function ReaderScreen({
                     : tts.status === "paused"
                       ? t("tts.paused")
                       : t("tts.idle")}
-                  {tts.status !== "idle" && tts.total > 0 && (
+                  {isPdf && (
+                    <span className="ms-1 font-extrabold text-primary">
+                      · {t("tts.page", { n: lang === "fa" ? toFa(page + 1) : page + 1 })}
+                    </span>
+                  )}
+                  {!isPdf && tts.status !== "idle" && tts.total > 0 && (
                     <span className="ms-1 font-extrabold text-primary">
                       · {t("tts.para", {
                         p: lang === "fa" ? toFa(tts.idx + 1) : tts.idx + 1,
@@ -1748,7 +1815,10 @@ export function ReaderScreen({
                   </button>
                   <button
                     type="button"
-                    onClick={() => ttsStop()}
+                    onClick={() => {
+                      ttsStop();
+                      pdfTtsRef.current = false;
+                    }}
                     disabled={tts.status === "idle"}
                     aria-label={t("tts.stop")}
                     className="flex h-9 items-center justify-center gap-1.5 rounded-full border border-border px-3 text-[12px] font-extrabold text-foreground transition-colors hover:bg-secondary disabled:opacity-40"
@@ -1772,6 +1842,21 @@ export function ReaderScreen({
                     className="[&_[data-slot=slider-track]]:bg-white/15 [&_[data-slot=slider-range]]:bg-[#f8694c] [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-[#f8694c] [&_[data-slot=slider-thumb]]:bg-[#f8694c]"
                   />
                 </div>
+                {/* PDF: keep reading across pages */}
+                {isPdf && (
+                  <label className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-foreground">
+                      <BookOpenCheck className="h-3.5 w-3.5 text-primary" />
+                      {t("tts.autoAdvance")}
+                    </span>
+                    <Switch
+                      checked={readerDefaults.ttsAutoAdvance ?? true}
+                      onCheckedChange={(v) => setReaderDefaults({ ttsAutoAdvance: v })}
+                      aria-label={t("tts.autoAdvance")}
+                      className="data-[state=checked]:bg-[#f8694c]"
+                    />
+                  </label>
+                )}
               </PopoverContent>
             </Popover>
           )}

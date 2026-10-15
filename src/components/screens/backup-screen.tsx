@@ -36,6 +36,7 @@ const INCLUDED: TranslationKey[] = [
   "bkp.inc.categories",
   "bkp.inc.settings",
   "bkp.inc.bookmarks",
+  "bkp.inc.highlights",
   "bkp.inc.stats",
 ];
 
@@ -56,6 +57,7 @@ export function BackupScreen() {
   const settings = useApp((s) => s.settings);
   const sessions = useApp((s) => s.sessions);
   const bookmarks = useApp((s) => s.bookmarks);
+  const highlights = useApp((s) => s.highlights);
   const lastBackup = useApp((s) => s.lastBackup);
   const setLastBackup = useApp((s) => s.setLastBackup);
   const importBackup = useApp((s) => s.importBackup);
@@ -194,6 +196,7 @@ export function BackupScreen() {
       settings,
       sessions,
       bookmarks,
+      highlights,
     };
     const name = `onilibrary-backup-${ymd()}.onibackup`;
     const content = JSON.stringify(payload, null, 2);

@@ -20,6 +20,7 @@ import type {
   ReadingSession,
   HistoryEntry,
   Bookmark,
+  Highlight,
   ServerEntry,
   Settings,
   ReadingStatus,
@@ -94,6 +95,7 @@ interface AppState {
   sessions: ReadingSession[];
   history: HistoryEntry[];
   bookmarks: Bookmark[];
+  highlights: Highlight[];
   servers: ServerEntry[];
   savedFilters: SavedFilter[];
   settings: Settings;
@@ -145,6 +147,10 @@ interface AppState {
   addBookmark: (workId: string, chapterId: string, page: number, note?: string) => void;
   removeBookmark: (id: string) => void;
 
+  addHighlight: (h: Omit<Highlight, "id" | "createdAt">) => void;
+  updateHighlight: (id: string, p: Partial<Pick<Highlight, "color" | "note">>) => void;
+  removeHighlight: (id: string) => void;
+
   addServer: (s: Omit<ServerEntry, "id" | "status">) => void;
   removeServer: (id: string) => void;
   setServerStatus: (id: string, status: ServerEntry["status"]) => void;
@@ -189,6 +195,7 @@ export const useApp = create<AppState>()(
       sessions: [],
       history: [],
       bookmarks: [],
+      highlights: [],
       servers: SEED_SERVERS,
       savedFilters: [],
       settings: DEFAULT_SETTINGS,
@@ -647,6 +654,20 @@ export const useApp = create<AppState>()(
       removeBookmark: (id) =>
         set((s) => ({ bookmarks: s.bookmarks.filter((b) => b.id !== id) })),
 
+      addHighlight: (h) =>
+        set((s) => ({
+          highlights: [
+            { ...h, id: uid(), createdAt: new Date().toISOString() },
+            ...s.highlights,
+          ],
+        })),
+      updateHighlight: (id, p) =>
+        set((s) => ({
+          highlights: s.highlights.map((h) => (h.id === id ? { ...h, ...p } : h)),
+        })),
+      removeHighlight: (id) =>
+        set((s) => ({ highlights: s.highlights.filter((h) => h.id !== id) })),
+
       addServer: (srv) =>
         set((s) => ({ servers: [...s.servers, { ...srv, id: uid(), status: "UNKNOWN" }] })),
       removeServer: (id) => set((s) => ({ servers: s.servers.filter((x) => x.id !== id) })),
@@ -728,6 +749,7 @@ export const useApp = create<AppState>()(
             settings: { ...s.settings, ...(d.settings as Settings) },
             sessions: (d.sessions as ReadingSession[]) ?? s.sessions,
             bookmarks: (d.bookmarks as Bookmark[]) ?? s.bookmarks,
+            highlights: (d.highlights as Highlight[]) ?? s.highlights,
             lastBackup: s.lastBackup,
           }));
           return true;
@@ -751,6 +773,7 @@ export const useApp = create<AppState>()(
         sessions: s.sessions,
         history: s.history,
         bookmarks: s.bookmarks,
+        highlights: s.highlights,
         servers: s.servers,
         settings: s.settings,
         updateCheck: { lastCheck: s.updateCheck.lastCheck, checking: false },

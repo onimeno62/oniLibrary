@@ -1,13 +1,28 @@
 "use client";
 
-import { memo, useEffect, useRef, useState } from "react";
-import type { Work } from "@/lib/types";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Check, PenLine, Trash2, X } from "lucide-react";
+import type { Work, Highlight, HighlightColor } from "@/lib/types";
 import { useApp } from "@/lib/store";
+import { useT } from "@/lib/use-app";
+import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 /* ============================================================
    EpubBookView — typographic continuous reader for parsed EPUBs
    (FMT-002). Progress is stored as chapter.lastPage ratio (0..1).
+   Round 10: saved text-selection highlight annotations with notes
+   and 4 colors, anchored by global char offsets so they survive
+   font/size/theme changes.
    ============================================================ */
+
+export const HL_COLORS: Record<HighlightColor, string> = {
+  coral: "#f8694c",
+  mint: "#2dd4a7",
+  amber: "#f5b13d",
+  violet: "#a78bfa",
+};
 
 /* The book content is a MEMOIZED leaf: reader re-renders (scroll progress
    saves, search typing, chrome toggles) must never re-apply
@@ -29,7 +44,7 @@ const EpubArticle = memo(function EpubArticle({
   contentRef: React.RefObject<HTMLDivElement | null>;
 }) {
   return (
-    <article dir="auto" className="mx-auto max-w-[560px] px-6 pb-24 pt-6" style={{ fontSize }}>
+    <article dir="auto" className="mx-auto max-w-[560px] px-6 pb-24 pt-24" style={{ fontSize }}>
       {/* chapter heading */}
       <header className="mb-6 border-b border-current/10 pb-4">
         <p
@@ -55,6 +70,256 @@ const EpubArticle = memo(function EpubArticle({
     </article>
   );
 });
+
+/* ------------------------------------------------------------------ */
+/* text-index helpers — global char offsets over the chapter content   */
+/* ------------------------------------------------------------------ */
+
+interface Seg {
+  node: Text;
+  /** char range inside node */
+  start: number;
+  end: number;
+  /** offset in the chapter-wide concatenated text */
+  globalStart: number;
+}
+
+interface TextIndex {
+  segs: Seg[];
+  length: number;
+}
+
+/** walk visible text nodes (skips script/style and any wrap marks) */
+function buildTextIndex(root: HTMLElement): TextIndex {
+  const segs: Seg[] = [];
+  let global = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => {
+      const p = n.parentElement;
+      if (p && (p.closest("script,style") || p.closest("mark.oni-find, mark.oni-hl")))
+        return NodeFilter.FILTER_REJECT;
+      return (n.textContent ?? "").length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const len = node.textContent?.length ?? 0;
+    segs.push({ node, start: 0, end: len, globalStart: global });
+    global += len;
+  }
+  return { segs, length: global };
+}
+
+/** map a global [start,end) onto text nodes and wrap every slice in a mark */
+function wrapGlobalRange(
+  idx: TextIndex,
+  start: number,
+  end: number,
+  make: () => HTMLElement
+): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  if (end <= start) return out;
+  for (const seg of idx.segs) {
+    if (seg.globalStart + seg.end <= start) continue;
+    if (seg.globalStart >= end) break;
+    const s = Math.max(0, start - seg.globalStart);
+    const e = Math.min(seg.end, end - seg.globalStart);
+    if (e <= s) continue;
+    const text = seg.node.textContent ?? "";
+    const frag = document.createDocumentFragment();
+    if (s > 0) frag.appendChild(document.createTextNode(text.slice(0, s)));
+    const mark = make();
+    mark.textContent = text.slice(s, e);
+    frag.appendChild(mark);
+    if (e < text.length) frag.appendChild(document.createTextNode(text.slice(e)));
+    seg.node.parentNode?.replaceChild(frag, seg.node);
+    out.push(mark);
+  }
+  return out;
+}
+
+/** unwrap every mark of the given classes, restoring raw text */
+function unwrapMarks(root: HTMLElement, selector: string) {
+  root.querySelectorAll(selector).forEach((m) => {
+    const parent = m.parentNode;
+    if (!parent) return;
+    while (m.firstChild) parent.insertBefore(m.firstChild, m);
+    m.remove();
+    parent.normalize();
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* selection popup (portal — fixed positioning, above the chrome)      */
+/* ------------------------------------------------------------------ */
+
+type PopupState =
+  | { mode: "new"; start: number; end: number; text: string; rect: DOMRect }
+  | { mode: "edit"; hlId: string; rect: DOMRect }
+  | null;
+
+function SelectionPopup({
+  state,
+  workId,
+  chapterId,
+  onClose,
+}: {
+  state: NonNullable<PopupState>;
+  workId: string;
+  chapterId: string;
+  onClose: () => void;
+}) {
+  const { t } = useT();
+  const addHighlight = useApp((s) => s.addHighlight);
+  const updateHighlight = useApp((s) => s.updateHighlight);
+  const removeHighlight = useApp((s) => s.removeHighlight);
+  const highlights = useApp((s) => s.highlights);
+  const editing = state.mode === "edit" ? highlights.find((h) => h.id === state.hlId) : undefined;
+  const [noteOpen, setNoteOpen] = useState(state.mode === "edit" && !!editing?.note);
+  const [noteDraft, setNoteDraft] = useState(editing?.note ?? "");
+
+  /* the chapter being read (new highlights attach here) */
+  const hl = editing;
+
+  /* clear the DOM selection so the ghost browser highlight disappears */
+  const clearSelection = useCallback(() => {
+    window.getSelection()?.removeAllRanges();
+  }, []);
+
+  const applyColor = (color: HighlightColor) => {
+    if (state.mode === "new") {
+      const { start, end, text } = state;
+      addHighlight({
+        workId,
+        chapterId,
+        color,
+        text,
+        anchor: { start, end },
+      });
+      toast({ title: t("hl.saved") });
+      clearSelection();
+      onClose();
+    } else if (hl) {
+      updateHighlight(hl.id, { color });
+      toast({ title: t("hl.updated") });
+      onClose();
+    }
+  };
+
+  const saveNote = () => {
+    if (state.mode !== "edit" || !hl) return;
+    const v = noteDraft.trim();
+    updateHighlight(hl.id, { note: v || undefined });
+    toast({ title: t("hl.updated") });
+    onClose();
+  };
+
+  const remove = () => {
+    if (state.mode !== "edit" || !hl) return;
+    removeHighlight(hl.id);
+    toast({ title: t("hl.removed") });
+    onClose();
+  };
+
+  /* clamp the bar to the viewport, prefer above the selection */
+  const r = state.rect;
+  const W = 236;
+  const left = Math.max(10, Math.min(window.innerWidth - W - 10, r.left + r.width / 2 - W / 2));
+  const above = r.top > 92;
+  const top = above ? Math.max(10, r.top - 54) : Math.min(window.innerHeight - 120, r.bottom + 10);
+
+  return createPortal(
+    <div
+      data-oni-hl-popup=""
+      className="oni-hl-popup dark fixed z-[70] rounded-2xl border border-white/10 bg-[#1c1a18]/95 p-2.5 text-foreground shadow-[0_18px_44px_-12px_rgba(0,0,0,0.65)] backdrop-blur-md"
+      style={{ left, top, width: W }}
+      role="toolbar"
+      aria-label={t("hl.title")}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {/* color row */}
+      <div className="flex items-center gap-2">
+        {(Object.keys(HL_COLORS) as HighlightColor[]).map((c) => (
+          <button
+            key={c}
+            type="button"
+            aria-label={t("hl.color", { c })}
+            onClick={() => applyColor(c)}
+            className={cn(
+              "h-7 w-7 rounded-full transition-transform hover:scale-110 active:scale-95",
+              hl?.color === c && "ring-2 ring-white/90 ring-offset-2 ring-offset-[#1c1a18]"
+            )}
+            style={{ background: HL_COLORS[c], boxShadow: `0 4px 10px -3px ${HL_COLORS[c]}99` }}
+          />
+        ))}
+        <span className="mx-0.5 h-5 w-px bg-white/10" />
+        {state.mode === "new" ? (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("common.close")}
+            className="flex h-7 w-7 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setNoteOpen((v) => !v)}
+              aria-label={t("hl.note")}
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white",
+                noteOpen && hl?.note && "bg-primary/20 text-primary"
+              )}
+            >
+              <PenLine className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={remove}
+              aria-label={t("hl.remove")}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-white/60 transition-colors hover:bg-red-500/20 hover:text-red-400"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* note editor */}
+      {noteOpen && state.mode === "edit" && (
+        <div className="mt-2.5 border-t border-white/10 pt-2.5">
+          <textarea
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            rows={2}
+            maxLength={280}
+            placeholder={t("hl.notePlaceholder")}
+            aria-label={t("hl.note")}
+            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] font-semibold leading-snug text-foreground outline-none placeholder:text-white/35 focus:border-primary/50"
+          />
+          <div className="mt-1.5 flex justify-end">
+            <button
+              type="button"
+              onClick={saveNote}
+              className="flex h-7 items-center gap-1 rounded-full bg-coral-gradient px-3 text-[11px] font-extrabold text-white shadow-[0_6px_14px_-6px_rgba(248,105,76,0.8)] transition-transform active:scale-95"
+            >
+              <Check className="h-3.5 w-3.5" />
+              {t("common.save")}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>,
+    document.body
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* main view                                                           */
+/* ------------------------------------------------------------------ */
 
 export function EpubBookView({
   work,
@@ -82,6 +347,13 @@ export function EpubBookView({
   const chapter = work.chapters.find((c) => c.id === chapterId);
   const restoredRef = useRef(false);
   const markReadRef = useRef(false);
+  const [popup, setPopup] = useState<PopupState>(null);
+  const popupRef = useRef<PopupState>(null);
+  popupRef.current = popup;
+
+  /* highlights for this chapter (store-driven; [0] is the newest) */
+  const highlights = useApp((s) => s.highlights);
+  const chapterHighlights = highlights.filter((h) => h.workId === workId && h.chapterId === chapterId);
 
   /* load the parsed document once */
   useEffect(() => {
@@ -172,37 +444,58 @@ export function EpubBookView({
     };
   }, [html, chapterId]);
 
-  /* in-chapter find (book search): wrap EVERY match in <mark class="oni-find">
-     and activate the selected one. Marks are rebuilt on each jump and removed
-     when jumpTarget clears. A content re-render (font/size/theme change) wipes
-     them — they re-apply on the next jump (same trade-off as the old flash). */
+  /* -------- unified marks engine --------
+     Rebuilds BOTH mark systems in one pass so their relative order is
+     deterministic: (1) unwrap everything, (2) apply saved highlights from
+     the store (offset-anchored), (3) apply live search matches and report
+     the count. Re-runs on html / highlight / jumpTarget changes. */
+  const hlKey = chapterHighlights.map((h) => `${h.id}:${h.color}:${h.note ? 1 : 0}`).join("|");
   useEffect(() => {
     const root = contentRef.current;
     if (!root) return;
-    // unwrap any previous marks (keeps text intact)
-    root.querySelectorAll("mark.oni-find").forEach((m) => {
-      const parent = m.parentNode;
-      if (!parent) return;
-      while (m.firstChild) parent.insertBefore(m.firstChild, m);
-      m.remove();
-      parent.normalize();
-    });
-    if (html === null || !jumpTarget) {
+    // 1) unwrap any previous marks (keeps text intact)
+    unwrapMarks(root, "mark.oni-find, mark.oni-hl");
+    if (html === null) {
+      onMarksFound?.(0);
+      return;
+    }
+
+    // 2) saved highlights (offset-anchored)
+    const idx = buildTextIndex(root);
+    const newestId = chapterHighlights[0]?.id;
+    const newestAt = chapterHighlights[0]?.createdAt ? new Date(chapterHighlights[0].createdAt).getTime() : 0;
+    const fresh = newestId && Date.now() - newestAt < 3000;
+    for (const h of chapterHighlights) {
+      const color = h.color;
+      const make = () => {
+        const m = document.createElement("mark");
+        m.className = `oni-hl oni-hl-${color}${h.note ? " oni-hl-noted" : ""}${fresh && h.id === newestId ? " oni-hl-fresh" : ""}`;
+        m.dataset.hlId = h.id;
+        return m;
+      };
+      const marks = wrapGlobalRange(idx, h.anchor.start, h.anchor.end, make);
+      if (!marks.length && h.text) {
+        // fallback: re-anchor by text search (import restored a different build)
+        const q = h.text.toLowerCase();
+        const full = idx.segs.reduce((acc, seg) => acc + (seg.node.textContent ?? ""), "").toLowerCase();
+        const at = full.indexOf(q);
+        if (at >= 0) wrapGlobalRange(idx, at, at + q.length, make);
+      }
+    }
+
+    // 3) live search matches
+    if (!jumpTarget || !jumpTarget.query) {
       onMarksFound?.(0);
       return;
     }
     const q = jumpTarget.query.toLowerCase();
-    if (!q) {
-      onMarksFound?.(0);
-      return;
-    }
-    // collect matches over text nodes, longest-first split (script/style skipped)
-    type Seg = { node: Text; start: number; end: number };
-    const segs: Seg[] = [];
+    // collect matches over text nodes (longest-first split; skips wrap marks)
+    type Seg2 = { node: Text; start: number; end: number };
+    const segs: Seg2[] = [];
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentElement;
-        if (p && (p.closest("script,style") || p.classList.contains("oni-find")))
+        if (p && (p.closest("script,style") || p.classList.contains("oni-find") || p.classList.contains("oni-hl")))
           return NodeFilter.FILTER_REJECT;
         return (n.textContent ?? "").length ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
       },
@@ -242,13 +535,102 @@ export function EpubBookView({
       seg.node.parentNode?.replaceChild(frag, seg.node);
     }
     onMarksFound?.(marks.length);
-    const idx = Math.max(0, Math.min(marks.length - 1, jumpTarget.index ?? 0));
-    const active = marks[idx] ?? null;
+    const idxSel = Math.max(0, Math.min(marks.length - 1, jumpTarget.index ?? 0));
+    const active = marks[idxSel] ?? null;
     if (active) {
       active.classList.add("oni-find-active");
       requestAnimationFrame(() => active.scrollIntoView({ block: "center" }));
     }
-  }, [html, jumpTarget?.nonce]);
+  }, [html, hlKey, jumpTarget?.nonce]);
+
+  /* -------- selection → highlight popup -------- */
+
+  /* compute global offsets of the current selection within the content */
+  const selectionAnchor = useCallback((): {
+    start: number;
+    end: number;
+    text: string;
+    rect: DOMRect;
+  } | null => {
+    const root = contentRef.current;
+    const sel = window.getSelection();
+    if (!root || !sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    if (!root.contains(range.commonAncestorContainer)) return null;
+    const text = sel.toString().replace(/\s+/g, " ").trim();
+    if (!text || text.length < 2) return null;
+    const idx = buildTextIndex(root);
+    // locate the global offsets of range endpoints
+    const locate = (node: Node | null, offset: number): number | null => {
+      if (!node) return null;
+      if (node.nodeType === Node.TEXT_NODE) {
+        const seg = idx.segs.find((s) => s.node === node);
+        if (!seg) return null;
+        return seg.globalStart + Math.min(offset, seg.end);
+      }
+      // element node: first text node at/after the child position
+      const child = node.childNodes[offset] ?? node.lastChild;
+      const target = child ? (child.nodeType === Node.TEXT_NODE ? child : null) : null;
+      if (target) {
+        const seg = idx.segs.find((s) => s.node === target);
+        if (seg) return seg.globalStart;
+      }
+      // fallback: scan for first seg whose node is contained in `node`
+      for (const seg of idx.segs) {
+        if (node.contains(seg.node)) return seg.globalStart;
+      }
+      return null;
+    };
+    let start = locate(range.startContainer, range.startOffset);
+    let end = locate(range.endContainer, range.endOffset);
+    if (start === null || end === null) return null;
+    if (end < start) [start, end] = [end, start];
+    if (end - start < 2) return null;
+    return { start, end, text, rect: range.getBoundingClientRect() };
+  }, []);
+
+  useEffect(() => {
+    if (html === null) return;
+    const onSelectionChange = () => {
+      // ignore while a popup action is in flight (mode edit keeps popup open)
+      const cur = popupRef.current;
+      if (cur?.mode === "edit") return;
+      const anchor = selectionAnchor();
+      if (anchor) setPopup({ mode: "new", ...anchor });
+      else if (cur) setPopup(null);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, [html, selectionAnchor]);
+
+  /* close the popup when the content scrolls (marks moved) */
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const close = () => {
+      if (popupRef.current) setPopup(null);
+    };
+    el.addEventListener("scroll", close, { passive: true });
+    return () => el.removeEventListener("scroll", close);
+  }, [html]);
+
+  /* tap an existing highlight → edit popup */
+  useEffect(() => {
+    if (html === null) return;
+    const root = contentRef.current;
+    if (!root) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const mark = target.closest?.("mark.oni-hl") as HTMLElement | null;
+      if (!mark?.dataset.hlId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = mark.getBoundingClientRect();
+      setPopup({ mode: "edit", hlId: mark.dataset.hlId, rect });
+    };
+    root.addEventListener("click", onClick);
+    return () => root.removeEventListener("click", onClick);
+  }, [html]);
 
   if (missing) {
     return (
@@ -276,7 +658,7 @@ export function EpubBookView({
     <div
       ref={scrollRef}
       onScroll={onScroll}
-      className="h-full overflow-y-auto thin-scrollbar"
+      className={cn("h-full overflow-y-auto thin-scrollbar", theme !== "dark" && "epub-hl-light")}
       style={{
         background: bg,
         color: fg,
@@ -291,6 +673,15 @@ export function EpubBookView({
         chapterTitle={chapter?.title}
         contentRef={contentRef}
       />
+      {popup && (
+        <SelectionPopup
+          key={popup.mode === "edit" ? popup.hlId : "new"}
+          state={popup}
+          workId={workId}
+          chapterId={chapterId}
+          onClose={() => setPopup(null)}
+        />
+      )}
     </div>
   );
 }

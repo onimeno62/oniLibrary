@@ -285,7 +285,12 @@ export interface PdfSearchHit {
   count: number; // ALL matches on this page (drives find-bar prev/next)
 }
 
-/** search the whole document — one hit per page with full match count, 80 pages capped */
+/** page text for read-aloud (1-based page) — cached with the search index */
+export async function getPdfPageText(workId: string, page: number): Promise<string> {
+  const pages = await getPdfPageTexts(workId);
+  return pages[page - 1] ?? "";
+}
+
 export async function searchPdfText(workId: string, rawQuery: string): Promise<PdfSearchHit[]> {
   const q = rawQuery.trim().toLowerCase();
   if (q.length < 2) return [];

@@ -438,6 +438,7 @@ const en = {
   "bkp.inc.categories": "Categories",
   "bkp.inc.settings": "Settings",
   "bkp.inc.bookmarks": "Bookmarks",
+  "bkp.inc.highlights": "Highlights & notes",
   "bkp.inc.stats": "Statistics",
   "bkp.excluded": "Not included",
   "bkp.exc.files": "Downloaded chapter files",
@@ -635,6 +636,19 @@ const en = {
   "rdr.epubSummary": "{n} matches in {c} chapters",
   "rdr.epubSummaryOne": "{n} matches in 1 chapter",
   "rdr.sessionPaused": "Paused",
+  // highlight annotations (round 10)
+  "hl.title": "Highlight",
+  "hl.color": "{c} highlight",
+  "hl.note": "Note",
+  "hl.notePlaceholder": "Add a private note…",
+  "hl.remove": "Remove highlight",
+  "hl.saved": "Highlight saved",
+  "hl.updated": "Highlight updated",
+  "hl.removed": "Highlight removed",
+  "hl.tip": "Select text to highlight it",
+  // read-aloud (PDF)
+  "tts.page": "Page {n}",
+  "tts.autoAdvance": "Auto-advance pages",
 } ;
 
 export type TranslationKey = keyof typeof en;
@@ -1066,6 +1080,7 @@ const fa: Record<TranslationKey, string> = {
   "bkp.inc.categories": "دسته‌بندی‌ها",
   "bkp.inc.settings": "تنظیمات",
   "bkp.inc.bookmarks": "نشانک‌ها",
+  "bkp.inc.highlights": "برجسته‌ها و یادداشت‌ها",
   "bkp.inc.stats": "آمار",
   "bkp.excluded": "شامل نمی‌شود",
   "bkp.exc.files": "فایل‌های فصل‌های دانلودشده",
@@ -1261,6 +1276,19 @@ const fa: Record<TranslationKey, string> = {
   "rdr.epubSummary": "{n} مورد در {c} فصل",
   "rdr.epubSummaryOne": "{n} مورد در ۱ فصل",
   "rdr.sessionPaused": "متوقف",
+  // highlight annotations (round 10)
+  "hl.title": "برجسته‌سازی",
+  "hl.color": "برجسته {c}",
+  "hl.note": "یادداشت",
+  "hl.notePlaceholder": "یک یادداشت خصوصی اضافه کنید…",
+  "hl.remove": "حذف برجسته",
+  "hl.saved": "برجسته ذخیره شد",
+  "hl.updated": "برجسته به‌روزرسانی شد",
+  "hl.removed": "برجسته حذف شد",
+  "hl.tip": "متن را انتخاب کنید تا برجسته شود",
+  // read-aloud (PDF)
+  "tts.page": "صفحه {n}",
+  "tts.autoAdvance": "رفتن خودکار به صفحه بعد",
 };
 
 const dicts: Record<Lang, Record<TranslationKey, string>> = { en, fa };

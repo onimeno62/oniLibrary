@@ -31,6 +31,7 @@ let rate = 1;
 let lang: string | undefined;
 let gen = 0; // generation token — invalidates stale utterance callbacks
 let snapshot: TtsSnapshot = { status: "idle", idx: 0, total: 0 };
+let endCb: (() => void) | null = null; // fires when the queue finishes NATURALLY (not on stop)
 
 const listeners = new Set<() => void>();
 
@@ -124,6 +125,12 @@ function speakFrom(i: number) {
   if (i >= paras.length) {
     status = "idle";
     emit();
+    // natural completion — PDF read-aloud uses this to auto-advance pages
+    try {
+      endCb?.();
+    } catch {
+      /* listener errors must never break the queue */
+    }
     return;
   }
   emit();
@@ -151,6 +158,11 @@ function speakFrom(i: number) {
     speakFrom(i + 1);
   };
   window.speechSynthesis.speak(u);
+}
+
+/** observe natural queue completion (distinct from stop/pause) — single slot */
+export function ttsSetEndListener(cb: (() => void) | null) {
+  endCb = cb;
 }
 
 /** start reading a fresh list of paragraphs (cancels anything in flight) */

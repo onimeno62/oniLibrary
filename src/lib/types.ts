@@ -161,6 +161,22 @@ export interface Bookmark {
   createdAt: string;
 }
 
+/** highlight annotation colors (books) */
+export type HighlightColor = "coral" | "mint" | "amber" | "violet";
+
+/** saved text-highlight annotation on an EPUB chapter (round 10) */
+export interface Highlight {
+  id: string;
+  workId: string;
+  chapterId: string;
+  color: HighlightColor;
+  text: string; // the selected text (also the re-anchor fallback)
+  note?: string; // optional annotation note
+  createdAt: string;
+  /** stable anchor: global char offsets inside the chapter's concatenated text */
+  anchor: { start: number; end: number };
+}
+
 export interface ServerEntry {
   id: string;
   name: string;
@@ -215,6 +231,7 @@ export interface Settings {
     epubFont?: "serif" | "sans"; // book typeface
     epubTheme?: "dark" | "sepia" | "paper"; // book page theme
     ttsRate?: number; // read-aloud speed 0.6..1.8 (books)
+    ttsAutoAdvance?: boolean; // PDF read-aloud: keep reading across pages
   };
 }
 
