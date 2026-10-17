@@ -182,23 +182,42 @@ export function LibraryScreen() {
 
   const onImport = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const { created, unsupported } = await importFiles(Array.from(files));
-    const addWork = useApp.getState().addWork;
-    for (const w of created) addWork(w);
-    if (created.length) {
-      toast({ title: t("imp.added", { n: created.length }), description: created.map((c) => c.title).join(", ") });
-      // LIB-009: flag possible duplicates right after import
-      const groups = findDuplicateGroups(useApp.getState().works);
-      const fresh = groups.filter((g) => g.some((w) => created.some((c) => c.id === w.id)));
-      for (const g of fresh.slice(0, 2)) {
-        const kept = g.find((w) => created.some((c) => c.id === w.id));
-        const other = g.find((w) => w.id !== kept?.id);
-        if (kept && other) toast({ title: t("imp.duplicateFound", { t: other.title }) });
+    try {
+      const { created, unsupported } = await importFiles(Array.from(files));
+      const addWork = useApp.getState().addWork;
+      for (const w of created) addWork(w);
+      if (created.length) {
+        toast({ title: t("imp.added", { n: created.length }), description: created.map((c) => c.title).join(", ") });
+        // LIB-009: flag possible duplicates right after import
+        const groups = findDuplicateGroups(useApp.getState().works);
+        const fresh = groups.filter((g) => g.some((w) => created.some((c) => c.id === w.id)));
+        for (const g of fresh.slice(0, 2)) {
+          const kept = g.find((w) => created.some((c) => c.id === w.id));
+          const other = g.find((w) => w.id !== kept?.id);
+          if (kept && other) toast({ title: t("imp.duplicateFound", { t: other.title }) });
+        }
       }
+      if (unsupported.length) {
+        toast({ title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }), variant: "destructive" });
+      }
+    } catch {
+      toast({ title: t("imp.failed"), variant: "destructive" });
     }
-    if (unsupported.length) {
-      toast({ title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }), variant: "destructive" });
+  };
+
+  /**
+   * In the Android shell the WebView <input type=file> path is flaky across
+   * WebView builds, so prefer the deterministic native picker bridge — the
+   * picked file arrives via `oni-android-import` and is imported by the
+   * app-shell pull handler (same channel as Share/Open-With).
+   */
+  const startImport = () => {
+    const bridge = (window as unknown as { OniAndroid?: { pickImportFile?: () => void } }).OniAndroid;
+    if (typeof bridge?.pickImportFile === "function") {
+      bridge.pickImportFile();
+      return;
     }
+    fileRef.current?.click();
   };
 
   const activeFilterCount = (statusFilter ? 1 : 0) + (sourceFilter ? 1 : 0) + (downloadedOnly ? 1 : 0) + (unreadOnly ? 1 : 0);
@@ -473,7 +492,7 @@ export function LibraryScreen() {
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" align="end" className="mb-2 rounded-2xl">
-          <DropdownMenuItem onClick={() => fileRef.current?.click()} className="gap-2.5 rounded-xl text-[13px] font-semibold">
+          <DropdownMenuItem onClick={startImport} className="gap-2.5 rounded-xl text-[13px] font-semibold">
             <Import className="h-4 w-4 text-primary" /> {t("imp.importFiles")}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setTab("discover")} className="gap-2.5 rounded-xl text-[13px] font-semibold">

@@ -268,7 +268,7 @@ export function PdfCanvas({
   const taskRef = useRef<{ cancel: () => void } | null>(null);
   const [visible, setVisible] = useState(true); // paged slides are always mounted visible-ish; IO refines for scroll modes
   const [width, setWidth] = useState(0);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [state, setState] = useState<"loading" | "ready" | "error" | "webview">("loading");
   const [marks, setMarks] = useState<PdfMatchRect[]>([]);
   /* saved-highlight marks (CSS px, same space as the find marks) */
   const [hlMarks, setHlMarks] = useState<Array<{ rect: PdfMatchRect; color: HighlightColor; id: string; noted: boolean }>>([]);
@@ -291,12 +291,17 @@ export function PdfCanvas({
     setSel(v);
   }, []);
 
-  /* observe container width */
+  /* observe container width (ResizeObserver guarded — ancient WebViews lack it;
+     fall back to a window resize listener so the page still renders) */
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const update = () => setWidth(Math.floor(el.clientWidth));
     update();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", update);
+      return () => window.removeEventListener("resize", update);
+    }
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
@@ -344,8 +349,8 @@ export function PdfCanvas({
         taskRef.current = task;
         await task.promise;
         if (alive) setState("ready");
-      } catch {
-        if (alive) setState("error");
+      } catch (err) {
+        if (alive) setState(err instanceof Error && err.message === "pdf-webview-outdated" ? "webview" : "error");
       }
     })();
     return () => {
@@ -630,6 +635,12 @@ export function PdfCanvas({
             <>
               <Loader2 className="h-7 w-7 animate-spin text-white/35" />
               <p className="text-[11px] font-bold text-white/40">{t("rdr.pdfRendering")}</p>
+            </>
+          ) : state === "webview" ? (
+            <>
+              <FileText className="h-8 w-8 text-white/25" />
+              <p className="text-[13px] font-bold text-white/70">{t("rdr.pdfWebview")}</p>
+              <p className="text-[11px] font-semibold text-white/40">{t("rdr.pdfWebviewHint")}</p>
             </>
           ) : (
             <>

@@ -12,6 +12,7 @@ import { DownloadsScreen } from "@/components/screens/downloads-screen";
 import { MoreScreen } from "@/components/screens/more-screen";
 import { DetailsScreen } from "@/components/screens/details-screen";
 import { ReaderScreen } from "@/components/screens/reader-screen";
+import { OverlayErrorBoundary } from "@/components/error-boundary";
 import { SearchScreen } from "@/components/screens/search-screen";
 import { SourceScreen } from "@/components/screens/source-screen";
 import { VaultScreen, VaultLockScreen } from "@/components/screens/vault-screen";
@@ -347,13 +348,16 @@ export function AppShell() {
                   {tab === "more" && <MoreScreen />}
                 </div>
 
-                {/* overlay stack */}
+                {/* overlay stack — boundary keeps a screen crash recoverable
+                    instead of killing the whole app (v1.1.1 hardening) */}
                 {overlay && (
                   <div className="animate-overlay-in absolute inset-0 z-20 flex flex-col overflow-hidden bg-background">
                     {overlay.kind === "vault" ? (
                       <VaultGate />
                     ) : (
-                      <OverlayRenderer overlay={overlay} />
+                      <OverlayErrorBoundary>
+                        <OverlayRenderer overlay={overlay} />
+                      </OverlayErrorBoundary>
                     )}
                   </div>
                 )}

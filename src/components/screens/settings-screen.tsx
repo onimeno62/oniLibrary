@@ -503,7 +503,7 @@ export function SettingsScreen() {
             <p className="text-[11px] font-semibold text-muted-foreground">{t("about.tagline")}</p>
           </div>
           <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-black text-primary">
-            v1.1.0 (3)
+            v1.1.1 (4)
           </span>
         </div>
         <a

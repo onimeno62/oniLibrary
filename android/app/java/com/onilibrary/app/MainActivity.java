@@ -25,6 +25,8 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -54,6 +56,14 @@ import java.util.concurrent.Executor;
  *  - setVolumeKeyMode      → reader page turns via volume keys
  *  - pendingImportInfo / readImportChunk / clearPendingImport
  *                          → files received via Share / Open-With
+ *                          or the in-app picker (pickImportFile)
+ *  - pickImportFile        → deterministic native file picker (LOC-001):
+ *                            Android WebView only honours <input type=file>
+ *                            when a WebChromeClient implements
+ *                            onShowFileChooser — and that support is flaky
+ *                            across WebView builds, so the library import
+ *                            button calls this bridge instead and receives
+ *                            the picked file through the same chunk channel
  *  - vaultBiometric        → platform biometric unlock for the Vault
  */
 public class MainActivity extends Activity {
@@ -63,6 +73,9 @@ public class MainActivity extends Activity {
     private static final String ASSET_PREFIX = "/assets/";
     private static final int IMPORT_CHUNK = 96 * 1024; // base64-safe chunk size
 
+    private static final int REQ_FILE_CHOOSER = 4001; // <input type=file>
+    private static final int REQ_PICK_IMPORT  = 4002; // pickImportFile() bridge
+
     private WebView webView;
     private volatile int overlayDepth = 0;
     private volatile boolean volumeKeysActive = false;
@@ -70,11 +83,15 @@ public class MainActivity extends Activity {
     private volatile boolean ttsReady = false;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    // pending file received from another app (Share / Open-With)
+    // pending file received from another app (Share / Open-With) or the
+    // in-app picker — both feed the same chunked transfer channel
     private final Object importLock = new Object();
     private File pendingImportFile = null;
     private String pendingImportName = null;
     private String pendingImportMime = "application/octet-stream";
+
+    // in-flight <input type=file> callback (must be answered exactly once)
+    private ValueCallback<Uri[]> pendingFileChooser = null;
 
     private static final Map<String, String> MIME = new HashMap<>();
     static {
@@ -153,6 +170,41 @@ public class MainActivity extends Activity {
             }
         });
 
+        // <input type=file> support: without a WebChromeClient the picker
+        // never opens and the input silently does nothing (report: "can't
+        // import local files"). onShowFileChooser is the standard fix.
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view,
+                    ValueCallback<Uri[]> callback,
+                    FileChooserParams params) {
+                if (pendingFileChooser != null) {
+                    // a previous picker was never resolved — release it
+                    pendingFileChooser.onReceiveValue(null);
+                }
+                pendingFileChooser = callback;
+                Intent intent;
+                try {
+                    intent = params.createIntent();
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                } catch (Exception e) {
+                    intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                }
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                try {
+                    startActivityForResult(intent, REQ_FILE_CHOOSER);
+                } catch (Exception e) {
+                    pendingFileChooser = null;
+                    callback.onReceiveValue(null);
+                    toast("No file picker available");
+                    return true;
+                }
+                return true;
+            }
+        });
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -206,8 +258,16 @@ public class MainActivity extends Activity {
             uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
         }
         if (uri == null) return;
+        stageIncomingFile(uri);
+    }
 
-        final Uri src = uri;
+    /**
+     * Copy a content:// Uri into the incoming cache on a worker thread and
+     * publish it through the chunked bridge channel, then ping the web app
+     * with `oni-android-import`. Shared by Share/Open-With intents AND the
+     * in-app file picker (REQ_PICK_IMPORT).
+     */
+    private void stageIncomingFile(final Uri src) {
         // copy on a worker thread — streams can be slow
         new Thread(() -> {
             String name = queryName(src);
@@ -248,6 +308,35 @@ public class MainActivity extends Activity {
                         toast("Could not import the shared file"));
             }
         }, "oni-import").start();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQ_FILE_CHOOSER) {
+            ValueCallback<Uri[]> cb = pendingFileChooser;
+            pendingFileChooser = null;
+            if (cb != null) {
+                Uri[] picked = null;
+                try {
+                    picked = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                } catch (Exception ignored) { }
+                cb.onReceiveValue(picked == null ? new Uri[0] : picked);
+            }
+            return;
+        }
+        if (requestCode == REQ_PICK_IMPORT) {
+            Uri uri = null;
+            if (resultCode == RESULT_OK && data != null) {
+                if (data.getData() != null) {
+                    uri = data.getData();
+                } else if (data.getClipData() != null && data.getClipData().getItemCount() > 0) {
+                    uri = data.getClipData().getItemAt(0).getUri(); // multiple → first file
+                }
+            }
+            if (uri != null) stageIncomingFile(uri);
+        }
+        // never call super with only-WebView request codes — harmless either way
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     private String queryName(Uri uri) {
@@ -398,6 +487,30 @@ public class MainActivity extends Activity {
                 pendingImportFile = null;
                 pendingImportName = null;
             }
+        }
+
+        /* ------------------------- in-app file picker ----------------------- */
+
+        /**
+         * Deterministic import path: opens the system document picker and
+         * delivers the picked file through pendingImportInfo/readImportChunk
+         * + an `oni-android-import` ping — identical to the Share-in flow the
+         * web app already handles. Used by the library import button because
+         * WebView file-chooser support is unreliable across devices.
+         */
+        @JavascriptInterface
+        public void pickImportFile() {
+            mainHandler.post(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                    startActivityForResult(intent, REQ_PICK_IMPORT);
+                } catch (Exception e) {
+                    toast("No file picker available");
+                }
+            });
         }
 
         /* ---------------------------- biometrics ---------------------------- */

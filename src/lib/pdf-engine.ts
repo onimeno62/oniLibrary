@@ -14,9 +14,23 @@ type DocTask = ReturnType<PdfJs["getDocument"]>;
 
 let libPromise: Promise<PdfJs> | null = null;
 
+/**
+ * pdfjs-dist v6 requires recent WebViews (structuredClone = Chrome 98+, etc.).
+ * On older Android System WebView builds the library would throw deep inside
+ * its module code; we pre-check and fail with a distinct, reportable error so
+ * the reader can show an actionable "update WebView" card instead.
+ */
+export function isPdfEngineSupported(): boolean {
+  if (typeof window === "undefined") return false;
+  return typeof structuredClone === "function";
+}
+
 async function getLib(): Promise<PdfJs> {
   if (!libPromise) {
     libPromise = import("pdfjs-dist").then((mod) => {
+      if (!isPdfEngineSupported()) {
+        throw new Error("pdf-webview-outdated");
+      }
       // relative to the document base → works on the dev server (/pdf/…)
       // and inside the APK (assets root → /assets/pdf/…)
       mod.GlobalWorkerOptions.workerSrc = new URL(
@@ -24,6 +38,10 @@ async function getLib(): Promise<PdfJs> {
         document.baseURI
       ).toString();
       return mod;
+    });
+    // a failed gate must not poison later retries after a WebView update
+    libPromise.catch(() => {
+      libPromise = null;
     });
   }
   return libPromise;

@@ -15,7 +15,8 @@ export interface ImportResult {
   unsupported: string[];
 }
 
-/** Import user-picked files into the library (LOC-001..005). */
+/** Import user-picked files into the library (LOC-001..005).
+    One unreadable/corrupt file must never abort the whole batch. */
 export async function importFiles(files: File[]): Promise<ImportResult> {
   const created: Work[] = [];
   const unsupported: string[] = [];
@@ -23,38 +24,47 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
 
   for (const f of files) {
     const name = f.name;
-    if (IMG_RE.test(name)) {
-      imageFiles.push(f);
-      continue;
-    }
-    if (/\.cbz$|\.zip$/i.test(name)) {
-      const w = await importArchive(f);
-      if (w) created.push(w);
-      else unsupported.push(name);
-      continue;
-    }
-    if (/\.(cbr|rar|7z|cb7|cbt|tar|djvu)$/i.test(name)) {
+    try {
+      if (IMG_RE.test(name)) {
+        imageFiles.push(f);
+        continue;
+      }
+      if (/\.cbz$|\.zip$/i.test(name)) {
+        const w = await importArchive(f);
+        if (w) created.push(w);
+        else unsupported.push(name);
+        continue;
+      }
+      if (/\.(cbr|rar|7z|cb7|cbt|tar|djvu)$/i.test(name)) {
+        unsupported.push(name);
+        continue;
+      }
+      if (/\.pdf$/i.test(name)) {
+        const w = await importPdf(f);
+        if (w) created.push(w);
+        else created.push(makeMetaWork(f, "PDF"));
+        continue;
+      }
+      if (/\.epub$/i.test(name)) {
+        const w = await importEpub(f);
+        if (w) created.push(w);
+        else created.push(makeMetaWork(f, "EPUB"));
+        continue;
+      }
       unsupported.push(name);
-      continue;
+    } catch {
+      /* corrupt blob / IDB failure for this one file — keep the batch going */
+      unsupported.push(name);
     }
-    if (/\.pdf$/i.test(name)) {
-      const w = await importPdf(f);
-      if (w) created.push(w);
-      else created.push(makeMetaWork(f, "PDF"));
-      continue;
-    }
-    if (/\.epub$/i.test(name)) {
-      const w = await importEpub(f);
-      if (w) created.push(w);
-      else created.push(makeMetaWork(f, "EPUB"));
-      continue;
-    }
-    unsupported.push(name);
   }
 
   if (imageFiles.length > 0) {
-    const w = await importImageBatch(imageFiles);
-    if (w) created.push(w);
+    try {
+      const w = await importImageBatch(imageFiles);
+      if (w) created.push(w);
+    } catch {
+      unsupported.push(imageFiles[0]?.name ?? "images");
+    }
   }
 
   return { created, unsupported };

@@ -3,6 +3,37 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is semantic.
 
+## [1.1.1] — 2026-10-17
+
+### Fixed
+- **Android: local file import did nothing** — the shell never attached a
+  `WebChromeClient`, so `<input type="file">` silently no-op'd in the WebView.
+  Two complementary paths now exist:
+  1. `onShowFileChooser` is implemented (standard fix — also restores chapter
+     re-import on the details screen and backup restore), and
+  2. a deterministic **native picker bridge** (`OniAndroid.pickImportFile`) that
+     the library import button prefers on Android — the picked file flows
+     through the same chunked channel as Share/Open-With, so it works
+     regardless of WebView file-chooser quirks.
+- **Reader crash hardening** (device-reported "Application error" after opening
+  the reading screen):
+  - a global error screen replaces the dead-end stock page — reload, clear
+    app state, and copyable error details for bug reports;
+  - an overlay error boundary keeps any screen crash recoverable (back to
+    library / try again) instead of killing the whole app;
+  - the PDF engine capability-gates `structuredClone` before loading
+    pdfjs-dist v6 and shows an actionable "update Android System WebView"
+    card (en/fa) on old WebViews instead of failing opaquely;
+  - `ResizeObserver` usages degrade gracefully on ancient WebViews;
+  - the persisted store now reads/writes through guarded storage so a
+    corrupted payload or private-mode exception cannot crash hydration;
+  - `importFiles` isolates per-file failures — one corrupt file no longer
+    aborts a whole batch (new `imp.failed` toast on total failure, en/fa).
+
+### Changed
+- Version → 1.1.1 (versionCode 4). Same signing key as 1.0.1/1.1.0 — installs
+  over the top and keeps all data.
+
 ## [1.1.0] — 2026-10-17
 
 ### Added

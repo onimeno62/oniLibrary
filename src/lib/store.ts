@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
 import {
   DEFAULT_SETTINGS,
   SEED_WORKS,
@@ -820,7 +820,31 @@ export const useApp = create<AppState>()(
     }),
     {
       name: "onilibrary-store-v1",
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage((): StateStorage => ({
+        /* guarded storage — a corrupted persisted payload or a privacy
+           mode that throws on access must never crash hydration */
+        getItem: (name) => {
+          try {
+            return localStorage.getItem(name);
+          } catch {
+            return null;
+          }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, value);
+          } catch {
+            /* quota exceeded / private mode — run memory-only */
+          }
+        },
+        removeItem: (name) => {
+          try {
+            localStorage.removeItem(name);
+          } catch {
+            /* ignore */
+          }
+        },
+      })),
       // migrate older persisted states: new Settings keys must fall back to
       // defaults instead of undefined (e.g. volumeKeyPaging on v1.0.1 stores)
       merge: (persisted, current) => {
