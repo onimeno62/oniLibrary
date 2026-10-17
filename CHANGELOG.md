@@ -3,6 +3,33 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is semantic.
 
+## [1.1.0] — 2026-10-17
+
+### Added
+- **Android: volume-key page turning** (RDR-010) — native key interception with a
+  per-reader opt-in bridge; Vol↓ = next, Vol↑ = previous; toggle in Settings › Reader.
+- **Android: Share / Open-With import** (LOC-001) — ACTION_VIEW/SEND intent filters;
+  received files stream into the library through a chunked native bridge (large PDFs safe).
+- **Android: real platform BiometricPrompt Vault unlock** (VLT-002, API 28+) with the
+  web-simulation fallback kept for browsers.
+- Discover: per-source menu to pin / unpin / enable / disable (SRC-004) with visual states.
+- Bulk selection: real category picker, full 5-status picker, bulk favorite (LIB-007).
+- Library grid density control — Compact / Cozy / Large (UX-003), persisted.
+- Settings: About section (version + GitHub), reader behaviour toggles (auto-advance,
+  border crop, keep-awake, volume keys), double-page added to reader defaults.
+- Auto update-check every 15 minutes while the app is open, honoring the toggle (UPD-002/004).
+- Backup v2 (BKP-001): reading history, saved filters, source enable/pin flags and
+  personal servers now included in `.onibackup`.
+
+### Fixed
+- Downloads: cancel is now reachable from active/queued rows (DWN-002) and failed
+  downloads actually occur (simulated network error) so the ERROR → retry path works (DWN-004).
+- Notification emission now respects per-type preferences (NTF-002).
+- Backup wording no longer claims encryption; the file scope is stated honestly.
+- Existing installs migrate cleanly: new Settings keys fall back to defaults via a
+  persist-merge step (volume-key paging, grid density).
+- Bottom navigation labels and statistics heatmap months are fully localized (BIL-007/010).
+
 ## [1.0.1] — 2026-10-15
 
 ### Fixed
