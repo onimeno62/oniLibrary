@@ -6,7 +6,6 @@ import {
   DEFAULT_SETTINGS,
   SEED_WORKS,
   SEED_SOURCES,
-  SEED_EXTENSIONS,
   SEED_CATEGORIES,
   SEED_WORK_CATEGORIES,
   SEED_SERVERS,
@@ -43,6 +42,7 @@ export type Overlay =
   | { kind: "highlights"; workId?: string }
   | { kind: "search" }
   | { kind: "catalog"; serverId: string }
+  | { kind: "source"; sourceId: string; focusMangaId?: string }
   | { kind: "vault" }
   | { kind: "extensions" }
   | { kind: "statistics" }
@@ -102,6 +102,8 @@ interface AppState {
   settings: Settings;
   updateCheck: { lastCheck: string | null; checking: boolean };
   lastBackup: string | null;
+  /** disabled built-in source ids (v1.3.0) — e.g. "builtin-mangadex" [SRC-004] */
+  builtinDisabled: string[];
 
   setHydrated: () => void;
   finishOnboarding: (partial?: Partial<Settings>) => void;
@@ -159,6 +161,10 @@ interface AppState {
   addServer: (s: Omit<ServerEntry, "id" | "status">) => void;
   removeServer: (id: string) => void;
   setServerStatus: (id: string, status: ServerEntry["status"]) => void;
+  /** attach/update HTTP Basic credentials on a catalog (Standard Ebooks) */
+  setServerAuth: (id: string, auth: { user: string; pass: string } | null) => void;
+  /** toggle a built-in source on/off [SRC-004] */
+  toggleBuiltin: (id: string) => void;
 
   saveFilter: (name: string, filter: LibraryFilterSnapshot) => void;
   deleteSavedFilter: (id: string) => void;
@@ -196,7 +202,7 @@ export const useApp = create<AppState>()(
       downloads: [] as DownloadItem[],
       notifications: [],
       sources: SEED_SOURCES,
-      extensions: SEED_EXTENSIONS,
+      extensions: [], // v1.3.0: the fake extension list is gone — see ExtensionsScreen
       sessions: [],
       history: [],
       bookmarks: [],
@@ -206,6 +212,7 @@ export const useApp = create<AppState>()(
       settings: DEFAULT_SETTINGS,
       updateCheck: { lastCheck: null, checking: false },
       lastBackup: null,
+      builtinDisabled: [] as string[],
 
       // on init, populate dynamic seeds once
       setHydrated: () => {
@@ -708,6 +715,14 @@ export const useApp = create<AppState>()(
       removeServer: (id) => set((s) => ({ servers: s.servers.filter((x) => x.id !== id) })),
       setServerStatus: (id, status) =>
         set((s) => ({ servers: s.servers.map((x) => (x.id === id ? { ...x, status } : x)) })),
+      setServerAuth: (id, auth) =>
+        set((s) => ({ servers: s.servers.map((x) => (x.id === id ? { ...x, auth } : x)) })),
+      toggleBuiltin: (id) =>
+        set((s) => ({
+          builtinDisabled: s.builtinDisabled.includes(id)
+            ? s.builtinDisabled.filter((x) => x !== id)
+            : [...s.builtinDisabled, id],
+        })),
 
       saveFilter: (name, filter) =>
         set((s) => ({
@@ -871,6 +886,7 @@ export const useApp = create<AppState>()(
         highlights: s.highlights,
         servers: s.servers,
         settings: s.settings,
+        builtinDisabled: s.builtinDisabled,
         updateCheck: { lastCheck: s.updateCheck.lastCheck, checking: false },
         lastBackup: s.lastBackup,
       }),

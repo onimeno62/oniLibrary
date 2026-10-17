@@ -15,7 +15,7 @@ import { useApp } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { opdsFetchText, opdsFetchBinary, parseOpdsFeed, type OpdsFeed, type OpdsEntry } from "@/lib/opds";
+import { opdsFetchText, opdsFetchBinary, parseOpdsFeed, authHeaders, type OpdsFeed, type OpdsEntry } from "@/lib/opds";
 import { importOpdsEntry } from "@/lib/opds-import";
 import type { ServerEntry } from "@/lib/types";
 
@@ -44,13 +44,13 @@ export function OpdsBrowser({
       setLoading(true);
       setError(null);
       try {
-        const xml = await opdsFetchText(feedAt);
+        const xml = await opdsFetchText(feedAt, authHeaders(srv.auth));
         const parsed = parseOpdsFeed(xml, feedAt);
         setFeed(parsed);
         // lazy covers (small, parallel; failure is cosmetic)
         parsed.entries.slice(0, 18).forEach(async (e) => {
           if (!e.coverUrl) return;
-          const f = await opdsFetchBinary(e.coverUrl, "cover");
+          const f = await opdsFetchBinary(e.coverUrl, "cover", authHeaders(srv.auth));
           if (!f) return;
           try {
             const { blobToThumbDataUrl } = await import("@/lib/local-files");

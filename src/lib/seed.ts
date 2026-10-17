@@ -2,7 +2,6 @@ import type {
   Work,
   Chapter,
   SourceInfo,
-  Extension,
   Notification,
   Category,
   ReadingSession,
@@ -717,106 +716,11 @@ export const SEED_SOURCES: SourceInfo[] = [
   },
 ];
 
-/* ---------- extensions ---------- */
-
-export const SEED_EXTENSIONS: Extension[] = [
-  {
-    id: "ext-mangadex",
-    name: "MangaDex",
-    version: "1.4.12",
-    repo: "oniRepo • official",
-    languages: ["EN", "JA", "FA", "MULTI"],
-    status: "INSTALLED",
-    compatibility: "VERIFIED",
-    trust: "OFFICIAL",
-    provides: ["src-mangadex"],
-    enabled: true,
-  },
-  {
-    id: "ext-crunchyroll",
-    name: "Crunchyroll Manga",
-    version: "1.1.3",
-    repo: "oniRepo • official",
-    languages: ["EN"],
-    status: "INSTALLED",
-    compatibility: "VERIFIED",
-    trust: "OFFICIAL",
-    provides: ["src-crunchyroll"],
-    enabled: true,
-  },
-  {
-    id: "ext-comixology",
-    name: "ComiXology",
-    version: "2.0.1",
-    repo: "oniRepo • official",
-    languages: ["EN"],
-    status: "INSTALLED",
-    compatibility: "VERIFIED",
-    trust: "OFFICIAL",
-    provides: ["src-comixology"],
-    enabled: true,
-  },
-  {
-    id: "ext-webtoon",
-    name: "Webtoon.com",
-    version: "1.6.0",
-    repo: "keiyoushi • community",
-    languages: ["EN"],
-    status: "INSTALLED",
-    compatibility: "VERIFIED",
-    trust: "COMMUNITY",
-    provides: ["src-webtoon"],
-    enabled: true,
-  },
-  {
-    id: "ext-bato",
-    name: "Bato.to",
-    version: "1.2.9",
-    repo: "keiyoushi • community",
-    languages: ["EN", "KO"],
-    status: "UPDATE",
-    compatibility: "VERIFIED",
-    trust: "COMMUNITY",
-    provides: ["src-bato"],
-    enabled: true,
-  },
-  {
-    id: "ext-novelupdates",
-    name: "NovelUpdates",
-    version: "0.9.2",
-    repo: "oniRepo • official",
-    languages: ["EN", "ZH"],
-    status: "INSTALLED",
-    compatibility: "VERIFIED",
-    trust: "OFFICIAL",
-    provides: [],
-    enabled: true,
-  },
-  {
-    id: "ext-madara",
-    name: "Madara (multisource)",
-    version: "4.2.7",
-    repo: "keiyoushi • community",
-    languages: ["MULTI"],
-    status: "AVAILABLE",
-    compatibility: "UNVERIFIED",
-    trust: "COMMUNITY",
-    provides: [],
-    enabled: false,
-  },
-  {
-    id: "ext-libgen",
-    name: "Libgen Books",
-    version: "0.3.1",
-    repo: "unknown sideload",
-    languages: ["MULTI"],
-    status: "AVAILABLE",
-    compatibility: "UNVERIFIED",
-    trust: "UNKNOWN",
-    provides: [],
-    enabled: false,
-  },
-];
+/* ---------- extensions ----------
+   v1.3.0: the fake extension list ("oniRepo • official" installs of
+   Crunchyroll/ComiXology...) is deleted — the PRD's honesty rules
+   ([EXT-002]/[NONS-003]) forbid fake compatibility badges. The Extensions
+   screen now shows the REAL built-in sources + an honest Mihon statement. */
 
 /* ---------- categories ---------- */
 

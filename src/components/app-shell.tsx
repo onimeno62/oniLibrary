@@ -15,6 +15,7 @@ import { ReaderScreen } from "@/components/screens/reader-screen";
 import { OverlayErrorBoundary } from "@/components/error-boundary";
 import { SearchScreen } from "@/components/screens/search-screen";
 import { CatalogScreen } from "@/components/screens/catalog-screen";
+import { SourceScreen } from "@/components/screens/source-screen";
 import { VaultScreen, VaultLockScreen } from "@/components/screens/vault-screen";
 import { ExtensionsScreen } from "@/components/screens/extensions-screen";
 import { StatisticsScreen } from "@/components/screens/statistics-screen";
@@ -122,6 +123,8 @@ function OverlayRenderer({ overlay }: { overlay: Overlay }) {
       return <SearchScreen />;
     case "catalog":
       return <CatalogScreen serverId={overlay.serverId} />;
+    case "source":
+      return <SourceScreen sourceId={overlay.sourceId} focusMangaId={overlay.focusMangaId} />;
     case "vault":
       return <VaultScreen />;
     case "extensions":

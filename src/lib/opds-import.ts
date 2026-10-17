@@ -12,7 +12,7 @@
 import type { Work } from "./types";
 import type { ServerEntry } from "./types";
 import type { OpdsEntry } from "./opds";
-import { opdsFetchBinary } from "./opds";
+import { opdsFetchBinary, authHeaders } from "./opds";
 import { extractArchiveImages } from "./importer";
 import { importPdf, importEpub } from "./importer";
 import { putFile, blobToThumbDataUrl } from "./local-files";
@@ -30,7 +30,11 @@ export async function importOpdsEntry(
   const isEpub = /\.epub(\?|$)/.test(lower) || entry.acquisitionMime === "application/epub+zip";
 
   if (isPdf || isEpub) {
-    const f = await opdsFetchBinary(entry.acquisitionUrl, `${entry.title}.${isPdf ? "pdf" : "epub"}`);
+    const f = await opdsFetchBinary(
+      entry.acquisitionUrl,
+      `${entry.title}.${isPdf ? "pdf" : "epub"}`,
+      authHeaders(srv.auth)
+    );
     if (!f) throw new Error("download failed");
     work = isPdf ? await importPdf(f) : await importEpub(f);
     if (work) {
@@ -45,7 +49,7 @@ export async function importOpdsEntry(
       };
     }
   } else {
-    const f = await opdsFetchBinary(entry.acquisitionUrl, `${entry.title}.cbz`);
+    const f = await opdsFetchBinary(entry.acquisitionUrl, `${entry.title}.cbz`, authHeaders(srv.auth));
     if (!f) throw new Error("download failed");
     const res = await extractArchiveImages(f);
     if (!res.ok) throw new Error(res.reason);
@@ -64,7 +68,7 @@ export async function importOpdsEntry(
     }
     let firstCover = coverDataUrl ?? "";
     if (!firstCover && entry.coverUrl) {
-      const cf = await opdsFetchBinary(entry.coverUrl, "cover");
+      const cf = await opdsFetchBinary(entry.coverUrl, "cover", authHeaders(srv.auth));
       if (cf) firstCover = await blobToThumbDataUrl(cf).catch(() => "");
     }
     if (!firstCover && keys.length > 0) {

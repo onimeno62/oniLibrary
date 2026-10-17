@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe } from "lucide-react";
 import { SectionHeader, WorkCover } from "@/components/shared";
+import { MangaDexCard, FreeCatalogList } from "@/components/sources/free-catalogs";
 import { useApp, useNav, continueReading } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
@@ -320,6 +321,15 @@ export function DiscoverScreen() {
             </button>
           </>
         )}
+      </section>
+
+      {/* ====== free built-in catalogs (v1.3.0 — one-tap sources) ====== */}
+      <section className="mt-6">
+        <SectionHeader title={t("src.title")} onSeeAll={() => push({ kind: "extensions" })} />
+        <div className="space-y-2.5">
+          <MangaDexCard />
+          <FreeCatalogList />
+        </div>
       </section>
 
       {/* discover-more carousel (mockup: promo banner with page dots) */}

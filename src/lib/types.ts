@@ -78,6 +78,11 @@ export interface Work {
   isLocal?: boolean;
   language: string; // content language
   localPages?: string[]; // imported image data urls
+  /** online source this work was downloaded from (v1.3.0) — enables
+      check-for-updates + honest source attribution on the details page */
+  sourceRef?: { sourceId: string; itemId: string };
+  /** last successful update check for sourceRef works */
+  lastSourceCheck?: string;
   epubChapters?: { id: string; title: string }[]; // parsed EPUB spine metadata
   userRating?: number; // personal rating 0..5 stars (TRK-001)
   customCover?: string; // user-chosen cover data url (LIB-010)
@@ -208,6 +213,9 @@ export interface ServerEntry {
   url: string;
   kind: "KOMGA" | "OPDS";
   status: "UNKNOWN" | "OK" | "FAIL";
+  /** optional HTTP Basic credentials (Standard Ebooks OPDS asks for a
+      free-account email; v1.3.0) */
+  auth?: { user: string; pass: string } | null;
 }
 
 /** saved library filter (LIB-011) — a named snapshot of filter chips + sort */

@@ -3,6 +3,63 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.3.0] — 2026-10-17
+
+### Added
+- **Free built-in sources (PRD "Online Sources & Extensions" round)** —
+  the app now ships real, one-tap online sources instead of only manual
+  server setup:
+  - **MangaDex** (JSON API, no account) — a first-party manga source with
+    Popular/Latest feeds, relevance search, real cover grids and pagination.
+    Per-chapter downloads ([DWN-001]: latest 10 / all shown / individual
+    checkboxes) fetch page images into the same IndexedDB layout the reader
+    already uses, so downloaded chapters read offline with full progress
+    tracking. Works keep an honest source reference
+    (`mangadex.org/title/…`, tags, author, status mapping) and webtoon-style
+    titles auto-map to the WEBTOON reader (vertical scroll).
+  - **Project Gutenberg** (OPDS) — 70,000+ public-domain books; browse and
+    OpenSearch search; EPUB acquisitions import through the existing
+    document pipeline.
+  - **Standard Ebooks** (OPDS + HTTP Basic auth) — asks for the free-account
+    email in a dedicated dialog; credentials are stored per catalog,
+    transmitted only to standardebooks.org, and threaded through the native
+    bridge (a new `fetchToCache(url, headers)` overload carries
+    authenticated downloads in the APK).
+- **Check for updates** ([UPD-001]) — works downloaded from MangaDex get a
+  source card on the details page with a real update check: the chapter
+  feed is diffed against the library, new chapters are listed with their
+  real titles and can be downloaded straight into the existing work
+  (appended with correct page keys). OPDS works show their catalog host.
+- **Global search across sources** ([SRC-002]) — the search screen now
+  queries MangaDex in parallel with every configured OPDS catalog; results
+  are labeled per source, one failing source never blocks the others, and
+  tapping a MangaDex result opens its download sheet directly.
+- **Sources & Extensions screen rebuilt on the truth** — the fake extension
+  list ("Crunchyroll Manga / ComiXology installed from oniRepo" with fake
+  VERIFIED badges) is deleted. The screen now shows the real built-in
+  sources (status, languages, enable/disable per [SRC-004]), your catalogs,
+  and an explicit plain-language statement that **Mihon/Tachiyomi .apk
+  extensions are NOT supported** (they are compiled Android dex code bound
+  to another app's internals and cannot run inside oniLibrary's web
+  runtime) — as the PRD requires ([EXT-002], [EXT-004], [NONS-003],
+  [RSK-001]).
+
+### Fixed
+- **Catalog search broke when a catalog served its OpenSearchDescription
+  without CORS headers** (e.g. Project Gutenberg): template discovery now
+  falls back to the de-facto `{feedUrl}?query={searchTerms}` convention, and
+  plain-`http://` catalog links are transparently upgraded to https.
+  Also hardens the template cache key per credentials.
+- Empty-search pseudo-entries ("No records found.") from some catalogs no
+  longer render as dead Add rows.
+- Discover/Servers one-tap add verifies the catalog first and records the
+  connection status; a failing probe never adds a broken catalog silently.
+
+### Changed
+- Suggested free catalogs appear in both Discover ("Free catalogs") and the
+  Personal Servers screen; already-added catalogs switch to Open/Remove
+  (and Edit-account for Standard Ebooks).
+
 ## [1.2.2] — 2026-10-17
 
 ### Fixed

@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, Globe, RefreshCw, Plus, ChevronRight } from "lucide-react";
+import { Search, X, Globe, RefreshCw, Plus, ChevronRight, Sparkles } from "lucide-react";
 import { WorkCover, EmptyState } from "@/components/shared";
 import { useApp, useNav } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
 import { opdsSearchTemplate, searchOpds } from "@/lib/opds";
 import { importOpdsEntry } from "@/lib/opds-import";
+import { mdSearch } from "@/lib/mangadex";
+import { MANGADEX_ID } from "@/lib/builtin-sources";
 import type { ServerEntry } from "@/lib/types";
 import type { OpdsEntry } from "@/lib/opds";
+import type { MdManga } from "@/lib/mangadex";
 
 interface CatalogHit {
   srv: ServerEntry;
@@ -29,11 +32,13 @@ export function SearchScreen() {
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  /* catalog search results (real OpenSearch queries, v1.2.2) */
+  /* catalog search results (real OpenSearch queries, v1.2.2) + MangaDex (v1.3.0) */
   const [catHits, setCatHits] = useState<CatalogHit[] | null>(null);
   const [catNoSearch, setCatNoSearch] = useState<ServerEntry[]>([]);
   const [searchingCats, setSearchingCats] = useState(false);
   const [addedIds, setAddedIds] = useState<string[]>([]);
+  const [mdHits, setMdHits] = useState<MdManga[] | null>(null);
+  const [mdFailed, setMdFailed] = useState(false);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -68,23 +73,36 @@ export function SearchScreen() {
   }, [works, q]);
 
   /* ----- live catalog search (departs from the committed query) ----- */
+  const mdEnabled = useApp((s) => !s.builtinDisabled.includes(MANGADEX_ID));
+
   useEffect(() => {
     const term = committedQ;
     let alive = true;
     const run = async () => {
-      if (!term || servers.length === 0) {
+      if (!term || (servers.length === 0 && !mdEnabled)) {
         if (alive) {
           setCatHits(null);
           setCatNoSearch([]);
           setSearchingCats(false);
+          setMdHits(null);
+          setMdFailed(false);
         }
         return;
       }
       setSearchingCats(true);
       const hits: CatalogHit[] = [];
       const noSearch: ServerEntry[] = [];
-      await Promise.all(
-        servers.map(async (srv) => {
+      // MangaDex runs in parallel with the OPDS catalogs — one source failing
+      // never blocks the others ([SRC-002])
+      const mdPromise = mdEnabled
+        ? mdSearch(term, 0)
+            .then((list) => (alive ? setMdHits(list.slice(0, 6)) : undefined))
+            .catch(() => alive && setMdFailed(true))
+        : Promise.resolve();
+      if (!mdEnabled && alive) setMdHits(null);
+      await Promise.all([
+        mdPromise,
+        ...servers.map(async (srv) => {
           try {
             const template = await opdsSearchTemplate(srv);
             if (!template) {
@@ -96,8 +114,8 @@ export function SearchScreen() {
           } catch {
             /* this catalog failed — the others still render */
           }
-        })
-      );
+        }),
+      ]);
       if (!alive) return;
       setCatHits(hits);
       setCatNoSearch(noSearch);
@@ -107,7 +125,7 @@ export function SearchScreen() {
     return () => {
       alive = false;
     };
-  }, [committedQ, servers]);
+  }, [committedQ, servers, mdEnabled]);
 
   const addEntry = async (srv: ServerEntry, entry: OpdsEntry) => {
     if (addedIds.includes(entry.id)) return;
@@ -188,13 +206,13 @@ export function SearchScreen() {
               )}
             </section>
 
-            {/* from catalogs (real OpenSearch results) */}
+            {/* from catalogs (real OpenSearch results) + MangaDex (v1.3.0) */}
             <section className="mt-5">
               <h2 className="mb-2 text-[12px] font-extrabold uppercase tracking-wide text-muted-foreground">
                 {t("srch.fromCatalogs")}
               </h2>
 
-              {servers.length === 0 ? (
+              {servers.length === 0 && !mdEnabled ? (
                 <button
                   onClick={() => push({ kind: "servers" })}
                   className="flex w-full flex-col items-center gap-2 rounded-3xl border border-dashed border-border bg-card/50 p-5 text-center transition-colors hover:bg-card"
@@ -212,6 +230,52 @@ export function SearchScreen() {
                 </div>
               ) : (
                 <>
+                  {/* MangaDex results ([SRC-002]: labeled, isolated failures) */}
+                  {mdEnabled && committedQ && (
+                    <div className="mb-3">
+                      <button
+                        onClick={() => push({ kind: "source", sourceId: MANGADEX_ID })}
+                        className="mb-1.5 flex items-center gap-1.5 text-[11px] font-extrabold text-primary"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>MangaDex</span>
+                        <ChevronRight className="h-3 w-3 rtl:rotate-180" />
+                      </button>
+                      {mdFailed ? (
+                        <p className="py-1 text-[11.5px] font-bold text-red-500">{t("md.error")}</p>
+                      ) : mdHits === null ? (
+                        <p className="py-1 text-[11.5px] font-bold text-muted-foreground">…</p>
+                      ) : mdHits.length === 0 ? (
+                        <p className="py-1 text-[11.5px] font-bold text-muted-foreground">{t("md.noResults")}</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {mdHits.map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => push({ kind: "source", sourceId: MANGADEX_ID, focusMangaId: m.id })}
+                              className="flex w-full items-center gap-3 rounded-2xl border border-border/60 bg-card p-2 text-start"
+                            >
+                              <span className="h-14 w-11 shrink-0 overflow-hidden rounded-xl bg-secondary">
+                                {m.coverUrl ? (
+                                  <img src={m.coverUrl} alt={m.title} loading="lazy" className="h-full w-full object-cover" />
+                                ) : null}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-extrabold">{m.title}</span>
+                                <span className="block truncate text-[11px] font-semibold text-muted-foreground">
+                                  {m.author || "MangaDex"} · {t(`type.${m.workType}`)}
+                                </span>
+                              </span>
+                              <span className="shrink-0 rounded-full bg-coral-soft px-3 py-1.5 text-[11.5px] font-extrabold text-primary">
+                                {t("src.open")}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {catHits?.map(({ srv, entries }) => (
                     <div key={srv.id} className="mb-3">
                       <button

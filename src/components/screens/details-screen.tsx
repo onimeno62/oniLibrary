@@ -27,8 +27,10 @@ import {
   ImagePlus,
   X,
   FolderOpen,
+  RefreshCw,
+  Globe,
 } from "lucide-react";
-import { WorkCover } from "@/components/shared";
+import { WorkCover, ProgressBar } from "@/components/shared";
 import { WorkMenu } from "@/components/screens/library-screen";
 import { useApp, useNav, continueReading, timeAgo, workProgress, toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
@@ -48,6 +50,7 @@ import {
 } from "@/components/ui/dialog";
 import type { Chapter, ReadingStatus, ReaderMode, ReadingDirection, FitMode, Work } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
+import { mdNewChapters, appendMangaDexChapters, mdChapterLabel, type MdChapter, type MdImportProgress } from "@/lib/mangadex";
 
 export function DetailsScreen({ workId }: { workId: string }) {
   const { t, lang, rtl } = useT();
@@ -63,6 +66,12 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [ratingOpen, setRatingOpen] = useState(false);
+
+  /* source update check (v1.3.0, [UPD-001]) — MangaDex works only */
+  const [updChecking, setUpdChecking] = useState(false);
+  const [updNew, setUpdNew] = useState<MdChapter[] | null>(null);
+  const [updBusy, setUpdBusy] = useState(false);
+  const [updProg, setUpdProg] = useState<MdImportProgress | null>(null);
 
   const bookmarks = useApp((s) => s.bookmarks);
   const workBookmarkCount = bookmarks.filter((b) => b.workId === workId).length;
@@ -91,6 +100,53 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const cr = continueReading(work);
   const progress = workProgress(work);
   const readCount = work.chapters.filter((c) => c.isRead).length;
+
+  /* ---- source update check ([UPD-001]): diff against MangaDex, offer download ---- */
+  const runUpdateCheck = async () => {
+    if (!work?.sourceRef || updChecking || updBusy) return;
+    setUpdChecking(true);
+    try {
+      const all = await mdNewChapters(work.sourceRef.itemId, []);
+      const knownNums = new Set(work.chapters.map((c) => c.number));
+      const fresh = all.filter((c) => !knownNums.has(c.number));
+      useApp.getState().updateWork(work.id, { lastSourceCheck: new Date().toISOString() });
+      if (fresh.length === 0) {
+        toast({ title: t("upd.contentUpToDate"), description: work.title });
+      } else {
+        setUpdNew(fresh);
+      }
+    } catch {
+      toast({ title: t("md.chapterError"), description: "MangaDex", variant: "destructive" });
+    } finally {
+      setUpdChecking(false);
+    }
+  };
+
+  const downloadNewChapters = async () => {
+    if (!work?.sourceRef || !updNew || updBusy) return;
+    setUpdBusy(true);
+    setUpdProg(null);
+    try {
+      const added = await appendMangaDexChapters(work, updNew, setUpdProg);
+      useApp.getState().appendChapters(work.id, added);
+      useApp.getState().updateWork(work.id, { lastSourceCheck: new Date().toISOString() });
+      toast({ title: t("upd.addedN", { n: added.length }), description: work.title });
+      setUpdNew(null);
+    } catch (e) {
+      toast({
+        title: t("md.importFailed"),
+        description: (e as Error).message?.slice(0, 80),
+        variant: "destructive",
+      });
+    } finally {
+      setUpdBusy(false);
+      setUpdProg(null);
+    }
+  };
+
+  const updPct = updProg
+    ? Math.round(((updProg.chapterDone + (updProg.pageTotal > 0 ? updProg.pageDone / updProg.pageTotal : 0)) / updProg.chapterTotal) * 100)
+    : 0;
 
   const statusChip = (): { key: TranslationKey; cls: string } => {
     switch (work.readingStatus) {
@@ -369,6 +425,54 @@ export function DetailsScreen({ workId }: { workId: string }) {
             </div>
           )}
 
+          {/* online source card (v1.3.0, [SRC-003]/[UPD-001]): keeps the honest
+              source attribution + a real check-for-updates flow for MangaDex */}
+          {work.sourceRef?.sourceId === "mangadex" && (
+            <div className="mt-3 rounded-2xl border border-white/8 bg-white/[0.04] p-3.5">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-coral-gradient text-white">
+                  <Globe className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-extrabold text-white/90">MangaDex</span>
+                  <span className="block truncate text-[10.5px] font-semibold text-white/45" dir="ltr">
+                    {work.sourceUrl?.replace("https://", "") ?? "mangadex.org"}
+                  </span>
+                </span>
+                <button
+                  onClick={() => void runUpdateCheck()}
+                  disabled={updChecking || updBusy}
+                  className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-coral-gradient px-3.5 text-[11.5px] font-extrabold text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.7)] disabled:opacity-60"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", (updChecking || updBusy) && "animate-spin")} />
+                  {t("upd.checkContent")}
+                </button>
+              </div>
+              {work.lastSourceCheck && (
+                <p className="mt-2 text-[10px] font-bold text-white/40">
+                  {t("upd.lastChecked")}: {formatDate(work.lastSourceCheck, lang)}
+                </p>
+              )}
+            </div>
+          )}
+          {!work.sourceRef && work.sourceUrl && (
+            <div className="mt-3 flex items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.04] px-3.5 py-2.5">
+              <Globe className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-white/60" dir="ltr">
+                {(() => {
+                  try {
+                    return new URL(work.sourceUrl).host;
+                  } catch {
+                    return work.sourceUrl;
+                  }
+                })()}
+              </span>
+              <span className="shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[9.5px] font-black text-white/60">
+                OPDS
+              </span>
+            </div>
+          )}
+
           {/* progress summary */}
           <div className="mt-3 flex items-center gap-2 text-[11px] font-bold text-white/60">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
@@ -443,6 +547,59 @@ export function DetailsScreen({ workId }: { workId: string }) {
           </DialogHeader>
           <PerSeriesSettings workId={work.id} />
           <p className="text-[11px] font-semibold text-muted-foreground">{t("rdr.savePerSeries")}</p>
+        </DialogContent>
+      </Dialog>
+
+      {/* new chapters from the source update check (v1.3.0, [UPD-001]) */}
+      <Dialog open={updNew !== null || updBusy} onOpenChange={(v) => !v && !updBusy && setUpdNew(null)}>
+        <DialogContent className="max-w-[380px] rounded-3xl border-border bg-card p-5" style={{ maxWidth: 380 }}>
+          {updBusy ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-[16px] font-extrabold">{t("md.downloading")}</DialogTitle>
+              </DialogHeader>
+              <p className="mt-1 truncate text-[12px] font-bold text-muted-foreground" dir="ltr">
+                {updProg?.chapterLabel ?? "…"}
+              </p>
+              <ProgressBar value={updPct} className="mt-3" />
+              <p className="mt-2 text-[11px] font-bold text-muted-foreground">
+                {updPct}% · {t("upd.chapterOf", { d: (updProg?.chapterDone ?? 0) + 1, total: updProg?.chapterTotal ?? 0 })}
+              </p>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-[16px] font-extrabold">
+                  {t("upd.newChapters", { n: updNew?.length ?? 0 })}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="max-h-56 space-y-1 overflow-y-auto rounded-2xl border border-border/60 p-2 thin-scrollbar">
+                {(updNew ?? []).map((c) => (
+                  <p key={c.id} className="truncate px-2 py-1 text-[12px] font-bold" dir="ltr">
+                    {mdChapterLabel(c)}
+                  </p>
+                ))}
+              </div>
+              <p className="text-[10.5px] font-semibold leading-snug text-muted-foreground">{t("upd.viaMangadex")}</p>
+              <div className="flex gap-2.5">
+                <button
+                  onClick={() => setUpdNew(null)}
+                  disabled={updBusy}
+                  className="flex-1 rounded-full border border-border bg-background py-2.5 text-[13px] font-extrabold transition-colors hover:bg-secondary"
+                >
+                  {t("common.later")}
+                </button>
+                <button
+                  onClick={() => void downloadNewChapters()}
+                  disabled={updBusy}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-full bg-coral-gradient py-2.5 text-[13px] font-extrabold text-white shadow-[0_10px_24px_-10px_rgba(248,105,76,0.6)] disabled:opacity-50"
+                >
+                  <Download className="h-4 w-4" />
+                  {t("md.downloadN", { n: updNew?.length ?? 0 })}
+                </button>
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

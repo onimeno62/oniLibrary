@@ -20,6 +20,7 @@ import {
   pingServer,
 } from "@/lib/opds";
 import { OpdsBrowser } from "@/components/opds/opds-browser";
+import { FreeCatalogList } from "@/components/sources/free-catalogs";
 import type { ServerEntry } from "@/lib/types";
 
 /* ============================================================
@@ -161,6 +162,16 @@ export function ServersScreen() {
         <Server className="mt-0.5 h-4 w-4 shrink-0" />
         <p className="text-[12px] font-semibold leading-relaxed">{t("srv.info")}</p>
       </div>
+
+      {/* suggested free catalogs (v1.3.0) — one-tap add, no URL fiddling */}
+      <section className="mt-3">
+        <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-muted-foreground">
+          {t("srv.suggested")}
+        </h2>
+        <div className="mt-2">
+          <FreeCatalogList />
+        </div>
+      </section>
 
       {/* add form */}
       <section className="mt-3 rounded-3xl border border-border bg-card p-4">

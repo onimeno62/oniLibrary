@@ -505,7 +505,7 @@ public class MainActivity extends Activity {
             c.setConnectTimeout(8000);
             c.setReadTimeout(20000);
             c.setInstanceFollowRedirects(true);
-            c.setRequestProperty("User-Agent", "oniLibrary/1.2 (Android)");
+            c.setRequestProperty("User-Agent", "oniLibrary/1.3 (Android)");
             return c;
         }
 
@@ -550,6 +550,67 @@ public class MainActivity extends Activity {
             InputStream in = null;
             try {
                 HttpURLConnection c = openGet(url);
+                c.connect();
+                int code = c.getResponseCode();
+                if (code < 200 || code >= 300) { c.disconnect(); return "null"; }
+                in = c.getInputStream();
+                String mime = c.getContentType();
+                if (mime != null) { int i = mime.indexOf(';'); if (i > 0) mime = mime.substring(0, i).trim(); }
+
+                String rawName = url.substring(url.lastIndexOf('/') + 1);
+                int q = rawName.indexOf('?');
+                if (q >= 0) rawName = rawName.substring(0, q);
+                if (rawName.isEmpty()) rawName = "opds-download";
+                rawName = rawName.replaceAll("[\\\\/:*?\"<>|]", "_");
+
+                synchronized (importLock) {
+                    if (pendingImportFile != null) pendingImportFile.delete();
+                    File dir = new File(getCacheDir(), "oniImport");
+                    if (!dir.exists()) dir.mkdirs();
+                    File out = new File(dir, "fetch-" + System.currentTimeMillis() + "-" + rawName);
+                    long total = 0;
+                    try (OutputStream os = new FileOutputStream(out)) {
+                        byte[] buf = new byte[64 * 1024];
+                        int n;
+                        while ((n = in.read(buf)) > 0) {
+                            os.write(buf, 0, n);
+                            total += n;
+                            if (total > 1024L * 1024L * 1024L) throw new IOException("too large");
+                        }
+                    }
+                    pendingImportFile = out;
+                    pendingImportName = rawName;
+                    pendingImportMime = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+                    return "{\"name\":" + jsonStr(rawName)
+                            + ",\"mime\":" + jsonStr(pendingImportMime)
+                            + ",\"size\":" + total + "}";
+                }
+            } catch (Exception e) {
+                return "null";
+            } finally {
+                if (in != null) { try { in.close(); } catch (IOException ignored) { } }
+            }
+        }
+
+        /** fetchToCache with extra request headers (v1.3.0) — Standard Ebooks
+            OPDS gates acquisition files behind HTTP Basic auth; WebView JS
+            calls this 2-arg overload, older call sites keep the 1-arg one. */
+        @JavascriptInterface
+        public String fetchToCache(String url, String headersJson) {
+            if (url == null || !url.startsWith("http")) return "null";
+            InputStream in = null;
+            try {
+                HttpURLConnection c = openGet(url);
+                if (headersJson != null && headersJson.length() > 2) {
+                    try {
+                        org.json.JSONObject h = new org.json.JSONObject(headersJson);
+                        java.util.Iterator<String> it = h.keys();
+                        while (it.hasNext()) {
+                            String k = it.next();
+                            c.setRequestProperty(k, h.optString(k));
+                        }
+                    } catch (Exception ignored) { /* bad header json → plain GET */ }
+                }
                 c.connect();
                 int code = c.getResponseCode();
                 if (code < 200 || code >= 300) { c.disconnect(); return "null"; }
