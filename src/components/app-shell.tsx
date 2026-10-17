@@ -30,7 +30,7 @@ import { HighlightsScreen } from "@/components/screens/highlights-screen";
 import { useApp, useNav, type Overlay } from "@/lib/store";
 import { useT, useResolvedTheme, useMounted } from "@/lib/use-app";
 import { useClientEngine } from "@/lib/engine";
-import { importFiles } from "@/lib/importer";
+import { importFiles, UNSUPPORTED_REASON_KEYS } from "@/lib/importer";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { BookOpen, Compass, Download, LibraryBig, ShieldCheck, BarChart3 } from "lucide-react";
@@ -211,7 +211,11 @@ export function AppShell() {
     document.documentElement.lang = lang;
     const bridge = (window as unknown as { __oniOverlayDepth?: number; OniAndroid?: { setOverlayDepth: (d: number) => void } });
     bridge.__oniOverlayDepth = stack.length;
-    bridge.OniAndroid?.setOverlayDepth?.(stack.length);
+    try {
+      bridge.OniAndroid?.setOverlayDepth?.(stack.length);
+    } catch {
+      /* WebView bridge quirk — depth tracking stays JS-side only */
+    }
   }, [lang, stack.length]);
 
   // PWA service worker — web only (never inside the APK WebView wrapper),
@@ -240,7 +244,12 @@ export function AppShell() {
       };
       const bridge = b.OniAndroid;
       if (!bridge?.pendingImportInfo) return;
-      const infoRaw = bridge.pendingImportInfo();
+      let infoRaw: string | null = null;
+      try {
+        infoRaw = bridge.pendingImportInfo();
+      } catch {
+        return; // bridge hiccup — a retry re-pulls
+      }
       if (!infoRaw || infoRaw === "null") return;
       try {
         // wait for the persisted store to hydrate before mutating it
@@ -265,7 +274,7 @@ export function AppShell() {
           const file = new File(chunks as unknown as BlobPart[], info.name || "import", {
             type: info.mime || "application/octet-stream",
           });
-          const { created, unsupported } = await importFiles([file]);
+          const { created, unsupported, unsupportedDetails } = await importFiles([file]);
           const addWork = useApp.getState().addWork;
           for (const w of created) addWork(w);
           if (created.length) {
@@ -277,6 +286,10 @@ export function AppShell() {
           if (unsupported.length) {
             toast({
               title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }),
+              description: unsupportedDetails
+                .slice(0, 2)
+                .map((d) => `${d.name} — ${t(UNSUPPORTED_REASON_KEYS[d.reason] ?? "imp.reason.format")}`)
+                .join("\n"),
               variant: "destructive",
             });
           }

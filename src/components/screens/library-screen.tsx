@@ -26,7 +26,7 @@ import { SectionHeader, WorkCover, ProgressBar, EmptyState, StatusBadge } from "
 import { useApp, useNav, workProgress, currentChapter, matchesRule } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
-import { importFiles } from "@/lib/importer";
+import { importFiles, UNSUPPORTED_REASON_KEYS } from "@/lib/importer";
 import { findDuplicateGroups } from "@/lib/duplicates";
 import { deleteWorkFiles } from "@/lib/local-files";
 import {
@@ -183,7 +183,7 @@ export function LibraryScreen() {
   const onImport = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     try {
-      const { created, unsupported } = await importFiles(Array.from(files));
+      const { created, unsupported, unsupportedDetails } = await importFiles(Array.from(files));
       const addWork = useApp.getState().addWork;
       for (const w of created) addWork(w);
       if (created.length) {
@@ -198,7 +198,15 @@ export function LibraryScreen() {
         }
       }
       if (unsupported.length) {
-        toast({ title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }), variant: "destructive" });
+        const details = unsupportedDetails
+          .slice(0, 2)
+          .map((d) => `${d.name} — ${t(UNSUPPORTED_REASON_KEYS[d.reason] ?? "imp.reason.format")}`)
+          .join("\n");
+        toast({
+          title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }),
+          description: details,
+          variant: "destructive",
+        });
       }
     } catch {
       toast({ title: t("imp.failed"), variant: "destructive" });
@@ -214,7 +222,12 @@ export function LibraryScreen() {
   const startImport = () => {
     const bridge = (window as unknown as { OniAndroid?: { pickImportFile?: () => void } }).OniAndroid;
     if (typeof bridge?.pickImportFile === "function") {
-      bridge.pickImportFile();
+      try {
+        bridge.pickImportFile();
+      } catch {
+        /* bridge quirk — fall back to the WebView file chooser */
+        fileRef.current?.click();
+      }
       return;
     }
     fileRef.current?.click();

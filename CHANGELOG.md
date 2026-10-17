@@ -1,7 +1,51 @@
 # Changelog
 
 All notable changes to oniLibrary are documented here.
-Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is semantic.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
+
+## [1.1.2] — 2026-10-17
+
+### Fixed
+- **Reader crash on open (Android)** — device report: "Error invoking
+  setVolumeKeyMode: Java bridge method can't be invoked…" error screen the
+  moment the reading screen opened. Some Android System WebView builds reject
+  Java-bridge invocations outright (argument unmarshaling quirks on the
+  `boolean` parameter), throwing straight into the screen's error boundary.
+  Every native bridge call is now defensive:
+  - the volume-key toggle coerces its argument to a strict primitive and
+    swallows any bridge exception (`Boolean(active)` + try/catch), so a
+    WebView quirk degrades to "volume keys off" instead of a dead screen;
+  - the same hardening applied to every other bridge call site — TTS
+    availability/speak/stop, overlay depth, biometric vault prompt, native
+    file picker (falls back to the WebView chooser), and staged-import
+    polling — a rejected bridge call can no longer crash any screen.
+- **CBZ archives reported "Unsupported"** — real-world `.cbz` files failed
+  import even though plain `.zip` worked, because the importer trusted the
+  extension and fflate's all-or-nothing `unzipSync`. The archive pipeline is
+  rebuilt:
+  - **magic-byte sniffing** — `.cbz` files that are actually RAR (`Rar!…`) or
+    7z containers now show a precise, actionable reason ("convert it to
+    CBZ/ZIP") instead of a generic unsupported toast; conversely, mislabeled
+    archives import fine regardless of their name;
+  - **per-entry salvage walker** — when `unzipSync` throws (exotic/zip64/
+    partially corrupt archives), a raw central-directory parser inflates each
+    member independently, so one unsupported or broken entry no longer
+    dooms the whole comic (verified: a bzip2-member archive now imports its
+    readable pages);
+  - **encrypted detection** — password-protected members are reported as
+    "password-protected archive";
+  - extension-less names from some Android content providers are sniffed and
+    imported if they contain readable images;
+  - AVIF/JFIF images inside archives (and loose) are now accepted;
+  - unsupported toasts carry a per-file reason line (EN/FA) and the library
+    import hint now states CBR/RAR isn't supported yet.
+
+### Verification
+- 33/33 APK asset URLs resolve; APK `versionCode=5 versionName=1.1.2`;
+- browser QA: valid CBZ imports (3/3 pages), RAR-renamed CBZ → clear reason,
+  no-image zip → reason, extension-less zip → imported, bzip2-member zip →
+  salvaged (2 pages); reader opens with a deliberately throwing bridge and
+  volume-key events turn pages (1/3 → 2/3) with zero console errors.
 
 ## [1.1.1] — 2026-10-17
 

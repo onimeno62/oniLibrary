@@ -1,18 +1,190 @@
 "use client";
 
-import { unzipSync } from "fflate";
+import { unzipSync, inflateSync } from "fflate";
 import { putFile, blobToThumbDataUrl } from "./local-files";
+import type { TranslationKey } from "./i18n";
 import type { Work } from "./types";
 
-const IMG_RE = /\.(jpe?g|png|webp|gif|bmp)$/i;
+const IMG_RE = /\.(jpe?g|jfif|png|webp|gif|bmp|avif)$/i;
 
 function naturalCompare(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
 }
 
+export interface UnsupportedFile {
+  name: string;
+  /** stable reason code — screens map it to imp.reason.* i18n keys */
+  reason: "cbr" | "7z" | "encrypted" | "noImages" | "corrupt" | "format";
+}
+
+export const UNSUPPORTED_REASON_KEYS: Record<UnsupportedFile["reason"], TranslationKey> = {
+  cbr: "imp.reason.cbr",
+  "7z": "imp.reason.7z",
+  encrypted: "imp.reason.encrypted",
+  noImages: "imp.reason.noImages",
+  corrupt: "imp.reason.corrupt",
+  format: "imp.reason.format",
+};
+
 export interface ImportResult {
   created: Work[];
   unsupported: string[];
+  unsupportedDetails: UnsupportedFile[];
+}
+
+/* --------------------------------------------------------------- *
+ *  archive sniffing — never trust the extension alone             *
+ * --------------------------------------------------------------- */
+
+type ArchiveKind = "zip" | "rar" | "rar5" | "7z" | null;
+
+/** real-world .cbz files are very often renamed RAR archives, and
+    content providers sometimes return extension-less names — sniff
+    the magic bytes instead of trusting the file name */
+function sniffArchive(b: Uint8Array): ArchiveKind {
+  if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b) return "zip"; // "PK.."
+  if (
+    b.length >= 7 &&
+    b[0] === 0x52 && b[1] === 0x61 && b[2] === 0x72 && b[3] === 0x21 &&
+    b[4] === 0x1a && b[5] === 0x07
+  ) {
+    return b[6] === 0x01 ? "rar5" : "rar"; // "Rar!\x1a\x07" (+01 = RAR5)
+  }
+  if (
+    b.length >= 6 &&
+    b[0] === 0x37 && b[1] === 0x7a && b[2] === 0xbc &&
+    b[3] === 0xaf && b[4] === 0x27 && b[5] === 0x1c
+  ) {
+    return "7z"; // "7z¼¯'\x1c"
+  }
+  return null;
+}
+
+function u16(b: Uint8Array, o: number): number {
+  return b[o] | (b[o + 1] << 8);
+}
+
+function u32(b: Uint8Array, o: number): number {
+  return (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+}
+
+/** low 32 bits of a 64-bit little-endian value (entries < 4 GB) */
+function u64lo(b: Uint8Array, o: number): number {
+  return u32(b, o);
+}
+
+/** zip64 extra field: recover real sizes when the fixed record says 0xFFFFFFFF */
+function zip64Sizes(
+  extra: Uint8Array,
+  csizeIn: number,
+  usizeIn: number
+): [number, number] {
+  let csize = csizeIn;
+  let usize = usizeIn;
+  let q = 0;
+  while (q + 4 <= extra.length) {
+    const id = u16(extra, q);
+    const sz = u16(extra, q + 2);
+    if (id === 0x0001) {
+      let d = q + 4;
+      if (usize === 0xffffffff && d + 8 <= q + 4 + sz) {
+        usize = u64lo(extra, d);
+        d += 8;
+      }
+      if (csize === 0xffffffff && d + 8 <= q + 4 + sz) {
+        csize = u64lo(extra, d);
+      }
+      break;
+    }
+    q += 4 + sz;
+  }
+  return [csize, usize];
+}
+
+/** last-resort ZIP walker: parses the central directory itself and inflates
+    each member independently, so one odd/unsupported entry doesn't doom the
+    whole archive (fflate's unzipSync is all-or-nothing). Also reports
+    password-protected members so the UI can say why nothing was readable. */
+function salvageZip(buf: Uint8Array): {
+  entries: Map<string, Uint8Array>;
+  encrypted: number;
+  total: number;
+} {
+  const out = new Map<string, Uint8Array>();
+  let encrypted = 0;
+  let total = 0;
+
+  // 1) locate EOCD ("PK\x05\x06") scanning backwards (comment ≤ 65535)
+  const minEocd = Math.max(0, buf.length - 65535 - 22);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= minEocd; i--) {
+    if (buf[i] === 0x50 && buf[i + 1] === 0x4b && buf[i + 2] === 0x05 && buf[i + 3] === 0x06) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return { entries: out, encrypted, total };
+
+  let count = u16(buf, eocd + 10);
+  let cdSize = u32(buf, eocd + 12);
+  let cdOff = u32(buf, eocd + 16);
+
+  // 2) zip64: locator ("PK\x06\x07") sits immediately before the EOCD
+  if (count === 0xffff || cdOff === 0xffffffff || cdSize === 0xffffffff) {
+    const loc = eocd - 20;
+    if (loc >= 0 && u32(buf, loc) === 0x07064b50) {
+      const z64 = u32(buf, loc + 8);
+      if (z64 + 56 <= buf.length && u32(buf, z64) === 0x06064b50) {
+        count = u64lo(buf, z64 + 32);
+        cdSize = u64lo(buf, z64 + 40);
+        cdOff = u64lo(buf, z64 + 48);
+      }
+    }
+  }
+
+  // 3) walk the central directory
+  const end = Math.min(cdOff + cdSize, buf.length);
+  let p = cdOff;
+  for (let n = 0; n < count && p + 46 <= end; n++) {
+    if (u32(buf, p) !== 0x02014b50) break;
+    const flags = u16(buf, p + 8);
+    const method = u16(buf, p + 10);
+    let csize = u32(buf, p + 20);
+    const extraLen = u16(buf, p + 30);
+    const cmtLen = u16(buf, p + 32);
+    const lhoOff = u32(buf, p + 42);
+    const name = new TextDecoder().decode(buf.subarray(p + 46, p + 46 + u16(buf, p + 28)));
+    if (csize === 0xffffffff) {
+      const extra = buf.subarray(p + 46 + u16(buf, p + 28), p + 46 + u16(buf, p + 28) + extraLen);
+      csize = zip64Sizes(extra, csize, 0)[0];
+    }
+    p += 46 + u16(buf, p + 28) + extraLen + cmtLen;
+    total++;
+    if ((flags & 0x1) !== 0) {
+      encrypted++; // traditional/AES password-protected member
+      continue;
+    }
+    if (lhoOff + 30 > buf.length || u32(buf, lhoOff) !== 0x04034b50) continue;
+    const lNameLen = u16(buf, lhoOff + 26);
+    const lExtraLen = u16(buf, lhoOff + 28);
+    const start = lhoOff + 30 + lNameLen + lExtraLen;
+    const stop = start + csize;
+    if (stop > buf.length) continue;
+    try {
+      if (method === 0) out.set(name, buf.slice(start, stop)); // stored
+      else if (method === 8) out.set(name, inflateSync(buf.subarray(start, stop))); // deflated
+      else continue; // bzip2/lzma/… — skipped, never fatal
+    } catch {
+      /* broken member — keep salvaging the rest */
+    }
+  }
+  return { entries: out, encrypted, total };
+}
+
+function imageNamesOf(entries: Record<string, Uint8Array>): string[] {
+  return Object.keys(entries)
+    .filter((n) => IMG_RE.test(n) && !n.startsWith("__MACOSX") && !n.split("/").pop()?.startsWith("."))
+    .sort(naturalCompare);
 }
 
 /** Import user-picked files into the library (LOC-001..005).
@@ -20,23 +192,32 @@ export interface ImportResult {
 export async function importFiles(files: File[]): Promise<ImportResult> {
   const created: Work[] = [];
   const unsupported: string[] = [];
+  const unsupportedDetails: UnsupportedFile[] = [];
   const imageFiles: File[] = [];
+
+  const markUnsupported = (name: string, reason: UnsupportedFile["reason"]) => {
+    unsupported.push(name);
+    unsupportedDetails.push({ name, reason });
+  };
 
   for (const f of files) {
     const name = f.name;
+    const lower = name.toLowerCase();
     try {
       if (IMG_RE.test(name)) {
         imageFiles.push(f);
         continue;
       }
-      if (/\.cbz$|\.zip$/i.test(name)) {
-        const w = await importArchive(f);
-        if (w) created.push(w);
-        else unsupported.push(name);
+      if (/\.(cbz|zip|cbr|rar|7z|cb7)$/.test(lower)) {
+        // extension never decides alone — importArchive sniffs the content:
+        // renamed RAR/7z get a clear reason, mislabeled CBZ still import
+        const res = await importArchive(f);
+        if (res.work) created.push(res.work);
+        else markUnsupported(name, res.reason ?? "format");
         continue;
       }
-      if (/\.(cbr|rar|7z|cb7|cbt|tar|djvu)$/i.test(name)) {
-        unsupported.push(name);
+      if (/\.(cbt|tar|djvu)$/i.test(name)) {
+        markUnsupported(name, "format");
         continue;
       }
       if (/\.pdf$/i.test(name)) {
@@ -51,10 +232,19 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
         else created.push(makeMetaWork(f, "EPUB"));
         continue;
       }
-      unsupported.push(name);
+      // unknown / extension-less names (some content providers strip them):
+      // give ZIP-with-images a chance, otherwise refuse cleanly
+      const head = new Uint8Array(await f.slice(0, 8).arrayBuffer());
+      if (sniffArchive(head) === "zip") {
+        const res = await importArchive(f);
+        if (res.work) created.push(res.work);
+        else markUnsupported(name, res.reason ?? "format");
+      } else {
+        markUnsupported(name, "format");
+      }
     } catch {
       /* corrupt blob / IDB failure for this one file — keep the batch going */
-      unsupported.push(name);
+      markUnsupported(name, "corrupt");
     }
   }
 
@@ -63,11 +253,11 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
       const w = await importImageBatch(imageFiles);
       if (w) created.push(w);
     } catch {
-      unsupported.push(imageFiles[0]?.name ?? "images");
+      markUnsupported(imageFiles[0]?.name ?? "images", "corrupt");
     }
   }
 
-  return { created, unsupported };
+  return { created, unsupported, unsupportedDetails };
 }
 
 async function importImageBatch(files: File[]): Promise<Work | null> {
@@ -126,34 +316,76 @@ async function importImageBatch(files: File[]): Promise<Work | null> {
   };
 }
 
-async function importArchive(f: File): Promise<Work | null> {
+type ArchiveImport = { work?: Work; reason?: UnsupportedFile["reason"] };
+
+async function importArchive(f: File): Promise<ArchiveImport> {
+  let buf: Uint8Array;
   try {
-    const buf = new Uint8Array(await f.arrayBuffer());
-    const entries = unzipSync(buf);
-    const names = Object.keys(entries)
-      .filter((n) => IMG_RE.test(n) && !n.startsWith("__MACOSX"))
-      .sort(naturalCompare);
-    if (names.length === 0) return null;
-    const id = "w-imp-" + Date.now().toString(36);
-    const pages: string[] = [];
-    let cover = "";
-    let totalMb = 0;
-    for (let i = 0; i < names.length; i++) {
-      const data = entries[names[i]];
-      const blob = new Blob([data as unknown as BlobPart]);
-      totalMb += data.length / 1_048_576;
-      const key = `${id}::p${i}`;
-      await putFile(key, blob);
-      if (i === 0) {
-        try {
-          cover = await blobToThumbDataUrl(blob);
-        } catch {
-          cover = "";
-        }
-      }
-      pages.push(key);
+    buf = new Uint8Array(await f.arrayBuffer());
+  } catch {
+    return { reason: "corrupt" };
+  }
+
+  // RAR / 7z containers (incl. "CBZ" files that are actually CBR) — be honest
+  const kind = sniffArchive(buf);
+  if (kind === "rar" || kind === "rar5") return { reason: "cbr" };
+  if (kind === "7z") return { reason: "7z" };
+
+  let entries: Record<string, Uint8Array> | null = null;
+  let encCount = 0;
+  let totalCount = 0;
+  if (kind === "zip") {
+    try {
+      entries = unzipSync(buf);
+    } catch {
+      entries = null; // exotic zip — try the salvage walker below
     }
-    return {
+    // all-or-nothing unzip produced nothing usable → per-entry salvage pass
+    if (!entries || imageNamesOf(entries).length === 0) {
+      const salv = salvageZip(buf);
+      const salvImages = imageNamesOf(Object.fromEntries(salv.entries));
+      const curImages = entries ? imageNamesOf(entries) : [];
+      if (salvImages.length > curImages.length) {
+        entries = Object.fromEntries(salv.entries);
+        encCount = salv.encrypted;
+        totalCount = salv.total;
+      }
+    }
+  }
+  if (!entries) return { reason: "corrupt" };
+
+  const names = imageNamesOf(entries);
+  if (names.length === 0) {
+    if (encCount > 0 && totalCount > 0 && encCount >= totalCount) return { reason: "encrypted" };
+    return { reason: "noImages" };
+  }
+  const id = "w-imp-" + Date.now().toString(36);
+  const pages: string[] = [];
+  let cover = "";
+  let totalMb = 0;
+  for (let i = 0; i < names.length; i++) {
+    const data = entries[names[i]];
+    const blob = new Blob([data as unknown as BlobPart]);
+    totalMb += data.length / 1_048_576;
+    const key = `${id}::p${i}`;
+    try {
+      await putFile(key, blob);
+    } catch {
+      /* storage full / IDB hiccup on this page — keep the rest */
+      continue;
+    }
+    if (i === 0) {
+      try {
+        cover = await blobToThumbDataUrl(blob);
+      } catch {
+        cover = "";
+      }
+    }
+    pages.push(key);
+  }
+  if (pages.length === 0) return { reason: "corrupt" };
+  return {
+    work: {
       id,
       title: stripExt(f.name),
       author: "Local",
@@ -186,10 +418,8 @@ async function importArchive(f: File): Promise<Work | null> {
       language: "—",
       isLocal: true,
       localPages: pages,
-    };
-  } catch {
-    return null;
-  }
+    },
+  };
 }
 
 /** Parse a real .pdf into a single-chapter work with canvas-rendered pages (FMT-003). */

@@ -500,7 +500,12 @@ export function VaultLockScreen({
     if (b.OniAndroid?.vaultBiometric) {
       // VLT-002: real platform BiometricPrompt — result arrives on
       // window.OniNativeVaultAuth.done(ok) from the native shell
-      const started = b.OniAndroid.vaultBiometric();
+      let started = 0;
+      try {
+        started = b.OniAndroid.vaultBiometric();
+      } catch {
+        started = 0; // bridge quirk — fall through to PIN entry
+      }
       if (!started) return; // prompt unavailable — stay on PIN entry
       setScanning(true);
       b.OniNativeVaultAuth = {

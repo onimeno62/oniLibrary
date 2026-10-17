@@ -68,10 +68,38 @@ function nativeTts(): NativeTts | null {
     b &&
     typeof b.ttsAvailable === "function" &&
     typeof b.ttsSpeak === "function" &&
-    typeof b.ttsStop === "function" &&
-    b.ttsAvailable() === 1
+    typeof b.ttsStop === "function"
   ) {
-    return b as NativeTts;
+    // the bridge invocation itself can throw on quirky WebView builds —
+    // probe availability defensively and hand back a guarded wrapper
+    try {
+      if (b.ttsAvailable() !== 1) return null;
+    } catch {
+      return null;
+    }
+    return {
+      ttsAvailable: () => {
+        try {
+          return b.ttsAvailable!() === 1 ? 1 : 0;
+        } catch {
+          return 0;
+        }
+      },
+      ttsSpeak: (text, lang, rate) => {
+        try {
+          b.ttsSpeak!(text, lang, rate);
+        } catch {
+          /* bridge refused — TTS stays silent */
+        }
+      },
+      ttsStop: () => {
+        try {
+          b.ttsStop!();
+        } catch {
+          /* ignore */
+        }
+      },
+    } as NativeTts;
   }
   return null;
 }

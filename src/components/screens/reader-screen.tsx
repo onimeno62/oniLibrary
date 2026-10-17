@@ -1136,11 +1136,21 @@ export function ReaderScreen({
     const anyWin = window as unknown as {
       OniAndroid?: { setVolumeKeyMode?: (active: boolean) => void };
     };
-    const bridge = anyWin.OniAndroid;
-    const setMode = bridge?.setVolumeKeyMode;
+    const setMode = anyWin.OniAndroid?.setVolumeKeyMode;
     if (!setMode) return;
-    const enabled = useApp.getState().settings.volumeKeyPaging;
-    setMode(enabled);
+    /* Some Android System WebView builds reject Java-bridge invocations whose
+       argument isn't a strict primitive (and older builds can fail the call
+       outright) — coerce to a real boolean and swallow any bridge error so a
+       WebView quirk can never take the whole reader screen down. */
+    const safeSetMode = (active: boolean) => {
+      try {
+        setMode.call(anyWin.OniAndroid, Boolean(active));
+      } catch {
+        /* bridge refused — volume-key paging stays off, reader keeps working */
+      }
+    };
+    const enabled = Boolean(useApp.getState().settings.volumeKeyPaging);
+    safeSetMode(enabled);
     if (!enabled) return;
     const fn = (e: Event) => {
       const dir = (e as CustomEvent<{ dir?: "up" | "down" }>).detail?.dir;
@@ -1150,7 +1160,7 @@ export function ReaderScreen({
     window.addEventListener("oni-volume", fn);
     return () => {
       window.removeEventListener("oni-volume", fn);
-      setMode(false);
+      safeSetMode(false);
     };
   });
 
