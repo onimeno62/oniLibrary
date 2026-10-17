@@ -5,17 +5,18 @@ import { OniLogo } from "@/components/oni-logo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LANGS } from "@/lib/i18n";
-import { Sun, Moon, Monitor } from "lucide-react";
+import { Sun, Moon, Monitor, User } from "lucide-react";
 import type { ThemeMode } from "@/lib/types";
 
 export function Onboarding({
   onFinish,
 }: {
-  onFinish: (lang: "en" | "fa", theme: ThemeMode) => void;
+  onFinish: (lang: "en" | "fa", theme: ThemeMode, name: string) => void;
 }) {
   const detect = typeof navigator !== "undefined" && navigator.language.startsWith("fa") ? "fa" : "en";
   const [lang, setLang] = useState<"en" | "fa">(detect);
   const [theme, setTheme] = useState<ThemeMode>("light");
+  const [name, setName] = useState("");
   const labels = {
     en: {
       welcome: "Welcome to",
@@ -28,6 +29,9 @@ export function Onboarding({
       dark: "Dark",
       system: "System",
       tagline: "Your stories. In one place.",
+      nameTitle: "What should we call you?",
+      namePlaceholder: "Your name",
+      nameHint: "Optional — shown on your Home screen. You can change it anytime in Settings.",
     },
     fa: {
       welcome: "خوش آمدید به",
@@ -40,6 +44,9 @@ export function Onboarding({
       dark: "تاریک",
       system: "سیستم",
       tagline: "داستان‌های شما. همه در یک‌جا.",
+      nameTitle: "چه صدام کنید؟",
+      namePlaceholder: "نام شما",
+      nameHint: "اختیاری — در صفحه خانه نمایش داده می‌شود؛ هر وقت بخواهید از تنظیمات عوضش کنید.",
     },
   }[lang];
 
@@ -83,6 +90,22 @@ export function Onboarding({
           ))}
         </div>
         <p className="mt-2.5 text-center text-[12px] text-muted-foreground">{labels.hint}</p>
+      </div>
+
+      {/* name input */}
+      <div className="mt-7">
+        <h2 className="text-center text-[17px] font-extrabold">{labels.nameTitle}</h2>
+        <div className="mx-auto mt-4 flex h-12 max-w-[320px] items-center gap-2.5 rounded-full border-2 border-border bg-card px-4 transition-colors focus-within:border-primary">
+          <User className="h-4.5 w-4.5 shrink-0 text-muted-foreground" />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value.slice(0, 24))}
+            placeholder={labels.namePlaceholder}
+            aria-label={labels.nameTitle}
+            className="w-full bg-transparent text-[15px] font-bold outline-none placeholder:font-semibold placeholder:text-muted-foreground"
+          />
+        </div>
+        <p className="mt-2 text-center text-[11px] text-muted-foreground">{labels.nameHint}</p>
       </div>
 
       {/* theme picker */}
@@ -136,7 +159,7 @@ export function Onboarding({
 
       <div className="mt-auto pt-8">
         <Button
-          onClick={() => onFinish(lang, theme)}
+          onClick={() => onFinish(lang, theme, name.trim())}
           className="h-13 w-full rounded-full bg-coral-gradient py-4 text-[16px] font-extrabold text-white shadow-[0_14px_30px_-10px_rgba(248,105,76,0.6)] hover:opacity-95"
         >
           {labels.start}

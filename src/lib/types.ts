@@ -32,6 +32,10 @@ export interface Chapter {
   lastPage?: number; // progress inside chapter
   download: DownloadState;
   sizeMb: number;
+  /** imported image chapters: IndexedDB page keys for THIS chapter
+      (`${workId}::c{n}::p{i}`); legacy single-chapter imports keep the
+      work-level `localPages` flat list instead */
+  localPages?: string[];
 }
 
 export interface Work {
@@ -66,6 +70,7 @@ export interface Work {
   userRating?: number; // personal rating 0..5 stars (TRK-001)
   customCover?: string; // user-chosen cover data url (LIB-010)
   personalNotes?: string; // free-form private notes (LIB-010)
+  trackerId?: number; // external tracker (AniList) media id once matched
 }
 
 export interface DownloadItem {
@@ -227,6 +232,13 @@ export interface Settings {
   vaultAutoLock: boolean;
   /** RDR-010: volume keys turn pages while the reader is open (Android) */
   volumeKeyPaging: boolean;
+  /** tracker sync (TRK v2): AniList personal token + auto behavior */
+  tracker: {
+    provider: "none" | "anilist";
+    token: string;
+    autoSync: boolean; // push progress after each chapter read
+    lastSyncAt: string | null;
+  };
   /** UX-003: library grid density — compact(4) / cozy(3) / large(2) columns */
   libraryDensity: "compact" | "cozy" | "large";
   readerDefaults: {

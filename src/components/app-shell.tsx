@@ -35,27 +35,6 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { BookOpen, Compass, Download, LibraryBig, ShieldCheck, BarChart3 } from "lucide-react";
 
-/* status bar (matches mockups) */
-function StatusBar({ dark }: { dark: boolean }) {
-  return (
-    <div
-      className={cn(
-        "pointer-events-none relative z-40 flex h-9 items-center justify-between px-6 pt-1 text-[13px] font-bold",
-        dark ? "text-white" : "text-foreground"
-      )}
-    >
-      <span>9:41</span>
-      <span className="absolute left-1/2 top-1.5 h-5 w-20 -translate-x-1/2 rounded-full bg-black/90 max-lg:hidden" />
-      <span className="flex items-center gap-1.5">
-        {/* wifi / signal / battery */}
-        <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><path d="M7.5 9.2a1.4 1.4 0 1 0 0 2.0 1.4 1.4 0 0 0 0-2.0Z" transform="translate(0,-2)"/><path d="M7.5 5.6c1.3 0 2.5.5 3.4 1.4l-1 1a3.4 3.4 0 0 0-4.8 0l-1-1a4.8 4.8 0 0 1 3.4-1.4Z"/><path d="M7.5 2.2c2.2 0 4.2.9 5.7 2.3l-1 1a6.6 6.6 0 0 0-9.4 0l-1-1A8 8 0 0 1 7.5 2.2Z"/></svg>
-        <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="0.8"/><rect x="4.3" y="5" width="3" height="6" rx="0.8"/><rect x="8.6" y="2.5" width="3" height="8.5" rx="0.8"/><rect x="12.9" y="0" width="3" height="11" rx="0.8" opacity="0.35"/></svg>
-        <svg width="23" height="11" viewBox="0 0 23 11"><rect x="0.5" y="0.5" width="19" height="10" rx="3" fill="none" stroke="currentColor" opacity="0.4"/><rect x="2" y="2" width="14" height="7" rx="1.6" fill="currentColor"/><rect x="21" y="3.5" width="1.6" height="4" rx="0.8" fill="currentColor" opacity="0.5"/></svg>
-      </span>
-    </div>
-  );
-}
-
 /* desktop side branding — mirrors the reference key visuals */
 function SideBranding() {
   const { t } = useT();
@@ -274,6 +253,45 @@ export function AppShell() {
           const file = new File(chunks as unknown as BlobPart[], info.name || "import", {
             type: info.mime || "application/octet-stream",
           });
+          // add-to-work (v1.2.0): the library screen leaves a target work id in
+          // sessionStorage before opening the native picker — route this staged
+          // file into that work as a new chapter instead of a separate work
+          let addTarget: string | null = null;
+          try {
+            addTarget = sessionStorage.getItem("oni-add-to-work");
+            sessionStorage.removeItem("oni-add-to-work");
+          } catch {
+            /* ignore */
+          }
+          if (addTarget) {
+            const st = useApp.getState();
+            const work = st.works.find((w) => w.id === addTarget);
+            if (work) {
+              const { importFilesToWork } = await import("@/lib/importer");
+              const startNumber = work.chapters.reduce((m, c) => Math.max(m, c.number), 0) + 1;
+              const { added, created, skipped } = await importFilesToWork([file], work.id, startNumber);
+              if (added.length) st.appendChapters(work.id, added);
+              for (const w of created) st.addWork(w);
+              if (added.length) {
+                toast({
+                  title: t("imp.addedChapters", { n: added.length }),
+                  description: added.map((c) => `#${c.number} ${c.title}`).join(", ").slice(0, 90),
+                });
+              }
+              if (created.length) toast({ title: t("imp.separateWorks", { n: created.length }) });
+              if (skipped.length) {
+                toast({
+                  title: t("imp.unsupported", { names: skipped.slice(0, 2).map((s) => s.name).join(", ") }),
+                  description: skipped
+                    .slice(0, 2)
+                    .map((s) => `${s.name} — ${t(UNSUPPORTED_REASON_KEYS[s.reason] ?? "imp.reason.format")}`)
+                    .join("\n"),
+                  variant: "destructive",
+                });
+              }
+              return;
+            }
+          }
           const { created, unsupported, unsupportedDetails } = await importFiles([file]);
           const addWork = useApp.getState().addWork;
           for (const w of created) addWork(w);
@@ -306,7 +324,6 @@ export function AppShell() {
   }, []);
 
   const dark = resolved === "dark";
-
   if (!mounted) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#f3ebdf]">
@@ -338,15 +355,16 @@ export function AppShell() {
             "relative z-10 flex h-full flex-col font-fa text-foreground"
           )}
         >
-          <StatusBar dark={dark} />
-
           {!hydrated ? (
             <div className="flex flex-1 items-center justify-center">
               <OniLogo size={56} className="animate-pulse" />
             </div>
           ) : !onboarded ? (
             <Onboarding
-              onFinish={(l, th) => finishOnboarding({ lang: l, theme: th })}
+              onFinish={(l, th, nm) => {
+                if (nm) useApp.getState().setSettings({ userName: nm.slice(0, 24) });
+                finishOnboarding({ lang: l, theme: th });
+              }}
             />
           ) : (
             <>

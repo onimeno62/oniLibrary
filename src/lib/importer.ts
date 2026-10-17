@@ -2,8 +2,9 @@
 
 import { unzipSync, inflateSync } from "fflate";
 import { putFile, blobToThumbDataUrl } from "./local-files";
+import { extractCbr, type CbrError } from "./unrar";
 import type { TranslationKey } from "./i18n";
-import type { Work } from "./types";
+import type { Work, Chapter } from "./types";
 
 const IMG_RE = /\.(jpe?g|jfif|png|webp|gif|bmp|avif)$/i;
 
@@ -181,11 +182,179 @@ function salvageZip(buf: Uint8Array): {
   return { entries: out, encrypted, total };
 }
 
+function isImageName(name: string): boolean {
+  return IMG_RE.test(name) && !name.startsWith("__MACOSX") && !name.split("/").pop()?.startsWith(".");
+}
+
 function imageNamesOf(entries: Record<string, Uint8Array>): string[] {
   return Object.keys(entries)
-    .filter((n) => IMG_RE.test(n) && !n.startsWith("__MACOSX") && !n.split("/").pop()?.startsWith("."))
+    .filter(isImageName)
     .sort(naturalCompare);
 }
+
+/* --------------------------------------------------------------- *
+ *  unified archive extraction (zip salvage + WASM unrar CBR)      *
+ * --------------------------------------------------------------- */
+
+export type ExtractedImages = { name: string; blob: Blob }[];
+
+export type ExtractResult =
+  | { ok: true; images: ExtractedImages }
+  | { ok: false; reason: UnsupportedFile["reason"] };
+
+/** every image inside any supported archive, content-sniffed.
+    RAR/CBR goes through the WASM unrar; ZIP through unzipSync + salvage. */
+export async function extractArchiveImages(f: File): Promise<ExtractResult> {
+  let buf: Uint8Array;
+  try {
+    buf = new Uint8Array(await f.arrayBuffer());
+  } catch {
+    return { ok: false, reason: "corrupt" };
+  }
+
+  const kind = sniffArchive(buf);
+
+  // 7z containers (incl. "CB7") — honest refusal
+  if (kind === "7z") return { ok: false, reason: "7z" };
+
+  // RAR (CBR) — real support via WASM unrar (v1.2.0)
+  if (kind === "rar" || kind === "rar5") {
+    try {
+      const entries = await extractCbr(f);
+      const imgs = entries
+        .filter((e) => isImageName(e.name))
+        .sort((a, b) => naturalCompare(a.name, b.name));
+      if (imgs.length === 0) return { ok: false, reason: "noImages" };
+      return {
+        ok: true,
+        images: imgs.map((e) => ({ name: e.name, blob: new Blob([e.bytes as unknown as BlobPart]) })),
+      };
+    } catch (e) {
+      const err = e as CbrError;
+      if (err?.kind === "password") return { ok: false, reason: "encrypted" };
+      if (err?.kind === "multivolume") return { ok: false, reason: "cbr" };
+      return { ok: false, reason: "corrupt" };
+    }
+  }
+
+  if (kind === "zip") {
+    let entries: Record<string, Uint8Array> | null = null;
+    let encCount = 0;
+    let totalCount = 0;
+    try {
+      entries = unzipSync(buf);
+    } catch {
+      entries = null; // exotic zip — try the salvage walker below
+    }
+    // all-or-nothing unzip produced nothing usable → per-entry salvage pass
+    if (!entries || imageNamesOf(entries).length === 0) {
+      const salv = salvageZip(buf);
+      const salvImages = imageNamesOf(Object.fromEntries(salv.entries));
+      const curImages = entries ? imageNamesOf(entries) : [];
+      if (salvImages.length > curImages.length) {
+        entries = Object.fromEntries(salv.entries);
+        encCount = salv.encrypted;
+        totalCount = salv.total;
+      }
+    }
+    if (!entries) return { ok: false, reason: "corrupt" };
+
+    const names = imageNamesOf(entries);
+    if (names.length === 0) {
+      if (encCount > 0 && totalCount > 0 && encCount >= totalCount) return { ok: false, reason: "encrypted" };
+      return { ok: false, reason: "noImages" };
+    }
+    return {
+      ok: true,
+      images: names.map((n) => ({ name: n, blob: new Blob([entries![n] as unknown as BlobPart]) })),
+    };
+  }
+
+  return { ok: false, reason: "corrupt" };
+}
+
+/* --------------------------------------------------------------- *
+ *  page storage helpers                                           *
+ * --------------------------------------------------------------- */
+
+export interface StoredPages {
+  keys: string[]; // IndexedDB keys in reading order
+  cover: string; // data-url thumb of the first page ("" on failure)
+  sizeMb: number;
+}
+
+/** legacy flat scheme used by single-chapter works: `${workId}::p{i}` */
+async function storePagesFlat(id: string, images: ExtractedImages): Promise<StoredPages> {
+  const keys: string[] = [];
+  let cover = "";
+  let sizeMb = 0;
+  for (let i = 0; i < images.length; i++) {
+    const key = `${id}::p${i}`;
+    try {
+      await putFile(key, images[i].blob);
+    } catch {
+      continue; // storage full / IDB hiccup on this page — keep the rest
+    }
+    if (i === 0) {
+      try {
+        cover = await blobToThumbDataUrl(images[i].blob);
+      } catch {
+        cover = "";
+      }
+    }
+    sizeMb += images[i].blob.size / 1_048_576;
+    keys.push(key);
+  }
+  return { keys, cover, sizeMb };
+}
+
+/** per-chapter scheme used by multi-chapter works: `${workId}::${chapterId}::p{i}` */
+async function storePagesUnder(workId: string, chapterId: string, images: ExtractedImages): Promise<StoredPages> {
+  const keys: string[] = [];
+  let cover = "";
+  let sizeMb = 0;
+  for (let i = 0; i < images.length; i++) {
+    const key = `${workId}::${chapterId}::p${i}`;
+    try {
+      await putFile(key, images[i].blob);
+    } catch {
+      continue;
+    }
+    if (i === 0) {
+      try {
+        cover = await blobToThumbDataUrl(images[i].blob);
+      } catch {
+        cover = "";
+      }
+    }
+    sizeMb += images[i].blob.size / 1_048_576;
+    keys.push(key);
+  }
+  return { keys, cover, sizeMb };
+}
+
+function makeChapter(
+  workId: string,
+  number: number,
+  title: string,
+  stored: StoredPages
+): Chapter {
+  return {
+    id: `${workId}-c${number}-${Math.random().toString(36).slice(2, 6)}`,
+    number,
+    title: title.slice(0, 120) || `Chapter ${number}`,
+    pages: stored.keys.length,
+    releaseDate: new Date().toISOString(),
+    isRead: false,
+    download: "DONE",
+    sizeMb: Math.round(stored.sizeMb * 10) / 10,
+    localPages: stored.keys,
+  };
+}
+
+/* --------------------------------------------------------------- *
+ *  file import (new works) — LOC-001..005                         *
+ * --------------------------------------------------------------- */
 
 /** Import user-picked files into the library (LOC-001..005).
     One unreadable/corrupt file must never abort the whole batch. */
@@ -209,8 +378,7 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
         continue;
       }
       if (/\.(cbz|zip|cbr|rar|7z|cb7)$/.test(lower)) {
-        // extension never decides alone — importArchive sniffs the content:
-        // renamed RAR/7z get a clear reason, mislabeled CBZ still import
+        // extension never decides alone — extractArchiveImages sniffs the content
         const res = await importArchive(f);
         if (res.work) created.push(res.work);
         else markUnsupported(name, res.reason ?? "format");
@@ -262,31 +430,19 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
 
 async function importImageBatch(files: File[]): Promise<Work | null> {
   const sorted = [...files].sort((a, b) => naturalCompare(a.name, b.name));
-  const id = "w-imp-" + Date.now().toString(36);
-  const pages: string[] = [];
-  let cover = "";
-  let i = 0;
-  for (const f of sorted) {
-    const key = `${id}::p${i}`;
-    await putFile(key, f);
-    if (i === 0) {
-      try {
-        cover = await blobToThumbDataUrl(f);
-      } catch {
-        cover = "";
-      }
-    }
-    pages.push(key);
-    i++;
-  }
-  if (pages.length === 0) return null;
+  const id = "w-imp-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+  const stored = await storePagesFlat(
+    id,
+    sorted.map((f) => ({ name: f.name, blob: f as unknown as Blob }))
+  );
+  if (stored.keys.length === 0) return null;
   return {
     id,
     title: stripExt(sorted[0].name) || "Image collection",
     author: "Local",
-    cover,
+    cover: stored.cover,
     type: "MANGA",
-    description: `Local image collection · ${pages.length} pages`,
+    description: `Local image collection · ${stored.keys.length} pages`,
     workStatus: "COMPLETED",
     readingStatus: "PLANNED",
     isFavorite: false,
@@ -302,96 +458,38 @@ async function importImageBatch(files: File[]): Promise<Work | null> {
         id: `${id}-c1`,
         number: 1,
         title: "Pages",
-        pages: pages.length,
+        pages: stored.keys.length,
         releaseDate: new Date().toISOString(),
         isRead: false,
         download: "DONE",
-        sizeMb: Math.round((sorted.reduce((a, f) => a + f.size, 0) / 1_048_576) * 10) / 10,
+        sizeMb: Math.round(stored.sizeMb * 10) / 10,
       },
     ],
     addedAt: new Date().toISOString(),
     language: "—",
     isLocal: true,
-    localPages: pages,
+    localPages: stored.keys,
   };
 }
 
 type ArchiveImport = { work?: Work; reason?: UnsupportedFile["reason"] };
 
 async function importArchive(f: File): Promise<ArchiveImport> {
-  let buf: Uint8Array;
-  try {
-    buf = new Uint8Array(await f.arrayBuffer());
-  } catch {
-    return { reason: "corrupt" };
-  }
+  const res = await extractArchiveImages(f);
+  if (!res.ok) return { reason: res.reason };
 
-  // RAR / 7z containers (incl. "CBZ" files that are actually CBR) — be honest
-  const kind = sniffArchive(buf);
-  if (kind === "rar" || kind === "rar5") return { reason: "cbr" };
-  if (kind === "7z") return { reason: "7z" };
+  const id = "w-imp-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+  const stored = await storePagesFlat(id, res.images);
+  if (stored.keys.length === 0) return { reason: "corrupt" };
 
-  let entries: Record<string, Uint8Array> | null = null;
-  let encCount = 0;
-  let totalCount = 0;
-  if (kind === "zip") {
-    try {
-      entries = unzipSync(buf);
-    } catch {
-      entries = null; // exotic zip — try the salvage walker below
-    }
-    // all-or-nothing unzip produced nothing usable → per-entry salvage pass
-    if (!entries || imageNamesOf(entries).length === 0) {
-      const salv = salvageZip(buf);
-      const salvImages = imageNamesOf(Object.fromEntries(salv.entries));
-      const curImages = entries ? imageNamesOf(entries) : [];
-      if (salvImages.length > curImages.length) {
-        entries = Object.fromEntries(salv.entries);
-        encCount = salv.encrypted;
-        totalCount = salv.total;
-      }
-    }
-  }
-  if (!entries) return { reason: "corrupt" };
-
-  const names = imageNamesOf(entries);
-  if (names.length === 0) {
-    if (encCount > 0 && totalCount > 0 && encCount >= totalCount) return { reason: "encrypted" };
-    return { reason: "noImages" };
-  }
-  const id = "w-imp-" + Date.now().toString(36);
-  const pages: string[] = [];
-  let cover = "";
-  let totalMb = 0;
-  for (let i = 0; i < names.length; i++) {
-    const data = entries[names[i]];
-    const blob = new Blob([data as unknown as BlobPart]);
-    totalMb += data.length / 1_048_576;
-    const key = `${id}::p${i}`;
-    try {
-      await putFile(key, blob);
-    } catch {
-      /* storage full / IDB hiccup on this page — keep the rest */
-      continue;
-    }
-    if (i === 0) {
-      try {
-        cover = await blobToThumbDataUrl(blob);
-      } catch {
-        cover = "";
-      }
-    }
-    pages.push(key);
-  }
-  if (pages.length === 0) return { reason: "corrupt" };
   return {
     work: {
       id,
       title: stripExt(f.name),
       author: "Local",
-      cover,
+      cover: stored.cover,
       type: "COMIC",
-      description: `CBZ/ZIP archive · ${pages.length} pages · fully readable offline`,
+      description: `Comic archive · ${stored.keys.length} pages · fully readable offline`,
       workStatus: "COMPLETED",
       readingStatus: "PLANNED",
       isFavorite: false,
@@ -407,23 +505,258 @@ async function importArchive(f: File): Promise<ArchiveImport> {
           id: `${id}-c1`,
           number: 1,
           title: "Pages",
-          pages: pages.length,
+          pages: stored.keys.length,
           releaseDate: new Date().toISOString(),
           isRead: false,
           download: "DONE",
-          sizeMb: Math.round(totalMb * 10) / 10,
+          sizeMb: Math.round(stored.sizeMb * 10) / 10,
         },
       ],
       addedAt: new Date().toISOString(),
       language: "—",
       isLocal: true,
-      localPages: pages,
+      localPages: stored.keys,
+    },
+  };
+}
+
+/* --------------------------------------------------------------- *
+ *  add to an existing work (v1.2.0) — files become chapters       *
+ * --------------------------------------------------------------- */
+
+export interface AddToWorkResult {
+  added: Chapter[];
+  /** PDF/EPUB can't merge into an image work — they become separate works */
+  created: Work[];
+  skipped: { name: string; reason: UnsupportedFile["reason"] }[];
+}
+
+/** append imported files as new chapters of an existing work.
+    Archives (CBZ/ZIP/CBR) → one chapter each; loose images → one combined
+    chapter; PDF/EPUB are returned in `created` (self-contained documents). */
+export async function importFilesToWork(
+  files: File[],
+  workId: string,
+  startNumber: number
+): Promise<AddToWorkResult> {
+  const added: Chapter[] = [];
+  const created: Work[] = [];
+  const skipped: { name: string; reason: UnsupportedFile["reason"] }[] = [];
+  const imageFiles: File[] = [];
+  let next = startNumber;
+
+  const flushImages = async () => {
+    if (imageFiles.length === 0) return;
+    const sorted = [...imageFiles].sort((a, b) => naturalCompare(a.name, b.name));
+    try {
+      const stored = await storePagesUnder(
+        workId,
+        `add${next}-${Date.now().toString(36)}`,
+        sorted.map((f) => ({ name: f.name, blob: f as unknown as Blob }))
+      );
+      if (stored.keys.length > 0) {
+        added.push(makeChapter(workId, next, "Pages", stored));
+        next++;
+      } else {
+        skipped.push({ name: sorted[0].name, reason: "corrupt" });
+      }
+    } catch {
+      skipped.push({ name: sorted[0].name, reason: "corrupt" });
+    }
+    imageFiles.length = 0;
+  };
+
+  for (const f of files) {
+    const name = f.name;
+    const lower = name.toLowerCase();
+    try {
+      if (IMG_RE.test(name)) {
+        imageFiles.push(f);
+        continue;
+      }
+      if (/\.(cbz|zip|cbr|rar|cb7)$/i.test(lower) || /\.(7z)$/i.test(lower)) {
+        await flushImages(); // keep ordering: loose images before this archive
+        const res = await extractArchiveImages(f);
+        if (!res.ok) {
+          skipped.push({ name, reason: res.reason });
+          continue;
+        }
+        const stored = await storePagesUnder(workId, `add${next}-${Date.now().toString(36)}`, res.images);
+        if (stored.keys.length === 0) {
+          skipped.push({ name, reason: "corrupt" });
+          continue;
+        }
+        added.push(makeChapter(workId, next, stripExt(name), stored));
+        next++;
+        continue;
+      }
+      if (/\.pdf$/i.test(name)) {
+        const w = await importPdf(f);
+        created.push(w ?? makeMetaWork(f, "PDF"));
+        continue;
+      }
+      if (/\.epub$/i.test(name)) {
+        const w = await importEpub(f);
+        created.push(w ?? makeMetaWork(f, "EPUB"));
+        continue;
+      }
+      skipped.push({ name, reason: "format" });
+    } catch {
+      skipped.push({ name, reason: "corrupt" });
+    }
+  }
+  await flushImages();
+
+  return { added, created, skipped };
+}
+
+/* --------------------------------------------------------------- *
+ *  folder import (v1.2.0) — folder = work, subfolders = chapters  *
+ * --------------------------------------------------------------- */
+
+/** relative path of a picked file: webkitdirectory inputs carry it natively;
+    the Android bridge reconstructs it into a `__oniPath` property */
+export function pathOf(f: File): string {
+  const w = f as unknown as { webkitRelativePath?: string; __oniPath?: string };
+  return (w.webkitRelativePath && w.webkitRelativePath !== f.name ? w.webkitRelativePath : w.__oniPath) || f.name;
+}
+
+/** "vol 03" / "Chapter 12.5" style folder & file names → number hint */
+function numberHintOf(name: string): number | null {
+  const m = name
+    .trim()
+    .match(/^(?:v|vol|volume|c|ch|chap|chapter|ep|episode)[\s._-]*(\d{1,4}(?:\.\d+)?)$/i);
+  return m ? parseFloat(m[1]) : null;
+}
+
+export interface FolderChapterGroup {
+  title: string;
+  numberHint: number | null;
+  images: File[];
+  archives: File[];
+}
+
+export interface FolderPreview {
+  /** suggested work title = the picked folder's own name */
+  rootName: string;
+  /** true when everything sits in a single directory → one-chapter work */
+  flat: boolean;
+  chapters: FolderChapterGroup[];
+}
+
+/** group picked folder contents into chapter groups (no files are read yet —
+    the preview dialog lets the user rename the work before anything is stored) */
+export function buildFolderPreview(files: File[]): FolderPreview | null {
+  const groups = new Map<string, FolderChapterGroup>();
+  let rootName = "";
+
+  for (const f of files) {
+    const rel = pathOf(f).replace(/^\.\//, "");
+    const segs = rel.split("/");
+    if (segs.length >= 2 && !rootName) rootName = segs[0];
+    const dir = segs.length >= 2 ? segs.slice(0, -1).join("/") : "";
+    const base = segs[segs.length - 1];
+    if (!groups.has(dir)) {
+      const leaf = dir ? (dir.split("/").pop() as string) : rootName;
+      groups.set(dir, { title: leaf || "Pages", numberHint: leaf ? numberHintOf(leaf) : null, images: [], archives: [] });
+    }
+    const g = groups.get(dir)!;
+    if (IMG_RE.test(base)) g.images.push(f);
+    else if (/\.(cbz|zip|cbr|rar|cb7)$/i.test(base)) g.archives.push(f);
+    // pdf/epub/nonsense inside folders is ignored (folder import is image-first)
+  }
+
+  const dirs = [...groups.keys()].sort(naturalCompare);
+  const nonEmpty = dirs.filter((d) => {
+    const g = groups.get(d)!;
+    return g.images.length > 0 || g.archives.length > 0;
+  });
+  if (nonEmpty.length === 0) return null;
+
+  const chapters: FolderChapterGroup[] = nonEmpty.flatMap((d) => {
+    const g = groups.get(d)!;
+    const out: FolderChapterGroup[] = [];
+    if (g.images.length > 0) {
+      out.push({ title: g.title, numberHint: g.numberHint, images: g.images, archives: [] });
+    }
+    for (const a of g.archives.sort((x, y) => naturalCompare(x.name, y.name))) {
+      const t = stripExt(a.name);
+      out.push({ title: t || g.title, numberHint: numberHintOf(t), images: [], archives: [a] });
+    }
+    return out;
+  });
+
+  return { rootName: rootName || "Import", flat: nonEmpty.length === 1 && chapters.length === 1, chapters };
+}
+
+/** materialize a folder preview as a new work: images per group → one chapter,
+    archives → one chapter each. Numbers follow explicit hints when present,
+    otherwise 1..N in natural order. */
+export async function importFolderCommit(
+  preview: FolderPreview,
+  title: string
+): Promise<{ work?: Work; reason?: UnsupportedFile["reason"] }> {
+  const id = "w-f-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+  const chapters: Chapter[] = [];
+  let cover = "";
+  let noAuto = 0;
+
+  const ordered = [...preview.chapters].sort((a, b) => {
+    if (a.numberHint !== null && b.numberHint !== null) return a.numberHint - b.numberHint;
+    if (a.numberHint !== null) return -1;
+    if (b.numberHint !== null) return 1;
+    return naturalCompare(a.title, b.title);
+  });
+
+  for (const g of ordered) {
+    const number = g.numberHint ?? ++noAuto;
+    if (g.images.length > 0) {
+      const sorted = [...g.images].sort((a, b) => naturalCompare(a.name, b.name));
+      const stored = await storePagesUnder(id, `ch${number}-${chapters.length}`, sorted.map((f) => ({ name: f.name, blob: f as unknown as Blob })));
+      if (stored.keys.length === 0) continue;
+      if (!cover) cover = stored.cover;
+      chapters.push(makeChapter(id, number, g.title, stored));
+    }
+    for (const a of g.archives) {
+      const res = await extractArchiveImages(a);
+      if (!res.ok) continue;
+      const stored = await storePagesUnder(id, `ch${number}-${chapters.length}`, res.images);
+      if (stored.keys.length === 0) continue;
+      if (!cover) cover = stored.cover;
+      chapters.push(makeChapter(id, number, g.title, stored));
+    }
+  }
+
+  if (chapters.length === 0) return { reason: "noImages" };
+
+  return {
+    work: {
+      id,
+      title: title.trim().slice(0, 120) || preview.rootName,
+      author: "Local",
+      cover,
+      type: "MANGA",
+      description: `Imported folder · ${chapters.length} chapter${chapters.length === 1 ? "" : "s"} · fully readable offline`,
+      workStatus: "COMPLETED",
+      readingStatus: "PLANNED",
+      isFavorite: false,
+      inVault: false,
+      tags: ["Local", "Folder"],
+      rating: 0,
+      ratingCount: 0,
+      direction: "RTL",
+      readerMode: "PAGED",
+      fitMode: "WIDTH",
+      chapters,
+      addedAt: new Date().toISOString(),
+      language: "—",
+      isLocal: true,
     },
   };
 }
 
 /** Parse a real .pdf into a single-chapter work with canvas-rendered pages (FMT-003). */
-async function importPdf(f: File): Promise<Work | null> {
+export async function importPdf(f: File): Promise<Work | null> {
   try {
     const { readPdfMeta } = await import("./pdf-engine");
     const meta = await readPdfMeta(f);
@@ -567,7 +900,7 @@ function resolvePath(baseDir: string, href: string): string {
 }
 
 /** Parse a real .epub (ZIP of XHTML) into readable chapters (FMT-002). */
-async function importEpub(f: File): Promise<Work | null> {
+export async function importEpub(f: File): Promise<Work | null> {
   try {
     const buf = new Uint8Array(await f.arrayBuffer());
     const entries = unzipSync(buf);

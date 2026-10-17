@@ -992,6 +992,7 @@ export const DEFAULT_SETTINGS: Settings = {
   vaultBiometric: true,
   vaultAutoLock: true,
   volumeKeyPaging: true,
+  tracker: { provider: "none", token: "", autoSync: true, lastSyncAt: null },
   libraryDensity: "cozy",
   readerDefaults: {
     mode: "PAGED",

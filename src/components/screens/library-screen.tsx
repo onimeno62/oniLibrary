@@ -16,17 +16,20 @@ import {
   ChevronDown,
   X,
   FolderPlus,
+  FolderTree,
+  BookPlus,
   ShieldCheck,
   Heart,
   Trash2,
   Bookmark,
   Sparkles,
+  Loader2,
 } from "lucide-react";
 import { SectionHeader, WorkCover, ProgressBar, EmptyState } from "@/components/shared";
 import { useApp, useNav, workProgress, currentChapter, matchesRule } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
-import { importFiles, UNSUPPORTED_REASON_KEYS } from "@/lib/importer";
+import { importFiles, importFilesToWork, buildFolderPreview, importFolderCommit, UNSUPPORTED_REASON_KEYS, type FolderPreview } from "@/lib/importer";
 import { findDuplicateGroups } from "@/lib/duplicates";
 import { deleteWorkFiles } from "@/lib/local-files";
 import {
@@ -81,6 +84,19 @@ export function LibraryScreen() {
   const savedFilters = useApp((s) => s.savedFilters);
   const density = useApp((s) => s.settings.libraryDensity);
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
+  const addRef = useRef<HTMLInputElement>(null);
+
+  /* folder import (v1.2.0): preview → rename → commit */
+  const [folderPreview, setFolderPreview] = useState<FolderPreview | null>(null);
+  const [folderTitle, setFolderTitle] = useState("");
+  const [folderBusy, setFolderBusy] = useState(false);
+  /* add-to-work (v1.2.0): pick a work → pick files → chapters appended */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
+  const [addTarget, setAddTarget] = useState<string | null>(null);
+  const setAddToWorkIdLocal = (id: string | null) => setAddTarget(id);
 
   /** snapshot of every chip/checkbox that a saved filter restores */
   const snapshotFilters = (): LibraryFilterSnapshot => ({
@@ -220,6 +236,8 @@ export function LibraryScreen() {
    * app-shell pull handler (same channel as Share/Open-With).
    */
   const startImport = () => {
+    // a stale add-to-work target must never swallow a fresh import
+    try { sessionStorage.removeItem("oni-add-to-work"); } catch { /* ignore */ }
     const bridge = (window as unknown as { OniAndroid?: { pickImportFile?: () => void } }).OniAndroid;
     if (typeof bridge?.pickImportFile === "function") {
       try {
@@ -231,6 +249,110 @@ export function LibraryScreen() {
       return;
     }
     fileRef.current?.click();
+  };
+
+  /* ---------- folder import (v1.2.0) ---------- */
+  const startFolderImport = () => {
+    // webkitdirectory covers web/desktop + modern Android WebView file trees;
+    // where a device can't browse folders it degrades to a multi-file picker
+    folderRef.current?.click();
+  };
+
+  const onFolderPick = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const preview = buildFolderPreview(Array.from(files));
+    if (!preview) {
+      toast({ title: t("imp.folderEmpty"), variant: "destructive" });
+      return;
+    }
+    setFolderTitle(preview.rootName);
+    setFolderPreview(preview);
+  };
+
+  const commitFolder = async () => {
+    if (!folderPreview || folderBusy) return;
+    setFolderBusy(true);
+    try {
+      const { work, reason } = await importFolderCommit(folderPreview, folderTitle);
+      if (work) {
+        useApp.getState().addWork(work);
+        toast({ title: t("imp.added", { n: 1 }), description: work.title });
+        setFolderPreview(null);
+      } else {
+        toast({
+          title: t("imp.failed"),
+          description: t(UNSUPPORTED_REASON_KEYS[reason ?? "format"] ?? "imp.reason.format"),
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({ title: t("imp.failed"), variant: "destructive" });
+    } finally {
+      setFolderBusy(false);
+    }
+  };
+
+  /* ---------- add to existing work (v1.2.0) ---------- */
+  const openWorkPicker = () => {
+    setPickerQuery("");
+    setPickerOpen(true);
+  };
+
+  const startAddForWork = (workId: string) => {
+    setPickerOpen(false);
+    const bridge = (window as unknown as { OniAndroid?: { pickImportFile?: () => void } }).OniAndroid;
+    if (typeof bridge?.pickImportFile === "function") {
+      try {
+        sessionStorage.setItem("oni-add-to-work", workId);
+        bridge.pickImportFile();
+        return;
+      } catch {
+        /* fall through to the WebView chooser */
+      }
+    }
+    setAddToWorkThen(workId);
+  };
+
+  const setAddToWorkThen = (workId: string) => {
+    setAddToWorkIdLocal(workId);
+    requestAnimationFrame(() => addRef.current?.click());
+  };
+
+  const onAddFiles = async (files: FileList | null, workId: string | null) => {
+    if (!files || files.length === 0 || !workId) return;
+    const work = useApp.getState().works.find((w) => w.id === workId);
+    if (!work) return;
+    setAddBusy(true);
+    try {
+      const startNumber = work.chapters.reduce((m, c) => Math.max(m, c.number), 0) + 1;
+      const { added, created, skipped } = await importFilesToWork(Array.from(files), workId, startNumber);
+      if (added.length) useApp.getState().appendChapters(workId, added);
+      for (const w of created) useApp.getState().addWork(w);
+      if (added.length) {
+        toast({
+          title: t("imp.addedChapters", { n: added.length }),
+          description: added.map((c) => `#${c.number} ${c.title}`).join(", ").slice(0, 90),
+        });
+      }
+      if (created.length) {
+        toast({ title: t("imp.separateWorks", { n: created.length }), description: created.map((c) => c.title).join(", ") });
+      }
+      if (skipped.length) {
+        toast({
+          title: t("imp.unsupported", { names: skipped.slice(0, 2).map((s) => s.name).join(", ") }),
+          description: skipped
+            .slice(0, 2)
+            .map((s) => `${s.name} — ${t(UNSUPPORTED_REASON_KEYS[s.reason] ?? "imp.reason.format")}`)
+            .join("\n"),
+          variant: "destructive",
+        });
+      }
+    } catch {
+      toast({ title: t("imp.failed"), variant: "destructive" });
+    } finally {
+      setAddBusy(false);
+      setAddToWorkIdLocal(null);
+    }
   };
 
   const activeFilterCount = (statusFilter ? 1 : 0) + (sourceFilter ? 1 : 0) + (downloadedOnly ? 1 : 0) + (unreadOnly ? 1 : 0);
@@ -510,6 +632,12 @@ export function LibraryScreen() {
           <DropdownMenuItem onClick={startImport} className="gap-2.5 rounded-xl text-[13px] font-semibold">
             <Import className="h-4 w-4 text-primary" /> {t("imp.importFiles")}
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={startFolderImport} className="gap-2.5 rounded-xl text-[13px] font-semibold">
+            <FolderTree className="h-4 w-4 text-primary" /> {t("imp.importFolder")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={openWorkPicker} className="gap-2.5 rounded-xl text-[13px] font-semibold">
+            <BookPlus className="h-4 w-4 text-primary" /> {t("imp.addToWork")}
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setTab("discover")} className="gap-2.5 rounded-xl text-[13px] font-semibold">
             <Compass className="h-4 w-4 text-primary" /> {t("disc.title")}
           </DropdownMenuItem>
@@ -518,7 +646,29 @@ export function LibraryScreen() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <input ref={fileRef} type="file" multiple accept=".cbz,.zip,.cbr,.pdf,.epub,image/*" className="hidden" onChange={(e) => onImport(e.target.files)} />
+      <input ref={fileRef} type="file" multiple accept=".cbz,.zip,.cbr,.rar,.pdf,.epub,image/*" className="hidden" onChange={(e) => onImport(e.target.files)} />
+      <input
+        ref={folderRef}
+        type="file"
+        multiple
+        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+        className="hidden"
+        onChange={(e) => {
+          onFolderPick(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={addRef}
+        type="file"
+        multiple
+        accept=".cbz,.zip,.cbr,.rar,.pdf,.epub,image/*"
+        className="hidden"
+        onChange={(e) => {
+          void onAddFiles(e.target.files, addTarget);
+          e.target.value = "";
+        }}
+      />
 
       {/* selection action bar */}
       {selection !== null && (
@@ -647,6 +797,95 @@ export function LibraryScreen() {
                 <span className="flex-1 text-[14px] font-extrabold">{t(`status.${st}`)}</span>
               </button>
             ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* folder import preview (v1.2.0) — rename the work before committing */}
+      <Dialog open={!!folderPreview} onOpenChange={(o) => !o && setFolderPreview(null)}>
+        <DialogContent className="max-h-[76dvh] rounded-3xl p-0 max-w-[380px] mx-auto" style={{ maxWidth: 380 }}>
+          <DialogHeader className="border-b border-border/60 px-5 py-4">
+            <DialogTitle className="flex items-center gap-2 text-[16px] font-black">
+              <FolderTree className="h-4.5 w-4.5 text-primary" /> {t("imp.importFolder")}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[52dvh] overflow-y-auto px-5 py-3">
+            <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{t("imp.folderTitleLabel")}</p>
+            <input
+              value={folderTitle}
+              onChange={(e) => setFolderTitle(e.target.value.slice(0, 80))}
+              aria-label={t("imp.folderTitleLabel")}
+              className="mt-1.5 h-10 w-full rounded-xl border border-border bg-background px-3 text-[14px] font-extrabold outline-none transition-colors focus:border-primary"
+            />
+            <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+              {t("imp.folderChapters", { n: folderPreview?.chapters.length ?? 0 })}
+            </p>
+            <div className="mt-1.5 space-y-1.5">
+              {folderPreview?.chapters.map((g, i) => (
+                <div key={`${g.title}-${i}`} className="flex items-center gap-2.5 rounded-xl bg-secondary/60 px-3 py-2">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-coral-soft text-[11px] font-black text-primary">
+                    {i + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[12.5px] font-extrabold">{g.title}</span>
+                  <span className="shrink-0 text-[10.5px] font-bold text-muted-foreground">
+                    {g.images.length + g.archives.length} {t("imp.folderFiles")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="border-t border-border/60 p-4">
+            <button
+              onClick={commitFolder}
+              disabled={folderBusy}
+              className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-coral-gradient text-[14px] font-extrabold text-white shadow-[0_12px_26px_-10px_rgba(248,105,76,0.7)] transition-opacity hover:opacity-95 disabled:opacity-60"
+            >
+              {folderBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Import className="h-4.5 w-4.5" />}
+              {folderBusy ? t("imp.importing") : t("imp.folderImportBtn")}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* add-to-work picker (v1.2.0) */}
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent className="max-h-[70dvh] rounded-3xl p-0 max-w-[380px] mx-auto" style={{ maxWidth: 380 }}>
+          <DialogHeader className="border-b border-border/60 px-5 py-4">
+            <DialogTitle className="text-[16px] font-black">{t("imp.pickWork")}</DialogTitle>
+          </DialogHeader>
+          <div className="px-5 pt-3">
+            <div className="flex h-10 items-center gap-2 rounded-full bg-secondary px-3.5">
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <input
+                value={pickerQuery}
+                onChange={(e) => setPickerQuery(e.target.value)}
+                placeholder={t("lib.searchPlaceholder")}
+                aria-label={t("imp.pickWork")}
+                className="w-full bg-transparent text-[13px] font-semibold outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+          </div>
+          <div className="max-h-[42dvh] overflow-y-auto p-3">
+            {publicWorks
+              .filter((w) => w.title.toLowerCase().includes(pickerQuery.trim().toLowerCase()))
+              .slice(0, 60)
+              .map((w) => (
+                <button
+                  key={w.id}
+                  onClick={() => startAddForWork(w.id)}
+                  disabled={addBusy}
+                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-start transition-colors hover:bg-secondary disabled:opacity-60"
+                >
+                  <WorkCover src={w.cover} color={w.coverColor} title={w.title} className="h-11 w-8 shrink-0 rounded-lg" sizes="32px" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-extrabold">{w.title}</span>
+                    <span className="block text-[11px] font-semibold text-muted-foreground">
+                      {w.chapters.length} {t("common.chapters")}
+                    </span>
+                  </span>
+                  {addBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <Plus className="h-4 w-4 shrink-0 text-primary" />}
+                </button>
+              ))}
           </div>
         </DialogContent>
       </Dialog>
@@ -872,7 +1111,16 @@ function WorkGridCard({
   const longPressProps = useLongPress(onLongPress);
 
   // mockup style: minimal dot/label status instead of pill badges
+  const done = progress >= 100;
   const badge = () => {
+    // fully read → Completed badge, no progress bar (user request)
+    if (done)
+      return (
+        <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          {t("status.COMPLETED")}
+        </span>
+      );
     if (work.readingStatus === "COMPLETED")
       return (
         <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
@@ -941,7 +1189,7 @@ function WorkGridCard({
         </div>
         <p className="mt-1.5 truncate text-[12px] font-extrabold">{work.title}</p>
         <div className="mt-1 flex items-center gap-1.5">
-          {progress > 0 && (
+          {progress > 0 && !done && (
             <>
               <ProgressBar value={progress} className="h-[3px] flex-1" />
               <span className="text-[10px] font-black text-primary">{progress}%</span>
@@ -949,7 +1197,7 @@ function WorkGridCard({
             </>
           )}
         </div>
-        {(work.readingStatus === "COMPLETED" || work.readingStatus === "ON_HOLD" || work.readingStatus === "PLANNED" || work.readingStatus === "DROPPED") && (
+        {(done || work.readingStatus === "COMPLETED" || work.readingStatus === "ON_HOLD" || work.readingStatus === "PLANNED" || work.readingStatus === "DROPPED") && (
           <div className="mt-0.5">{badge()}</div>
         )}
         <p className="mt-0.5 text-[10px] font-semibold text-muted-foreground">
@@ -998,10 +1246,10 @@ function WorkListRow({ work, onOpen, selected, selectionMode }: { work: Work; on
         <p className="truncate text-[11px] font-semibold text-muted-foreground">
           {t("common.ch")} {work.chapters[0]?.number} · {readCount}/{work.chapters.length} {t("common.chapters")}
         </p>
-        <ProgressBar value={progress} className="mt-1.5 h-[3px]" />
+        {progress < 100 && <ProgressBar value={progress} className="mt-1.5 h-[3px]" />}
       </div>
-      {work.readingStatus === "COMPLETED" && <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />}
-      {work.readingStatus === "ON_HOLD" && <Pause className="h-4 w-4 shrink-0 text-muted-foreground" />}
+      {(progress >= 100 || work.readingStatus === "COMPLETED") && <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />}
+      {progress < 100 && work.readingStatus === "ON_HOLD" && <Pause className="h-4 w-4 shrink-0 text-muted-foreground" />}
     </button>
   );
 }

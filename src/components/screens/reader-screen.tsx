@@ -607,7 +607,9 @@ export function ReaderScreen({
   const mode: ReaderMode = requestedMode === "DOUBLE" && !landscape ? "PAGED" : requestedMode;
   const paged = mode === "PAGED" || mode === "DOUBLE";
   const scrollable = mode === "CONTINUOUS" || mode === "WEBTOON";
-  const isLocal = Boolean(work?.isLocal && work.localPages?.length);
+  const isLocal = Boolean(work?.isLocal && (work.localPages?.length || chapter?.localPages?.length));
+  /** per-chapter page keys win; legacy single-chapter imports fall back to the work-level list */
+  const chapterPageKeys = chapter?.localPages?.length ? chapter.localPages : work?.localPages;
 
   const chaptersAsc = useMemo<ChapterLite[]>(
     () =>
@@ -1418,8 +1420,8 @@ export function ReaderScreen({
         />
       );
     }
-    if (isLocal && work.localPages?.[i]) {
-      return <LocalPageImage storageKey={work.localPages[i]} className={cls} />;
+    if (isLocal && chapterPageKeys?.[i]) {
+      return <LocalPageImage storageKey={chapterPageKeys[i]} className={cls} />;
     }
     return (
       <MangaPage

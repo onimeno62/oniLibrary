@@ -3,6 +3,51 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.2.0] — 2026-10-17
+
+### Added
+- **CBR/RAR support** — real CBR archives now import and read via the
+  official unrar compiled to WebAssembly (`node-unrar-js`, 207 KB wasm
+  fetched once from `/wasm/unrar.wasm`). RAR4 + RAR5 verified against real
+  archives; password-protected CBRs report a precise "encrypted" reason and
+  multi-volume sets explain they need extraction. The old "convert to CBZ"
+  refusal is gone.
+- **Folder import** — the library FAB gains "Import folder": pick a folder
+  and oniLibrary builds one work from it — images in subfolders become
+  chapters (title = folder name), "Vol 03"/"Chapter 12.5"-style names are
+  parsed into chapter numbers, archives inside folders become their own
+  chapters, and the suggested work title (the folder's name) is editable in
+  a preview dialog that lists every detected chapter before anything is
+  stored.
+- **Add to existing work** — FAB "Add to work…" opens a searchable work
+  picker; picked files are appended as new chapters (CBZ/ZIP/CBR → one
+  chapter each, loose images → one combined chapter) with numbering that
+  continues from the work's last chapter. PDF/EPUB still land as separate
+  works by design. On Android the native picker bridge participates through
+  a staged-import route, so the same flow works without the WebView chooser.
+- **OPDS catalogs** — Personal Servers is now real: add an OPDS URL,
+  "Test connection" fetches the feed, and "Browse" opens the catalog with
+  cover thumbnails, authors, summaries and pagination ("Load more"). "Add"
+  downloads the acquisition file and imports it straight into the library
+  with entry metadata. On Android both feeds and downloads run through two
+  new native bridge methods (`httpGetString`, `fetchToCache`) — no CORS
+  limits; in browsers it uses plain fetch.
+- **Tracker sync (AniList)** — Settings → Tracker sync: paste a personal
+  AniList token (validated live against the GraphQL API), then progress
+  syncs automatically after each finished chapter and on demand ("Sync
+  now"). Works are matched by title search and remembered; a summary toast
+  reports pushed/matched/failed. Vaulted works are never synced.
+- **Editable profile name** — onboarding asks "What should we call you?"
+  and Settings gains a Profile card; the name drives the Home greeting and
+  the More-screen identity card. Localized EN + FA.
+
+### Fixed
+- **Fake status bar removed** — the mockup's decorative "9:41" notification
+  bar is gone; the app now starts directly with screen content.
+- **100%-read works** — fully read works no longer render a progress bar or
+  percentage in the library grid/list; the green "Completed" badge alone
+  marks them (also applies in list view).
+
 ## [1.1.3] — 2026-10-17
 
 ### Added

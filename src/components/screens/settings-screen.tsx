@@ -19,10 +19,16 @@ import {
   Eraser,
   Info,
   Github,
+  User,
+  RefreshCw,
+  Link2,
+  Radio,
+  FolderTree,
 } from "lucide-react";
 import { OverlayHeader } from "@/components/shared";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/use-app";
+import { anilistWhoAmI, syncAllToTracker } from "@/lib/tracker";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { Switch } from "@/components/ui/switch";
@@ -178,7 +184,48 @@ export function SettingsScreen() {
   const setSettings = useApp((s) => s.setSettings);
   const setReaderDefaults = useApp((s) => s.setReaderDefaults);
   const clearHistory = useApp((s) => s.clearHistory);
+  const setTracker = useApp((s) => s.setTracker);
   const [navHintBump, setNavHintBump] = useState(0);
+
+  /* tracker state (v1.2.0) */
+  const tracker = settings.tracker;
+  const [tokenInput, setTokenInput] = useState("");
+  const [trkChecking, setTrkChecking] = useState(false);
+  const [trkSyncing, setTrkSyncing] = useState(false);
+  const [trkName, setTrkName] = useState<string>("");
+
+  const connectTracker = async () => {
+    const token = tokenInput.trim();
+    if (!token || trkChecking) return;
+    setTrkChecking(true);
+    try {
+      const name = await anilistWhoAmI(token);
+      setTracker({ provider: "anilist", token });
+      setTrkName(name);
+      setTokenInput("");
+      toast({ title: t("trk.connected"), description: `AniList · ${name}` });
+    } catch (e) {
+      toast({ title: t("trk.connectFail"), description: (e as Error).message?.slice(0, 60), variant: "destructive" });
+    } finally {
+      setTrkChecking(false);
+    }
+  };
+
+  const syncNow = async () => {
+    if (trkSyncing) return;
+    setTrkSyncing(true);
+    try {
+      const report = await syncAllToTracker();
+      toast({
+        title: t("trk.syncDone"),
+        description: t("trk.syncSummary", { p: report.pushed, m: report.matched, f: report.failed }),
+      });
+    } catch (e) {
+      toast({ title: t("trk.syncFail"), description: (e as Error).message?.slice(0, 60), variant: "destructive" });
+    } finally {
+      setTrkSyncing(false);
+    }
+  };
 
   const rd = settings.readerDefaults;
   const fa = lang === "fa";
@@ -202,6 +249,21 @@ export function SettingsScreen() {
   return (
     <div className="min-h-full px-5 pb-8">
       <OverlayHeader title={t("more.settings")} />
+
+      {/* ---- Profile ---- */}
+      <Section Icon={User} title={t("set.profileSection")}>
+        <p className="text-[11px] leading-snug text-muted-foreground">{t("set.nameHint")}</p>
+        <div className="mt-2 flex h-11 items-center gap-2.5 rounded-full border border-border bg-background px-4 transition-colors focus-within:border-primary">
+          <User className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <input
+            value={settings.userName}
+            onChange={(e) => setSettings({ userName: e.target.value.slice(0, 24) })}
+            placeholder={t("set.namePlaceholder")}
+            aria-label={t("set.profileSection")}
+            className="w-full bg-transparent text-[14px] font-bold outline-none placeholder:font-semibold placeholder:text-muted-foreground"
+          />
+        </div>
+      </Section>
 
       {/* ---- Appearance ---- */}
       <Section Icon={Palette} title={t("more.appearance")}>
@@ -424,6 +486,84 @@ export function SettingsScreen() {
             </button>
           </div>
         </div>
+      </Section>
+
+      {/* ---- Tracker sync (v1.2.0) ---- */}
+      <Section Icon={Radio} title={t("trk.title")}>
+        {tracker.provider === "anilist" && tracker.token ? (
+          <>
+            <div className="flex items-center justify-between rounded-2xl bg-secondary/60 px-4 py-3">
+              <span className="min-w-0">
+                <span className="block text-[13px] font-extrabold">AniList{trkName ? ` · ${trkName}` : ""}</span>
+                <span className="block text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">✓ {t("trk.connected")}</span>
+              </span>
+              <button
+                onClick={() => {
+                  setTracker({ provider: "none", token: "", lastSyncAt: null });
+                  setTrkName("");
+                  toast({ title: t("trk.disconnected") });
+                }}
+                className="rounded-full px-3 py-1.5 text-[11.5px] font-extrabold text-destructive transition-colors hover:bg-destructive/10"
+              >
+                {t("trk.disconnect")}
+              </button>
+            </div>
+            <div className="mt-2 flex items-center justify-between rounded-2xl bg-secondary/60 px-4 py-3">
+              <span className="min-w-0">
+                <span className="block text-[13px] font-bold">{t("trk.autoSync")}</span>
+                <span className="block text-[10.5px] font-semibold text-muted-foreground">{t("trk.autoSyncHint")}</span>
+              </span>
+              <Switch checked={tracker.autoSync} onCheckedChange={(v) => setTracker({ autoSync: v })} className="data-[state=checked]:bg-primary" />
+            </div>
+            <button
+              onClick={() => void syncNow()}
+              disabled={trkSyncing}
+              className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-full bg-coral-soft text-[13px] font-extrabold text-primary transition-opacity hover:opacity-85 disabled:opacity-60"
+            >
+              <RefreshCw className={cn("h-4 w-4", trkSyncing && "animate-spin")} />
+              {trkSyncing ? t("trk.syncing") : t("trk.syncNow")}
+            </button>
+            {tracker.lastSyncAt && (
+              <p className="mt-1.5 text-center text-[10.5px] font-semibold text-muted-foreground">
+                {t("trk.lastSync")}: {new Date(tracker.lastSyncAt).toLocaleString()}
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="text-[11px] leading-snug text-muted-foreground">{t("trk.hint")}</p>
+            <div className="mt-2 flex items-center gap-2">
+              <div className="flex h-10 flex-1 items-center gap-2 rounded-full border border-border bg-background px-3.5 transition-colors focus-within:border-primary">
+                <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <input
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  placeholder={t("trk.tokenPlaceholder")}
+                  type="password"
+                  dir="ltr"
+                  aria-label={t("trk.title")}
+                  className="w-full bg-transparent text-[12.5px] font-semibold outline-none placeholder:text-muted-foreground"
+                />
+              </div>
+              <button
+                onClick={() => void connectTracker()}
+                disabled={!tokenInput.trim() || trkChecking}
+                className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-coral-gradient px-4 text-[12.5px] font-extrabold text-white shadow-[0_8px_18px_-8px_rgba(248,105,76,0.7)] disabled:opacity-50"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", trkChecking && "animate-spin")} />
+                {t("trk.connect")}
+              </button>
+            </div>
+            <a
+              href="https://anilist.co/settings/developer"
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1.5 block text-center text-[10.5px] font-bold text-primary underline-offset-2 hover:underline"
+            >
+              anilist.co/settings/developer → {t("trk.tokenWhere")}
+            </a>
+          </>
+        )}
       </Section>
 
       {/* ---- Notifications ---- */}

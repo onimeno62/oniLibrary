@@ -111,6 +111,9 @@ interface AppState {
   setVaultPin: (hash: string | null) => void;
 
   updateWork: (id: string, p: Partial<Work>) => void;
+  /** imported files appended as chapters to an existing work (v1.2.0) */
+  appendChapters: (workId: string, chapters: Chapter[]) => void;
+  setTracker: (p: Partial<Settings["tracker"]>) => void;
   toggleFavorite: (id: string) => void;
   setStatus: (id: string, s: ReadingStatus) => void;
   setVaultFlag: (id: string, v: boolean) => void;
@@ -323,6 +326,19 @@ export const useApp = create<AppState>()(
         set((s) => ({
           works: s.works.map((w) => (w.id === id ? { ...w, ...p } : w)),
         })),
+      appendChapters: (workId, chapters) =>
+        set((s) => ({
+          works: s.works.map((w) => {
+            if (w.id !== workId) return w;
+            const merged = [
+              ...w.chapters.filter((c) => !chapters.some((n) => n.id === c.id)),
+              ...chapters,
+            ].sort((a, b) => a.number - b.number);
+            return { ...w, chapters: merged, readingStatus: w.readingStatus === "PLANNED" ? "READING" : w.readingStatus };
+          }),
+        })),
+      setTracker: (p) =>
+        set((s) => ({ settings: { ...s.settings, tracker: { ...s.settings.tracker, ...p } } })),
       toggleFavorite: (id) =>
         set((s) => ({
           works: s.works.map((w) => (w.id === id ? { ...w, isFavorite: !w.isFavorite } : w)),
@@ -388,7 +404,7 @@ export const useApp = create<AppState>()(
         return id;
       },
 
-      markChapterRead: (workId, chapterId, read, upTo) =>
+      markChapterRead: (workId, chapterId, read, upTo) => {
         set((s) => ({
           works: s.works.map((w) => {
             if (w.id !== workId) return w;
@@ -400,7 +416,21 @@ export const useApp = create<AppState>()(
             });
             return { ...w, chapters };
           }),
-        })),
+        }));
+        // tracker auto-sync (TRK v2) — fire and forget, never blocks the UI
+        if (read) {
+          void (async () => {
+            try {
+              const st = get();
+              if (st.settings.tracker.provider !== "anilist" || !st.settings.tracker.token || !st.settings.tracker.autoSync) return;
+              const { syncWorkToTracker } = await import("./tracker");
+              await syncWorkToTracker(workId);
+            } catch {
+              /* offline / token issue — silent, next read or manual sync retries */
+            }
+          })();
+        }
+      },
       setChapterProgress: (workId, chapterId, page) =>
         set((s) => ({
           works: s.works.map((w) => {

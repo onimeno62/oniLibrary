@@ -35,12 +35,16 @@ import android.webkit.WebViewClient;
 import android.widget.Toast;
 
 import java.io.ByteArrayInputStream;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.RandomAccessFile;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -64,6 +68,9 @@ import java.util.concurrent.Executor;
  *                            across WebView builds, so the library import
  *                            button calls this bridge instead and receives
  *                            the picked file through the same chunk channel
+ *  - httpGetString / fetchToCache
+ *                          → OPDS catalogs: CORS-free GET of feeds and
+ *                            staged binary downloads (v1.2.0)
  *  - vaultBiometric        → platform biometric unlock for the Vault
  */
 public class MainActivity extends Activity {
@@ -486,6 +493,102 @@ public class MainActivity extends Activity {
                 if (pendingImportFile != null) pendingImportFile.delete();
                 pendingImportFile = null;
                 pendingImportName = null;
+            }
+        }
+
+        /* ------------------- OPDS catalog transport (v1.2.0) ---------------- */
+
+        private HttpURLConnection openGet(String urlStr) throws IOException {
+            // allow https and plain-http LAN servers; cap redirects manually
+            URL url = new URL(urlStr);
+            HttpURLConnection c = (HttpURLConnection) url.openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(20000);
+            c.setInstanceFollowRedirects(true);
+            c.setRequestProperty("User-Agent", "oniLibrary/1.2 (Android)");
+            return c;
+        }
+
+        /** CORS-free GET of a text document (OPDS feeds); null on failure */
+        @JavascriptInterface
+        public String httpGetString(String url, String headersJson) {
+            if (url == null || !url.startsWith("http")) return null;
+            try {
+                HttpURLConnection c = openGet(url);
+                c.connect();
+                int code = c.getResponseCode();
+                if (code >= 300 && code < 400) {
+                    String loc = c.getHeaderField("Location");
+                    c.disconnect();
+                    if (loc == null) return null;
+                    c = openGet(loc);
+                    c.connect();
+                    code = c.getResponseCode();
+                }
+                if (code < 200 || code >= 300) { c.disconnect(); return null; }
+                InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
+                StringBuilder sb = new StringBuilder();
+                try (BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"))) {
+                    char[] buf = new char[8192];
+                    int n;
+                    while ((n = r.read(buf)) > 0) sb.append(buf, 0, n);
+                }
+                c.disconnect();
+                return sb.toString();
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        /** CORS-free download of a binary (cover / acquisition file): stages it
+            into the SAME pending-import slot the Share-in flow uses, so the JS
+            side pulls it with readImportChunk and clears with clearPendingImport.
+            Returns the JSON manifest, or "null" on failure. */
+        @JavascriptInterface
+        public String fetchToCache(String url) {
+            if (url == null || !url.startsWith("http")) return "null";
+            InputStream in = null;
+            try {
+                HttpURLConnection c = openGet(url);
+                c.connect();
+                int code = c.getResponseCode();
+                if (code < 200 || code >= 300) { c.disconnect(); return "null"; }
+                in = c.getInputStream();
+                String mime = c.getContentType();
+                if (mime != null) { int i = mime.indexOf(';'); if (i > 0) mime = mime.substring(0, i).trim(); }
+
+                String rawName = url.substring(url.lastIndexOf('/') + 1);
+                int q = rawName.indexOf('?');
+                if (q >= 0) rawName = rawName.substring(0, q);
+                if (rawName.isEmpty()) rawName = "opds-download";
+                rawName = rawName.replaceAll("[\\\\/:*?\"<>|]", "_");
+
+                synchronized (importLock) {
+                    if (pendingImportFile != null) pendingImportFile.delete();
+                    File dir = new File(getCacheDir(), "oniImport");
+                    if (!dir.exists()) dir.mkdirs();
+                    File out = new File(dir, "fetch-" + System.currentTimeMillis() + "-" + rawName);
+                    long total = 0;
+                    try (OutputStream os = new FileOutputStream(out)) {
+                        byte[] buf = new byte[64 * 1024];
+                        int n;
+                        while ((n = in.read(buf)) > 0) {
+                            os.write(buf, 0, n);
+                            total += n;
+                            if (total > 1024L * 1024L * 1024L) throw new IOException("too large");
+                        }
+                    }
+                    pendingImportFile = out;
+                    pendingImportName = rawName;
+                    pendingImportMime = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+                    return "{\"name\":" + jsonStr(rawName)
+                            + ",\"mime\":" + jsonStr(pendingImportMime)
+                            + ",\"size\":" + total + "}";
+                }
+            } catch (Exception e) {
+                return "null";
+            } finally {
+                if (in != null) { try { in.close(); } catch (IOException ignored) { } }
             }
         }
 
