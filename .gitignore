@@ -53,3 +53,22 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# sandbox runtime & internal artifacts (not part of the published project)
+/.zscripts/
+/agent-ctx/
+/tool-results/
+/upload/
+/examples/
+/tests/
+/mini-services/
+/db/
+/android/app/build/
+/worklog.md
+/dev.log
+/dev.out.log
+/server.log
+/Caddyfile
+/download/*.idsig
+/tmp/
+!.gitkeep

@@ -1,13 +1,13 @@
 #!/bin/bash
 # Build oniLibrary APK without Gradle: static export -> aapt2 -> ecj -> d8 -> zipalign -> apksigner
 set -e
-SDK=/home/z/android-sdk
+SDK="${ANDROID_SDK_ROOT:-/home/z/android-sdk}"
 BT=$SDK/build-tools/34.0.0
 AJ=$SDK/platforms/android-34/android.jar
-PROJ=/home/z/my-project/android/app
+ROOT="${ONI_PROJECT_ROOT:-/home/z/my-project}"
+PROJ=$ROOT/android/app
 OUT=$PROJ/build
-WWW=/home/z/my-project/out
-ROOT=/home/z/my-project
+WWW=$ROOT/out
 
 echo "[0/7] Static export..."
 if [ ! -f $WWW/index.html ] || [ "$1" == "--fresh" ]; then
@@ -58,19 +58,20 @@ $BT/d8 --release --lib $AJ --min-api 24 --output $OUT/dex $(find $OUT/classes -n
 echo "[6/7] Adding classes.dex to APK + zipalign..."
 cd $OUT/dex
 zip -q $OUT/base.apk classes.dex
-cd /home/z/my-project
+cd $ROOT
 $BT/zipalign -f 4 $OUT/base.apk $OUT/aligned.apk
 
 echo "[7/7] Signing..."
-KS=/home/z/my-project/android/oni-debug.keystore
+KS=$ROOT/android/oni-debug.keystore
+APK_OUT=$ROOT/download/oniLibrary-v1.0.1.apk
 if [ ! -f $KS ]; then
   keytool -genkeypair -v -keystore $KS -storepass onilibrary -keypass onilibrary \
     -alias oni -keyalg RSA -keysize 2048 -validity 10000 \
     -dname "CN=oniLibrary, OU=Oni, O=oniLibrary, L=Tokyo, C=JP" > /dev/null 2>&1
 fi
 $BT/apksigner sign --ks $KS --ks-pass pass:onilibrary --key-pass pass:onilibrary \
-  --out /home/z/my-project/download/oniLibrary-v1.0.1.apk $OUT/aligned.apk
+  --out $APK_OUT $OUT/aligned.apk
 
-$BT/apksigner verify --print-certs /home/z/my-project/download/oniLibrary-v1.0.1.apk | head -4
-ls -la /home/z/my-project/download/oniLibrary-v1.0.1.apk
+$BT/apksigner verify --print-certs $APK_OUT | head -4
+ls -la $APK_OUT
 echo "APK BUILD COMPLETE"

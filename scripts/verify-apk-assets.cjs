@@ -91,7 +91,8 @@ if (failures.length) {
 }
 
 // --- manifest version check ---
-const badging = execSync(`/home/z/android-sdk/build-tools/34.0.0/aapt2 dump badging ${APK}`).toString();
+const AAPT2 = `${process.env.ANDROID_SDK_ROOT || "/home/z/android-sdk"}/build-tools/34.0.0/aapt2`;
+const badging = execSync(`${AAPT2} dump badging ${APK}`).toString();
 const ver = badging.match(/versionCode='(\d+)' versionName='([^']+)'/);
 console.log(`APK version: code=${ver[1]} name=${ver[2]}`);
 console.log(`assets/www files: ${execSync(`find ${WWW} -type f | wc -l`).toString().trim()}`);
