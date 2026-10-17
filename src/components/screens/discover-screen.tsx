@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Pin, PinOff, Power, PowerOff } from "lucide-react";
 import { SectionHeader, SourceIcon } from "@/components/shared";
@@ -23,10 +23,59 @@ export function DiscoverScreen() {
   const sources = useApp((s) => s.sources);
   const offlineMode = useApp((s) => s.settings.offlineMode);
   const push = useNav((s) => s.push);
+  const setTab = useNav((s) => s.setTab);
   const setSourceEnabled = useApp((s) => s.setSourceEnabled);
   const setSourcePinned = useApp((s) => s.setSourcePinned);
   const [cat, setCat] = useState<Cat>("ALL");
   const [query, setQuery] = useState("");
+
+  /* promo carousel (mockup: "Discover More" banner with page dots) */
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const [bannerIdx, setBannerIdx] = useState(0);
+  const bannerPausedUntil = useRef(0);
+  const bannerSlides: { img: string; title: string; body: string; cta: string; go: () => void }[] = [
+    {
+      img: "/banners/discover-more.png",
+      title: t("disc.discoverMore"),
+      body: t("disc.discoverMoreBody"),
+      cta: t("disc.exploreSources"),
+      go: () => push({ kind: "extensions" }),
+    },
+    {
+      img: "/banners/offline.png",
+      title: t("disc.banner2Title"),
+      body: t("disc.banner2Body"),
+      cta: t("disc.banner2Cta"),
+      go: () => setTab("downloads"),
+    },
+    {
+      img: "/banners/vault.png",
+      title: t("disc.banner3Title"),
+      body: t("disc.banner3Body"),
+      cta: t("disc.banner3Cta"),
+      go: () => push({ kind: "vault" }),
+    },
+  ];
+  const onBannerScroll = () => {
+    const el = bannerRef.current;
+    if (!el || el.clientWidth === 0) return;
+    setBannerIdx(Math.max(0, Math.min(2, Math.round(el.scrollLeft / el.clientWidth))));
+  };
+  const goBanner = (i: number) => {
+    bannerPausedUntil.current = Date.now() + 8000;
+    const el = bannerRef.current;
+    el?.scrollTo({ left: i * (el?.clientWidth ?? 0), behavior: "smooth" });
+  };
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (Date.now() < bannerPausedUntil.current) return;
+      const el = bannerRef.current;
+      if (!el || el.clientWidth === 0) return;
+      const next = (Math.round(el.scrollLeft / el.clientWidth) + 1) % bannerSlides.length;
+      el.scrollTo({ left: next * el.clientWidth, behavior: "smooth" });
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   const kindOf = (s: (typeof sources)[number]): string[] =>
     s.kinds.flatMap((k) => k.split(" "));
@@ -249,32 +298,47 @@ export function DiscoverScreen() {
         </div>
       </section>
 
-      {/* discover more banner */}
+      {/* discover-more carousel (mockup: promo banner with page dots) */}
       <section className="mt-6">
-        <button
-          onClick={() => push({ kind: "extensions" })}
-          className="relative block w-full overflow-hidden rounded-3xl text-start shadow-[0_18px_40px_-18px_rgba(43,36,29,0.55)]"
-        >
-          <div className="relative h-[150px] w-full">
-            <Image src="/banners/discover-more.png" alt={t("disc.discoverMore")} fill sizes="412px" className="object-cover" />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent" />
-          </div>
-          <div className="absolute inset-x-0 bottom-0 p-4">
-            <p className="text-[17px] font-extrabold text-white">{t("disc.discoverMore")}</p>
-            <p className="mt-0.5 max-w-[260px] text-[12px] font-semibold leading-snug text-white/85">
-              {t("disc.discoverMoreBody")}
-            </p>
-            <span className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-coral-gradient px-4 py-1.5 text-[12px] font-extrabold text-white shadow-lg">
-              {t("disc.exploreSources")}
-              <ChevronRight className="h-3.5 w-3.5 rtl:rotate-180" />
-            </span>
-          </div>
-          <div className="absolute bottom-3 right-4 flex gap-1">
-            {[0, 1, 2].map((i) => (
-              <span key={i} className={cn("h-1.5 rounded-full", i === 0 ? "w-4 bg-white" : "w-1.5 bg-white/50")} />
+        <div className="relative">
+          <div
+            ref={bannerRef}
+            dir="ltr"
+            onScroll={onBannerScroll}
+            onPointerDown={() => (bannerPausedUntil.current = Date.now() + 8000)}
+            className="no-scrollbar flex snap-x snap-mandatory overflow-x-auto rounded-3xl shadow-[0_18px_40px_-18px_rgba(43,36,29,0.55)]"
+          >
+            {bannerSlides.map((s, i) => (
+              <button key={i} onClick={s.go} className="relative block min-w-full snap-center text-start" aria-label={s.title}>
+                <div className="relative h-[150px] w-full">
+                  <Image src={s.img} alt={s.title} fill sizes="412px" className="object-cover" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent" />
+                </div>
+                <div className="absolute inset-x-0 bottom-0 p-4">
+                  <p className="text-[17px] font-extrabold text-white">{s.title}</p>
+                  <p className="mt-0.5 max-w-[260px] text-[12px] font-semibold leading-snug text-white/85">{s.body}</p>
+                  <span className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-coral-gradient px-4 py-1.5 text-[12px] font-extrabold text-white shadow-lg">
+                    {s.cta}
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </span>
+                </div>
+              </button>
             ))}
           </div>
-        </button>
+          <div className="absolute bottom-3 right-4 z-10 flex gap-1">
+            {bannerSlides.map((_, i) => (
+              <button
+                key={i}
+                onClick={() => goBanner(i)}
+                aria-label={`Slide ${i + 1}`}
+                className={cn(
+                  "h-1.5 rounded-full transition-all",
+                  i === bannerIdx ? "w-4 bg-white" : "w-1.5 bg-white/50 hover:bg-white/80"
+                )}
+              />
+            ))}
+          </div>
+        </div>
       </section>
     </div>
   );

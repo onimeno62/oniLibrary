@@ -141,7 +141,7 @@ export function DownloadsScreen() {
         <>
           {/* active */}
           <section className="mt-6">
-            <SectionRow title={t("dl.activeDownloads")} />
+            <SectionRow title={t("dl.activeDownloads")} onSeeAll={() => setFilter("ACTIVE")} />
             {activeShown.length === 0 && pausedShown.length === 0 ? (
               <EmptyState icon={<Download className="h-6 w-6" />} title={t("dl.emptyActive")} hint={t("dl.emptyActiveHint")} />
             ) : (
@@ -158,7 +158,7 @@ export function DownloadsScreen() {
 
           {/* completed */}
           <section className="mt-6">
-            <SectionRow title={t("dl.completedDownloads")} />
+            <SectionRow title={t("dl.completedDownloads")} onSeeAll={() => setFilter("DONE")} />
             {doneShown.length === 0 ? (
               <p className="py-3 text-[13px] font-semibold text-muted-foreground">{t("dl.emptyDone")}</p>
             ) : (
@@ -198,26 +198,20 @@ export function DownloadsScreen() {
             <p className="text-[14px] font-extrabold">{t("dl.storageUsage")}</p>
             <span className="ms-auto text-[11px] font-bold text-muted-foreground">{usedPct}%</span>
           </div>
-          <div className="mt-3 flex items-center gap-4">
-            {/* segmented donut: downloads / other apps / free */}
-            <StorageDonut
-              segments={[
-                { value: downloadedMb / 1024, color: "#f8694c" },
-                { value: STORAGE.usedOtherGb, color: "#a0917f" },
-              ]}
-              free={Math.max(0, STORAGE.totalGb - totalUsedGb)}
-              center={`${usedPct}%`}
-              sub={totalUsedGb.toFixed(1) + " GB"}
+          {/* mockup: "X GB / Y GB" + linear bar */}
+          <div className="mt-2 flex items-baseline gap-1.5 ps-0.5" dir="ltr">
+            <span className="text-[20px] font-black leading-none">{totalUsedGb.toFixed(1)} GB</span>
+            <span className="text-[12px] font-bold text-muted-foreground">/ {STORAGE.totalGb} GB</span>
+          </div>
+          <ProgressBar value={usedPct} className="mt-2.5 h-[5px]" />
+          <div className="mt-3 space-y-1.5">
+            <LegendRow color="#f8694c" label={t("dl.title")} value={`${(downloadedMb / 1024).toFixed(1)} GB`} />
+            <LegendRow color="#a0917f" label={t("dl.otherApps")} value={`${STORAGE.usedOtherGb.toFixed(1)} GB`} />
+            <LegendRow
+              color="var(--secondary)"
+              label={t("dl.freeSpace")}
+              value={`${Math.max(0, STORAGE.totalGb - totalUsedGb).toFixed(1)} GB`}
             />
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <LegendRow color="#f8694c" label={t("dl.title")} value={`${(downloadedMb / 1024).toFixed(1)} GB`} />
-              <LegendRow color="#a0917f" label={t("dl.otherApps")} value={`${STORAGE.usedOtherGb.toFixed(1)} GB`} />
-              <LegendRow
-                color="var(--secondary)"
-                label={t("dl.freeSpace")}
-                value={`${Math.max(0, STORAGE.totalGb - totalUsedGb).toFixed(1)} GB`}
-              />
-            </div>
           </div>
           <div className="mt-3 rounded-2xl bg-secondary/50 px-3.5 py-2.5">
             <WifiSwitch />
@@ -247,52 +241,7 @@ function LegendRow({ color, label, value }: { color: string; label: string; valu
   );
 }
 
-/** donut with proportional segments + free remainder */
-function StorageDonut({
-  segments,
-  free,
-  center,
-  sub,
-}: {
-  segments: { value: number; color: string }[];
-  free: number;
-  center: string;
-  sub: string;
-}) {
-  const total = Math.max(0.001, free + segments.reduce((a, s) => a + Math.max(0, s.value), 0));
-  const R = 30;
-  const C = 2 * Math.PI * R;
-  // pure precompute of (fraction, startOffset) per segment
-  const arcs = segments.reduce<{ frac: number; start: number }[]>((list, s) => {
-    const start = list.length === 0 ? 0 : list[list.length - 1].start + list[list.length - 1].frac;
-    list.push({ frac: Math.max(0, s.value) / total, start });
-    return list;
-  }, []);
-  return (
-    <div className="relative h-[76px] w-[76px] shrink-0">
-      <svg viewBox="0 0 76 76" className="h-full w-full -rotate-90">
-        <circle cx="38" cy="38" r={R} fill="none" strokeWidth="10" className="stroke-secondary" />
-        {arcs.map((a, i) => (
-          <circle
-            key={i}
-            cx={38}
-            cy={38}
-            r={R}
-            fill="none"
-            strokeWidth={10}
-            stroke={segments[i].color}
-            strokeDasharray={`${C * a.frac} ${C}`}
-            strokeDashoffset={-C * a.start}
-          />
-        ))}
-      </svg>
-      <span className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-[13px] font-black leading-none text-foreground">{center}</span>
-        <span className="mt-0.5 text-[9px] font-bold text-muted-foreground">{sub}</span>
-      </span>
-    </div>
-  );
-}
+/** donut removed in favor of the mockup's linear storage bar */
 
 function WifiSwitch() {
   const { t } = useT();
@@ -309,10 +258,19 @@ function WifiSwitch() {
   );
 }
 
-function SectionRow({ title }: { title: string }) {
+function SectionRow({ title, onSeeAll }: { title: string; onSeeAll?: () => void }) {
+  const { t } = useT();
   return (
     <div className="mb-3 flex items-center justify-between">
       <h2 className="text-[16px] font-extrabold tracking-tight">{title}</h2>
+      {onSeeAll && (
+        <button
+          onClick={onSeeAll}
+          className="text-[12px] font-bold text-primary transition-opacity hover:opacity-75"
+        >
+          {t("common.seeAll")}
+        </button>
+      )}
     </div>
   );
 }

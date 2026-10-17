@@ -63,7 +63,7 @@ $BT/zipalign -f 4 $OUT/base.apk $OUT/aligned.apk
 
 echo "[7/7] Signing..."
 KS=$ROOT/android/oni-debug.keystore
-APK_OUT=$ROOT/download/oniLibrary-v1.1.2.apk
+APK_OUT=$ROOT/download/oniLibrary-v1.1.3.apk
 if [ ! -f $KS ]; then
   keytool -genkeypair -v -keystore $KS -storepass onilibrary -keypass onilibrary \
     -alias oni -keyalg RSA -keysize 2048 -validity 10000 \

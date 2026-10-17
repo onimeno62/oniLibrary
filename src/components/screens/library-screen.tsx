@@ -22,7 +22,7 @@ import {
   Bookmark,
   Sparkles,
 } from "lucide-react";
-import { SectionHeader, WorkCover, ProgressBar, EmptyState, StatusBadge } from "@/components/shared";
+import { SectionHeader, WorkCover, ProgressBar, EmptyState } from "@/components/shared";
 import { useApp, useNav, workProgress, currentChapter, matchesRule } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
@@ -234,17 +234,18 @@ export function LibraryScreen() {
   };
 
   const activeFilterCount = (statusFilter ? 1 : 0) + (sourceFilter ? 1 : 0) + (downloadedOnly ? 1 : 0) + (unreadOnly ? 1 : 0);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="min-h-full px-5 pb-24">
       <header className="flex items-center justify-between pt-2">
         <h1 className="text-[24px] font-black tracking-tight">{t("lib.title")}</h1>
         <button
-          onClick={() => setSelection([])}
-          aria-label={t("lib.select")}
+          onClick={() => searchRef.current?.focus()}
+          aria-label={t("common.search")}
           className="flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-secondary"
         >
-          <Check className="h-[21px] w-[21px]" />
+          <Search className="h-[21px] w-[21px]" />
         </button>
       </header>
 
@@ -253,6 +254,7 @@ export function LibraryScreen() {
         <div className="flex h-11 flex-1 items-center gap-2 rounded-full bg-card px-4 shadow-[0_6px_18px_-12px_rgba(43,36,29,0.35)]">
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
           <input
+            ref={searchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("lib.searchPlaceholder")}
@@ -869,12 +871,36 @@ function WorkGridCard({
 
   const longPressProps = useLongPress(onLongPress);
 
+  // mockup style: minimal dot/label status instead of pill badges
   const badge = () => {
     if (work.readingStatus === "COMPLETED")
-      return <StatusBadge kind="done" label={`✓ ${t("status.COMPLETED")}`} />;
-    if (work.readingStatus === "ON_HOLD") return <StatusBadge kind="paused" label={`⏸ ${t("status.ON_HOLD")}`} />;
-    if (progress > 0) return <StatusBadge kind="percent" label={`${progress}%`} />;
-    if (work.readingStatus === "PLANNED") return <StatusBadge kind="planned" label={t("status.PLANNED")} />;
+      return (
+        <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          {t("status.COMPLETED")}
+        </span>
+      );
+    if (work.readingStatus === "ON_HOLD")
+      return (
+        <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground">
+          <Pause className="h-3 w-3" />
+          {t("status.ON_HOLD")}
+        </span>
+      );
+    if (work.readingStatus === "PLANNED")
+      return (
+        <span className="flex items-center gap-1.5 text-[10px] font-bold text-sky-600 dark:text-sky-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+          {t("status.PLANNED")}
+        </span>
+      );
+    if (work.readingStatus === "DROPPED")
+      return (
+        <span className="flex items-center gap-1.5 text-[10px] font-bold text-red-500 dark:text-red-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+          {t("status.DROPPED")}
+        </span>
+      );
     return null;
   };
 
@@ -919,15 +945,16 @@ function WorkGridCard({
             <>
               <ProgressBar value={progress} className="h-[3px] flex-1" />
               <span className="text-[10px] font-black text-primary">{progress}%</span>
+              {work.readingStatus === "ON_HOLD" && <Pause className="h-3 w-3 shrink-0 text-muted-foreground" />}
             </>
           )}
         </div>
+        {(work.readingStatus === "COMPLETED" || work.readingStatus === "ON_HOLD" || work.readingStatus === "PLANNED" || work.readingStatus === "DROPPED") && (
+          <div className="mt-0.5">{badge()}</div>
+        )}
         <p className="mt-0.5 text-[10px] font-semibold text-muted-foreground">
           {t("common.ch")} {currentChapter(work)?.number ?? work.chapters[0]?.number ?? "—"}
         </p>
-        <div className="mt-1">
-          {(work.readingStatus === "COMPLETED" || work.readingStatus === "ON_HOLD" || work.readingStatus === "PLANNED" || work.readingStatus === "DROPPED") && badge()}
-        </div>
       </button>
       {!selectionMode && (
         <DropdownMenu open={menuForMenu} onOpenChange={setMenuForMenu}>
@@ -935,7 +962,7 @@ function WorkGridCard({
             <button
               aria-label={t("common.more")}
               onClick={(e) => e.stopPropagation()}
-              className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+              className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/45 text-white opacity-95 backdrop-blur transition-opacity hover:opacity-100 data-[state=open]:opacity-100"
               style={{ position: "absolute" }}
             >
               <MoreHorizontal className="h-3.5 w-3.5" />

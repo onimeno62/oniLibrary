@@ -3,6 +3,32 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.1.3] — 2026-10-17
+
+### Added
+- **Discover promo carousel** — the "Discover More" banner is now a real
+  3-slide carousel matching the mockup's page dots: swipeable, auto-advancing
+  every 5 s (pauses on touch), with clickable dots. Two new AI-illustrated
+  slides: "Read Anywhere" (→ Downloads) and "Your Secret Vault" (→ Vault),
+  localized in English and Persian.
+
+### Fixed (mockup-parity audit)
+- **Library** — the card ⋯ menu is now always visible (was hover-only, hence
+  invisible on touch devices); the header shows the mockup's search icon
+  (focuses the search field; multi-select stays available via long-press);
+  status badges use the mockup's minimal style — green dot "Completed",
+  percent + pause for On hold, sky dot "Planned", red dot "Dropped".
+- **Downloads** — "See all" links added to the Active and Completed section
+  headers (jump to the matching filter); the Storage Usage card now matches
+  the mockup: "57.6 GB / 64 GB" + percent + linear coral bar, keeping the
+  per-segment legend, Wi-Fi-only switch and Clear cache action.
+- **Details** — read chapters get the mockup's filled orange check circle
+  (previously a translucent outline); the chapters header reads
+  "Sort by: Latest ⌄" with a chevron affordance; rating counts show one
+  decimal ("412.3k" instead of "412k").
+- **Reader** — the chapter-list control label is now "Chapter List" as in the
+  mockup.
+
 ## [1.1.2] — 2026-10-17
 
 ### Fixed

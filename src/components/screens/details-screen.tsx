@@ -20,7 +20,6 @@ import {
   BookMarked,
   CheckCircle2,
   Loader2,
-  ArrowUpDown,
   Trash2,
   Pencil,
   StickyNote,
@@ -232,7 +231,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
             <StatCell
               icon={<Star className="h-4 w-4 fill-current" />}
               value={work.rating > 0 ? work.rating.toFixed(1) : "—"}
-              label={work.ratingCount > 0 ? `(${(work.ratingCount / 1000).toFixed(0)}k)` : ""}
+              label={work.ratingCount > 0 ? `(${(work.ratingCount / 1000).toFixed(1)}k)` : ""}
             />
           </div>
 
@@ -344,10 +343,10 @@ export function DetailsScreen({ workId }: { workId: string }) {
             <h2 className="text-[17px] font-extrabold text-white">{t("det.chapters")}</h2>
             <button
               onClick={() => setSortNewest((v) => !v)}
-              className="flex items-center gap-1.5 text-[12px] font-bold text-white/70 transition-colors hover:text-white"
+              className="flex items-center gap-1 text-[12px] font-bold text-white/70 transition-colors hover:text-white"
             >
               {t("det.sortBy")} {sortNewest ? t("det.latest") : t("det.oldest")}
-              <ArrowUpDown className="h-3.5 w-3.5" />
+              <ChevronDown className="h-3.5 w-3.5" />
             </button>
           </div>
 
@@ -573,7 +572,9 @@ function ChapterRow({
         aria-label={t("upd.markRead")}
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors",
-          ch.isRead ? "border-primary/50 bg-primary/15 text-primary" : "border-white/15 text-white/50 hover:border-primary hover:text-primary"
+          ch.isRead
+            ? "border-transparent bg-coral-gradient text-white shadow-[0_6px_14px_-6px_rgba(248,105,76,0.8)]"
+            : "border-white/15 text-white/50 hover:border-primary hover:text-primary"
         )}
       >
         <CheckCircle2 className="h-4 w-4" />
