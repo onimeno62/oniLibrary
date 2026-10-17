@@ -77,7 +77,9 @@ export function LibraryScreen() {
   const [saveFilterOpen, setSaveFilterOpen] = useState(false);
   const [filterName, setFilterName] = useState("");
   const [smartRule, setSmartRule] = useState<{ name: string; rule: SmartRule } | null>(null);
+  const [bulkPick, setBulkPick] = useState<null | "category" | "status">(null);
   const savedFilters = useApp((s) => s.savedFilters);
+  const density = useApp((s) => s.settings.libraryDensity);
   const fileRef = useRef<HTMLInputElement>(null);
 
   /** snapshot of every chip/checkbox that a saved filter restores */
@@ -427,7 +429,12 @@ export function LibraryScreen() {
             hint={query ? undefined : t("lib.emptyHint")}
           />
         ) : view === "grid" ? (
-          <div className="grid grid-cols-3 gap-x-3 gap-y-4">
+          <div
+            className={cn(
+              "grid gap-x-3 gap-y-4",
+              density === "compact" ? "grid-cols-4" : density === "large" ? "grid-cols-2" : "grid-cols-3"
+            )}
+          >
             {filtered.map((w) => (
               <WorkGridCard
                 key={w.id}
@@ -496,15 +503,7 @@ export function LibraryScreen() {
               label={t("lib.moveCategory")}
               onClick={() => {
                 if (selection.length === 0) return;
-                const cat = useApp.getState().categories[0];
-                if (!cat) return;
-                const assign = useApp.getState().assignCategories;
-                selection.forEach((id) => {
-                  const cur = useApp.getState().workCategories[id] ?? [];
-                  assign(id, Array.from(new Set([...cur, cat.id])));
-                });
-                toast({ title: `${t("lib.moveCategory")}: ${cat.name}` });
-                setSelection(null);
+                setBulkPick("category");
               }}
             />
             <SelAction
@@ -512,9 +511,17 @@ export function LibraryScreen() {
               label={t("lib.setStatus")}
               onClick={() => {
                 if (selection.length === 0) return;
-                const setStatus = useApp.getState().setStatus;
-                selection.forEach((id) => setStatus(id, "COMPLETED"));
-                toast({ title: t("status.COMPLETED") });
+                setBulkPick("status");
+              }}
+            />
+            <SelAction
+              icon={<Heart className="h-5 w-5 text-primary" />}
+              label={t("lib.bulkFavorite")}
+              onClick={() => {
+                if (selection.length === 0) return;
+                const upd = useApp.getState().updateWork;
+                selection.forEach((id) => upd(id, { isFavorite: true }));
+                toast({ title: t("lib.bulkFavoriteToast", { n: selection.length }) });
                 setSelection(null);
               }}
             />
@@ -545,6 +552,70 @@ export function LibraryScreen() {
           </div>
         </div>
       )}
+
+      {/* bulk pickers (LIB-007) — real category/status choosers */}
+      <Dialog open={bulkPick === "category"} onOpenChange={(o) => !o && setBulkPick(null)}>
+        <DialogContent className="max-h-[70dvh] rounded-3xl p-0">
+          <DialogHeader className="border-b border-border/60 px-5 py-4">
+            <DialogTitle className="text-[16px] font-black">{t("lib.pickCategory")}</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[46dvh] overflow-y-auto p-3">
+            {categories.length === 0 && (
+              <p className="px-2 py-6 text-center text-[13px] font-semibold text-muted-foreground">
+                {t("lib.empty")}
+              </p>
+            )}
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  const assign = useApp.getState().assignCategories;
+                  selection?.forEach((id) => {
+                    const cur = useApp.getState().workCategories[id] ?? [];
+                    assign(id, Array.from(new Set([...cur, c.id])));
+                  });
+                  toast({ title: `${t("lib.moveCategory")}: ${c.name}` });
+                  setBulkPick(null);
+                  setSelection(null);
+                }}
+                className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-start transition-colors hover:bg-secondary"
+              >
+                <span className={cn("flex h-9 w-9 items-center justify-center rounded-xl", c.rule ? "bg-coral-gradient text-white" : "bg-secondary text-primary")}>
+                  <FolderPlus className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[14px] font-extrabold">{c.name}</span>
+                {c.rule && <Sparkles className="h-3.5 w-3.5 text-primary" />}
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkPick === "status"} onOpenChange={(o) => !o && setBulkPick(null)}>
+        <DialogContent className="max-h-[70dvh] rounded-3xl p-0">
+          <DialogHeader className="border-b border-border/60 px-5 py-4">
+            <DialogTitle className="text-[16px] font-black">{t("lib.pickStatus")}</DialogTitle>
+          </DialogHeader>
+          <div className="p-3">
+            {(["PLANNED", "READING", "COMPLETED", "ON_HOLD", "DROPPED"] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => {
+                  const setStatus = useApp.getState().setStatus;
+                  selection?.forEach((id) => setStatus(id, st));
+                  toast({ title: t(`status.${st}`) });
+                  setBulkPick(null);
+                  setSelection(null);
+                }}
+                className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-start transition-colors hover:bg-secondary"
+              >
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
+                <span className="flex-1 text-[14px] font-extrabold">{t(`status.${st}`)}</span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* filter sheet */}
       <Dialog open={showFilters} onOpenChange={setShowFilters}>

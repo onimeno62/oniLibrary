@@ -174,19 +174,19 @@ export function StatisticsScreen() {
         if (day.getMonth() !== prevMonth) {
           prevMonth = day.getMonth();
           // label the column with the month in which the change actually occurs
-          monthLabel = day.toLocaleDateString("en-US", { month: "short" });
+          monthLabel = day.toLocaleDateString(fa ? "fa" : "en-US", { month: "short" });
         }
         cells.push({
           iso,
           minutes: byDate.get(iso) ?? 0,
           future,
-          label: day.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          label: day.toLocaleDateString(fa ? "fa" : "en-US", { month: "short", day: "numeric" }),
         });
       }
       weeks.push({ cells, monthLabel });
     }
     return weeks;
-  }, [sessions]);
+  }, [sessions, fa]);
 
   /* selected heatmap day → detail + per-day minute editing (round 11) */
   const [selDay, setSelDay] = useState<string | null>(null);

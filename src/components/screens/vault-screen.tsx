@@ -493,6 +493,30 @@ export function VaultLockScreen({
 
   const handleBiometric = () => {
     if (scanning) return;
+    const b = window as unknown as {
+      OniAndroid?: { vaultBiometric?: () => number };
+      OniNativeVaultAuth?: { done: (ok: boolean) => void };
+    };
+    if (b.OniAndroid?.vaultBiometric) {
+      // VLT-002: real platform BiometricPrompt — result arrives on
+      // window.OniNativeVaultAuth.done(ok) from the native shell
+      const started = b.OniAndroid.vaultBiometric();
+      if (!started) return; // prompt unavailable — stay on PIN entry
+      setScanning(true);
+      b.OniNativeVaultAuth = {
+        done: (ok: boolean) => {
+          setScanning(false);
+          if (ok) {
+            unlock();
+          } else {
+            setShake(true);
+            setTimeout(() => setShake(false), 500);
+          }
+        },
+      };
+      return;
+    }
+    // web fallback: simulated scan
     setScanning(true);
     setTimeout(() => {
       setScanning(false);

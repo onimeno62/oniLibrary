@@ -3,17 +3,23 @@ package com.onilibrary.app;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ContentValues;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.database.Cursor;
+import android.hardware.biometrics.BiometricPrompt;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -32,26 +38,43 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 /**
  * oniLibrary — offline WebView shell.
  * Serves the bundled static app from assets/www over a virtual https origin
  * so that localStorage / IndexedDB work with a secure context.
+ *
+ * Native bridges (window.OniAndroid):
+ *  - setOverlayDepth / tts* / exportFile            (original)
+ *  - setVolumeKeyMode      → reader page turns via volume keys
+ *  - pendingImportInfo / readImportChunk / clearPendingImport
+ *                          → files received via Share / Open-With
+ *  - vaultBiometric        → platform biometric unlock for the Vault
  */
 public class MainActivity extends Activity {
 
     private static final String HOST = "appassets.androidplatform.net";
     private static final String START_URL = "https://" + HOST + "/assets/index.html";
     private static final String ASSET_PREFIX = "/assets/";
+    private static final int IMPORT_CHUNK = 96 * 1024; // base64-safe chunk size
 
     private WebView webView;
     private volatile int overlayDepth = 0;
+    private volatile boolean volumeKeysActive = false;
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    // pending file received from another app (Share / Open-With)
+    private final Object importLock = new Object();
+    private File pendingImportFile = null;
+    private String pendingImportName = null;
+    private String pendingImportMime = "application/octet-stream";
 
     private static final Map<String, String> MIME = new HashMap<>();
     static {
@@ -158,12 +181,114 @@ public class MainActivity extends Activity {
         } else {
             webView.loadUrl(START_URL);
         }
+
+        handleIncomingIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+
+    /* ------------------------------------------------------------------ *
+     *  Inbound files (ACTION_VIEW / ACTION_SEND with EXTRA_STREAM)
+     * ------------------------------------------------------------------ */
+
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        Uri uri = null;
+        if (Intent.ACTION_VIEW.equals(action)) {
+            uri = intent.getData();
+        } else if (Intent.ACTION_SEND.equals(action)) {
+            uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        }
+        if (uri == null) return;
+
+        final Uri src = uri;
+        // copy on a worker thread — streams can be slow
+        new Thread(() -> {
+            String name = queryName(src);
+            String mime = pendingImportMime;
+            try {
+                String type = getContentResolver().getType(src);
+                if (type != null && !type.isEmpty()) mime = type;
+            } catch (Exception ignored) { }
+            if (name == null || name.isEmpty()) {
+                String last = src.getLastPathSegment();
+                name = last == null ? "import.bin" : last.substring(last.lastIndexOf('/') + 1);
+            }
+            String safeName = name.replaceAll("[\\\\/:*?\"<>|]", "_");
+            File dir = new File(getCacheDir(), "incoming");
+            if (!dir.exists()) dir.mkdirs();
+            File dst = new File(dir, System.currentTimeMillis() + "-" + safeName);
+            try (InputStream is = getContentResolver().openInputStream(src);
+                 OutputStream os = new FileOutputStream(dst)) {
+                if (is == null) throw new IOException("no stream");
+                byte[] buf = new byte[16384];
+                int n;
+                while ((n = is.read(buf)) > 0) os.write(buf, 0, n);
+                synchronized (importLock) {
+                    pendingImportFile = dst;
+                    pendingImportName = safeName;
+                    pendingImportMime = mime;
+                }
+                mainHandler.post(() -> {
+                    toast("Received: " + safeName);
+                    if (webView != null) {
+                        webView.evaluateJavascript(
+                            "window.dispatchEvent(new CustomEvent('oni-android-import'))", null);
+                    }
+                });
+            } catch (Exception e) {
+                dst.delete();
+                mainHandler.post(() ->
+                        toast("Could not import the shared file"));
+            }
+        }, "oni-import").start();
+    }
+
+    private String queryName(Uri uri) {
+        try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) return c.getString(idx);
+            }
+        } catch (Exception ignored) { }
+        return null;
+    }
+
+    /* ------------------------------------------------------------------ *
+     *  Volume-key page turns (when the reader opts in)
+     * ------------------------------------------------------------------ */
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (volumeKeysActive && event.getAction() == KeyEvent.ACTION_DOWN) {
+            int kc = event.getKeyCode();
+            if (kc == KeyEvent.KEYCODE_VOLUME_DOWN || kc == KeyEvent.KEYCODE_VOLUME_UP) {
+                String dir = kc == KeyEvent.KEYCODE_VOLUME_DOWN ? "down" : "up";
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('oni-volume',{detail:{dir:'" + dir + "'}}))",
+                    null);
+                return true; // consume — do not change media volume
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private class Bridge {
         @JavascriptInterface
         public void setOverlayDepth(int depth) {
             overlayDepth = depth;
+        }
+
+        /** reader toggles volume-key page turning on mount / off on unmount */
+        @JavascriptInterface
+        public void setVolumeKeyMode(boolean active) {
+            volumeKeysActive = active;
         }
 
         @JavascriptInterface
@@ -234,6 +359,93 @@ public class MainActivity extends Activity {
             }
         }
 
+        /* ------- inbound file transfer (chunked, survives large PDFs) ------- */
+
+        /** JSON {name, mime, size} for the pending shared file, or "null" */
+        @JavascriptInterface
+        public String pendingImportInfo() {
+            synchronized (importLock) {
+                if (pendingImportFile == null || !pendingImportFile.exists()) return "null";
+                return "{\"name\":" + jsonStr(pendingImportName)
+                        + ",\"mime\":" + jsonStr(pendingImportMime)
+                        + ",\"size\":" + pendingImportFile.length() + "}";
+            }
+        }
+
+        /** base64 chunk of the pending file, or "" when out of range */
+        @JavascriptInterface
+        public String readImportChunk(int offset, int length) {
+            synchronized (importLock) {
+                if (pendingImportFile == null || !pendingImportFile.exists()) return "";
+                try (RandomAccessFile raf = new RandomAccessFile(pendingImportFile, "r")) {
+                    int len = Math.max(0, Math.min(length, IMPORT_CHUNK));
+                    if (offset < 0 || offset >= raf.length()) return "";
+                    len = (int) Math.min(len, raf.length() - offset);
+                    byte[] buf = new byte[len];
+                    raf.seek(offset);
+                    raf.readFully(buf);
+                    return Base64.encodeToString(buf, Base64.NO_WRAP);
+                } catch (Exception e) {
+                    return "";
+                }
+            }
+        }
+
+        @JavascriptInterface
+        public void clearPendingImport() {
+            synchronized (importLock) {
+                if (pendingImportFile != null) pendingImportFile.delete();
+                pendingImportFile = null;
+                pendingImportName = null;
+            }
+        }
+
+        /* ---------------------------- biometrics ---------------------------- */
+
+        /**
+         * Platform biometric unlock for the Vault (API 28+). Biometric-only —
+         * cancelling falls back to the JS PIN keypad. Reports through
+         * window.OniNativeVaultAuth.done(ok:boolean).
+         * Returns 1 when the prompt was started, 0 when unavailable.
+         */
+        @JavascriptInterface
+        public int vaultBiometric() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return 0;
+            try {
+                CancellationSignal signal = new CancellationSignal();
+                Executor exec = mainHandler::post;
+                BiometricPrompt prompt = new BiometricPrompt.Builder(MainActivity.this)
+                        .setTitle("oniLibrary")
+                        .setSubtitle("Unlock your Vault")
+                        .setNegativeButton("Cancel", exec,
+                                (DialogInterface.OnClickListener) (dialog, which) -> notifyVaultAuth(false))
+                        .build();
+                prompt.authenticate(signal, exec, new BiometricPrompt.AuthenticationCallback() {
+                    @Override
+                    public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                        notifyVaultAuth(true);
+                    }
+                    @Override
+                    public void onAuthenticationFailed() { /* keep prompting */ }
+                    @Override
+                    public void onAuthenticationError(int code, CharSequence errString) {
+                        notifyVaultAuth(false);
+                    }
+                    @Override
+                    public void onAuthenticationHelp(int helpCode, CharSequence helpString) {
+                        /* transient hint — keep prompting */ }
+                });
+                return 1;
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        private String jsonStr(String v) {
+            if (v == null) return "\"\"";
+            return "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        }
+
         /** system share sheet (ACTION_SEND) via FileProvider — universal fallback */
         private void shareBytes(byte[] bytes, String fileName, String mime) {
             try {
@@ -253,10 +465,11 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { }
         }
 
-        private void toast(final String msg) {
-            mainHandler.post(() ->
-                    Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
-        }
+    }
+
+    private void toast(final String msg) {
+        mainHandler.post(() ->
+                Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
     }
 
     /** report chunk completion back into the JS read-aloud queue */
@@ -265,6 +478,17 @@ public class MainActivity extends Activity {
             if (webView != null) {
                 webView.evaluateJavascript(
                     "window.OniNativeTts&&window.OniNativeTts.done()", null);
+            }
+        });
+    }
+
+    /** report biometric result back into the JS vault gate */
+    private void notifyVaultAuth(boolean ok) {
+        mainHandler.post(() -> {
+            if (webView != null) {
+                webView.evaluateJavascript(
+                    "window.OniNativeVaultAuth&&window.OniNativeVaultAuth.done(" + (ok ? "true" : "false") + ")",
+                    null);
             }
         });
     }

@@ -39,6 +39,9 @@ const INCLUDED: TranslationKey[] = [
   "bkp.inc.bookmarks",
   "bkp.inc.highlights",
   "bkp.inc.stats",
+  "bkp.inc.history",
+  "bkp.inc.filters",
+  "bkp.inc.sources",
 ];
 
 const EXCLUDED: TranslationKey[] = ["bkp.exc.files", "bkp.exc.vaultFiles", "bkp.exc.extensions"];
@@ -59,6 +62,10 @@ export function BackupScreen() {
   const sessions = useApp((s) => s.sessions);
   const bookmarks = useApp((s) => s.bookmarks);
   const highlights = useApp((s) => s.highlights);
+  const history = useApp((s) => s.history);
+  const sources = useApp((s) => s.sources);
+  const servers = useApp((s) => s.servers);
+  const savedFilters = useApp((s) => s.savedFilters);
   const lastBackup = useApp((s) => s.lastBackup);
   const setLastBackup = useApp((s) => s.setLastBackup);
   const importBackup = useApp((s) => s.importBackup);
@@ -146,7 +153,7 @@ export function BackupScreen() {
   const createBackup = () => {
     const payload = {
       app: "oniLibrary",
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       works,
       categories,
@@ -155,6 +162,11 @@ export function BackupScreen() {
       sessions,
       bookmarks,
       highlights,
+      // v2: full library context (BKP-001)
+      history,
+      savedFilters,
+      sources: sources.map((s) => ({ id: s.id, enabled: s.enabled, pinned: s.pinned })),
+      servers,
     };
     const name = `onilibrary-backup-${ymd()}.onibackup`;
     const content = JSON.stringify(payload, null, 2);

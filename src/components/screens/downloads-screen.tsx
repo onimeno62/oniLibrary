@@ -329,6 +329,7 @@ function ActiveRow({
   const { t, lang } = useT();
   const pause = useApp((s) => s.pauseDownload);
   const resume = useApp((s) => s.resumeDownload);
+  const cancel = useApp((s) => s.cancelDownload);
   if (!meta) return null;
   const paused = d.status === "PAUSED" || d.status === "QUEUED";
   return (
@@ -360,6 +361,13 @@ function ActiveRow({
       >
         {paused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
       </button>
+      <button
+        onClick={() => cancel(d.id)}
+        aria-label={t("dl.cancelDl")}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+      >
+        <X className="h-4 w-4" />
+      </button>
     </div>
   );
 }
@@ -390,7 +398,9 @@ function DoneRow({
         </p>
         <p className="mt-0.5 text-[11px] font-bold text-muted-foreground">
           {failed ? (
-            <span className="text-destructive">{d.error ?? t("dl.failedState")}</span>
+            <span className="text-destructive">
+              {d.error === "network" ? t("dl.errNetwork") : d.error ?? t("dl.failedState")}
+            </span>
           ) : (
             `${d.downloadedMb.toFixed(1)} MB • ${t("dl.completeState")}`
           )}

@@ -17,12 +17,26 @@ export function useClientEngine(readerOpen: boolean) {
   const vaultUnlocked = useApp((s) => s.vaultUnlocked);
   const setVaultUnlocked = useApp((s) => s.setVaultUnlocked);
   const stack = useNav((s) => s.stack);
+  const autoUpdateCheck = useApp((s) => s.settings.autoUpdateCheck);
+  const updateChecking = useApp((s) => s.updateCheck.checking);
 
   // download tick
   useEffect(() => {
     const id = setInterval(() => tickDownloads(), 1000);
     return () => clearInterval(id);
   }, [tickDownloads]);
+
+  // auto library update check (UPD-002/004) — every 15 min while app is open
+  useEffect(() => {
+    if (!autoUpdateCheck || updateChecking) return;
+    const id = window.setInterval(() => {
+      const st = useApp.getState();
+      if (!st.settings.autoUpdateCheck || st.updateCheck.checking) return;
+      const last = st.updateCheck.lastCheck ? new Date(st.updateCheck.lastCheck).getTime() : 0;
+      if (Date.now() - last >= 15 * 60_000) void st.runUpdateCheck();
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, [autoUpdateCheck, updateChecking]);
 
   // vault auto lock on background
   useEffect(() => {

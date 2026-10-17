@@ -1123,6 +1123,32 @@ export function ReaderScreen({
     return () => window.removeEventListener("keydown", fn);
   });
 
+  /* ----- Android volume keys → page turns (RDR-010): the native shell
+     intercepts VOLUME_UP/DOWN while the reader is open and dispatches
+     `oni-volume`; mapping follows the reader convention
+     (Vol↓ = next, Vol↑ = previous), honouring the user setting ----- */
+  useEffect(() => {
+    const anyWin = window as unknown as {
+      OniAndroid?: { setVolumeKeyMode?: (active: boolean) => void };
+    };
+    const bridge = anyWin.OniAndroid;
+    const setMode = bridge?.setVolumeKeyMode;
+    if (!setMode) return;
+    const enabled = useApp.getState().settings.volumeKeyPaging;
+    setMode(enabled);
+    if (!enabled) return;
+    const fn = (e: Event) => {
+      const dir = (e as CustomEvent<{ dir?: "up" | "down" }>).detail?.dir;
+      if (dir === "up") prev();
+      else next();
+    };
+    window.addEventListener("oni-volume", fn);
+    return () => {
+      window.removeEventListener("oni-volume", fn);
+      setMode(false);
+    };
+  });
+
   /* ----- pdf full-text search (RDR-015): debounced committed query ----- */
   useEffect(() => {
     if (!pdfSearchOpen || !isPdf) return;

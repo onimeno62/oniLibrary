@@ -225,6 +225,10 @@ export interface Settings {
   vaultPinHash: string | null;
   vaultBiometric: boolean;
   vaultAutoLock: boolean;
+  /** RDR-010: volume keys turn pages while the reader is open (Android) */
+  volumeKeyPaging: boolean;
+  /** UX-003: library grid density — compact(4) / cozy(3) / large(2) columns */
+  libraryDensity: "compact" | "cozy" | "large";
   readerDefaults: {
     mode: ReaderMode;
     direction: ReadingDirection;

@@ -17,6 +17,8 @@ import {
   WifiOff,
   ShieldCheck,
   Eraser,
+  Info,
+  Github,
 } from "lucide-react";
 import { OverlayHeader } from "@/components/shared";
 import { useApp } from "@/lib/store";
@@ -145,8 +147,15 @@ const DIR_OPTIONS: [ReadingDirection, TranslationKey][] = [
 
 const MODE_OPTIONS: [ReaderMode, TranslationKey][] = [
   ["PAGED", "rdr.mode.paged"],
+  ["DOUBLE", "rdr.mode.double"],
   ["CONTINUOUS", "rdr.mode.continuous"],
   ["WEBTOON", "rdr.mode.webtoon"],
+];
+
+const DENSITY_OPTIONS: ["compact" | "cozy" | "large", TranslationKey][] = [
+  ["compact", "set.density.compact"],
+  ["cozy", "set.density.cozy"],
+  ["large", "set.density.large"],
 ];
 
 const FIT_OPTIONS: [FitMode, TranslationKey][] = [
@@ -243,6 +252,16 @@ export function SettingsScreen() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* UX-003: library grid density */}
+        <div className="mt-1 border-t border-border pt-1">
+          <ChipSelect
+            label={t("set.density")}
+            value={settings.libraryDensity}
+            options={DENSITY_OPTIONS}
+            onChange={(v) => setSettings({ libraryDensity: v })}
+          />
         </div>
       </Section>
 
@@ -341,6 +360,34 @@ export function SettingsScreen() {
             onValueChange={(v) => setReaderDefaults({ brightness: v[0] ?? rd.brightness })}
             aria-label={t("rdr.brightnessLabel")}
             className="data-[state=checked]:bg-primary"
+          />
+        </div>
+
+        {/* behaviour toggles (RDR-010/011 etc.) */}
+        <div className="border-t border-border pt-1">
+          <SwitchRow
+            label={t("rdr.autoNext")}
+            checked={rd.autoNext}
+            onChange={(v) => setReaderDefaults({ autoNext: v })}
+          />
+          <div className="h-px bg-border" />
+          <SwitchRow
+            label={t("rdr.cropBorders")}
+            checked={rd.cropBorders}
+            onChange={(v) => setReaderDefaults({ cropBorders: v })}
+          />
+          <div className="h-px bg-border" />
+          <SwitchRow
+            label={t("rdr.keepAwake")}
+            checked={rd.keepAwake}
+            onChange={(v) => setReaderDefaults({ keepAwake: v })}
+          />
+          <div className="h-px bg-border" />
+          <SwitchRow
+            label={t("set.volumeKeys")}
+            hint={t("set.volumeKeysHint")}
+            checked={settings.volumeKeyPaging}
+            onChange={(v) => setSettings({ volumeKeyPaging: v })}
           />
         </div>
       </Section>
@@ -444,6 +491,34 @@ export function SettingsScreen() {
           {t("more.account")}
         </p>
       </div>
+
+      {/* ---- About ---- */}
+      <Section Icon={Info} title={t("more.about")}>
+        <div className="flex items-center gap-3 py-1.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-coral-soft text-primary">
+            <Info className="h-4.5 w-4.5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] font-bold">oniLibrary</p>
+            <p className="text-[11px] font-semibold text-muted-foreground">{t("about.tagline")}</p>
+          </div>
+          <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-black text-primary">
+            v1.1.0 (3)
+          </span>
+        </div>
+        <a
+          href="https://github.com/onimeno62/oniLibrary_zai_2"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 flex items-center gap-3 border-t border-border py-2.5"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
+            <Github className="h-4.5 w-4.5" />
+          </span>
+          <span className="min-w-0 flex-1 text-[14px] font-bold">GitHub</span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground rtl:rotate-180" />
+        </a>
+      </Section>
     </div>
   );
 }

@@ -29,6 +29,8 @@ import { HighlightsScreen } from "@/components/screens/highlights-screen";
 import { useApp, useNav, type Overlay } from "@/lib/store";
 import { useT, useResolvedTheme, useMounted } from "@/lib/use-app";
 import { useClientEngine } from "@/lib/engine";
+import { importFiles } from "@/lib/importer";
+import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { BookOpen, Compass, Download, LibraryBig, ShieldCheck, BarChart3 } from "lucide-react";
 
@@ -222,6 +224,71 @@ export function AppShell() {
       void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }, 2500);
     return () => window.clearTimeout(id);
+  }, []);
+
+  // Android Share / Open-With import (LOC-001): the native shell stages a
+  // received file in its cache — pull it over the chunked bridge and import
+  useEffect(() => {
+    const pull = async () => {
+      const b = window as unknown as {
+        OniAndroid?: {
+          pendingImportInfo?: () => string | null;
+          readImportChunk?: (offset: number, length: number) => string;
+          clearPendingImport?: () => void;
+        };
+      };
+      const bridge = b.OniAndroid;
+      if (!bridge?.pendingImportInfo) return;
+      const infoRaw = bridge.pendingImportInfo();
+      if (!infoRaw || infoRaw === "null") return;
+      try {
+        // wait for the persisted store to hydrate before mutating it
+        for (let i = 0; i < 20 && !useApp.getState().hydrated; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        if (!useApp.getState().hydrated) return;
+        const info = JSON.parse(infoRaw) as { name: string; mime: string; size: number };
+        const CHUNK = 96 * 1024;
+        const chunks: Uint8Array[] = [];
+        for (let off = 0; off < info.size; off += CHUNK) {
+          const b64 = bridge.readImportChunk?.(off, CHUNK) ?? "";
+          if (!b64) break;
+          const bin = atob(b64);
+          const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          chunks.push(arr);
+          if (chunks.reduce((a, c) => a + c.length, 0) > 512 * 1024 * 1024) break; // sane cap
+        }
+        const total = chunks.reduce((a, c) => a + c.length, 0);
+        if (total > 0) {
+          const file = new File(chunks as unknown as BlobPart[], info.name || "import", {
+            type: info.mime || "application/octet-stream",
+          });
+          const { created, unsupported } = await importFiles([file]);
+          const addWork = useApp.getState().addWork;
+          for (const w of created) addWork(w);
+          if (created.length) {
+            toast({
+              title: t("imp.added", { n: created.length }),
+              description: created.map((c) => c.title).join(", "),
+            });
+          }
+          if (unsupported.length) {
+            toast({
+              title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }),
+              variant: "destructive",
+            });
+          }
+        }
+        bridge.clearPendingImport?.();
+      } catch {
+        /* malformed transfer — leave it; a retry re-pulls */
+      }
+    };
+    void pull();
+    window.addEventListener("oni-android-import", pull);
+    return () => window.removeEventListener("oni-android-import", pull);
+     
   }, []);
 
   const dark = resolved === "dark";

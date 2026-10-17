@@ -2,12 +2,18 @@
 
 import { useMemo, useState } from "react";
 import Image from "next/image";
-import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2 } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Pin, PinOff, Power, PowerOff } from "lucide-react";
 import { SectionHeader, SourceIcon } from "@/components/shared";
 import { useApp, useNav } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { TranslationKey } from "@/lib/i18n";
 
 type Cat = "ALL" | "MANGA" | "MANHWA" | "COMICS" | "BOOKS" | "MORE";
@@ -17,6 +23,8 @@ export function DiscoverScreen() {
   const sources = useApp((s) => s.sources);
   const offlineMode = useApp((s) => s.settings.offlineMode);
   const push = useNav((s) => s.push);
+  const setSourceEnabled = useApp((s) => s.setSourceEnabled);
+  const setSourcePinned = useApp((s) => s.setSourcePinned);
   const [cat, setCat] = useState<Cat>("ALL");
   const [query, setQuery] = useState("");
 
@@ -40,13 +48,15 @@ export function DiscoverScreen() {
   }, [filteredSources, query]);
 
   const statusLabel = (s: (typeof sources)[number]) =>
-    offlineMode
-      ? t("common.offline")
-      : s.status === "ONLINE"
-        ? t("common.online")
-        : s.status === "OFFLINE"
-          ? t("disc.sourceOffline")
-          : t("disc.sourceError");
+    !s.enabled
+      ? t("disc.sourceDisabled")
+      : offlineMode
+        ? t("common.offline")
+        : s.status === "ONLINE"
+          ? t("common.online")
+          : s.status === "OFFLINE"
+            ? t("disc.sourceOffline")
+            : t("disc.sourceError");
 
   return (
     <div className="min-h-full px-5 pb-8">
@@ -151,31 +161,90 @@ export function DiscoverScreen() {
         <SectionHeader title={t("disc.popularSources")} onSeeAll={() => push({ kind: "extensions" })} />
         <div className="space-y-2.5">
           {visible.map((s) => (
-            <button
+            <div
               key={s.id}
-              onClick={() => push({ kind: "source", sourceId: s.id })}
-              className="flex w-full items-center gap-3.5 rounded-3xl border border-border/60 bg-card p-3 text-start shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)] transition-all hover:shadow-[0_12px_26px_-16px_rgba(43,36,29,0.5)]"
+              className={cn(
+                "flex w-full items-center gap-3.5 rounded-3xl border border-border/60 bg-card p-3 shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)] transition-all hover:shadow-[0_12px_26px_-16px_rgba(43,36,29,0.5)]",
+                !s.enabled && "opacity-60"
+              )}
             >
-              <SourceIcon bg={s.iconBg} text={s.iconText} size={48} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[15px] font-extrabold">{s.name}</p>
-                <p className="truncate text-[12px] font-semibold text-muted-foreground">
-                  {s.kinds.join(" · ")} <span className="mx-1">•</span> {s.itemCount}
-                </p>
-                <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-bold">
-                  <span
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      offlineMode || s.status !== "ONLINE" ? "bg-amber-500" : "bg-emerald-500"
-                    )}
-                  />
-                  <span className={offlineMode || s.status !== "ONLINE" ? "text-amber-600" : "text-emerald-600"}>
-                    {statusLabel(s)}
-                  </span>
-                </p>
-              </div>
-              <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground rtl:rotate-180" />
-            </button>
+              <button
+                onClick={() => push({ kind: "source", sourceId: s.id })}
+                className="flex min-w-0 flex-1 items-center gap-3.5 text-start"
+              >
+                <SourceIcon bg={s.iconBg} text={s.iconText} size={48} />
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1.5 text-[15px] font-extrabold">
+                    {s.name}
+                    {s.pinned && <Pin className="h-3 w-3 shrink-0 rotate-45 text-primary" fill="currentColor" />}
+                  </p>
+                  <p className="truncate text-[12px] font-semibold text-muted-foreground">
+                    {s.kinds.join(" · ")} <span className="mx-1">•</span> {s.itemCount}
+                  </p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-bold">
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        !s.enabled
+                          ? "bg-zinc-400"
+                          : offlineMode || s.status !== "ONLINE"
+                            ? "bg-amber-500"
+                            : "bg-emerald-500"
+                      )}
+                    />
+                    <span
+                      className={
+                        !s.enabled
+                          ? "text-zinc-500"
+                          : offlineMode || s.status !== "ONLINE"
+                            ? "text-amber-600"
+                            : "text-emerald-600"
+                      }
+                    >
+                      {statusLabel(s)}
+                    </span>
+                  </p>
+                </div>
+                <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground rtl:rotate-180" />
+              </button>
+              {/* SRC-004: enable / disable / pin sources */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    aria-label={t("common.more")}
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="rounded-2xl">
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setSourcePinned(s.id, !s.pinned);
+                      toast({ title: s.pinned ? t("src.unpinned") : t("src.pinned"), description: s.name });
+                    }}
+                    className="gap-2.5 rounded-xl text-[13px] font-semibold"
+                  >
+                    {s.pinned ? <PinOff className="h-4 w-4 text-primary" /> : <Pin className="h-4 w-4 text-primary" />}
+                    {s.pinned ? t("src.unpin") : t("src.pin")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setSourceEnabled(s.id, !s.enabled);
+                      toast({
+                        title: s.enabled ? t("src.disabledToast") : t("src.enabledToast"),
+                        description: s.name,
+                      });
+                    }}
+                    className="gap-2.5 rounded-xl text-[13px] font-semibold"
+                  >
+                    {s.enabled ? <PowerOff className="h-4 w-4 text-destructive" /> : <Power className="h-4 w-4 text-primary" />}
+                    {s.enabled ? t("src.disable") : t("src.enable")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           ))}
         </div>
       </section>

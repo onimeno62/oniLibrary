@@ -11,7 +11,14 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const APK = "/home/z/my-project/download/oniLibrary-v1.0.1.apk";
+// pick the APK: argv[2] > newest download/*.apk
+const DL = "/home/z/my-project/download";
+let APK = process.argv[2];
+if (!APK) {
+  const apks = fs.readdirSync(DL).filter((f) => f.endsWith(".apk")).sort();
+  if (!apks.length) throw new Error("no .apk in download/");
+  APK = path.join(DL, apks[apks.length - 1]);
+}
 const TMP = "/tmp/apk-verify";
 
 fs.rmSync(TMP, { recursive: true, force: true });
@@ -94,6 +101,7 @@ if (failures.length) {
 const AAPT2 = `${process.env.ANDROID_SDK_ROOT || "/home/z/android-sdk"}/build-tools/34.0.0/aapt2`;
 const badging = execSync(`${AAPT2} dump badging ${APK}`).toString();
 const ver = badging.match(/versionCode='(\d+)' versionName='([^']+)'/);
+console.log(`Verifying: ${APK}`);
 console.log(`APK version: code=${ver[1]} name=${ver[2]}`);
 console.log(`assets/www files: ${execSync(`find ${WWW} -type f | wc -l`).toString().trim()}`);
 console.log("✅ ALL ASSET URLS RESOLVE — interceptor fix verified");

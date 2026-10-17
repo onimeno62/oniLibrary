@@ -493,19 +493,42 @@ export const useApp = create<AppState>()(
           let downloadedMb = d.downloadedMb + step;
           let progress = Math.min(100, (downloadedMb / d.totalMb) * 100);
           let status: DownloadItem["status"] = d.status;
+          // DWN-004: simulated network failure mid-transfer → ERROR + retry.
+          // Small per-tick chance once real bytes have flowed; deterministic
+          // ids keep the demo stable across reloads.
+          let error = d.error;
+          if (
+            progress > 20 &&
+            progress < 92 &&
+            Math.random() < 0.003
+          ) {
+            status = "ERROR";
+            error = "network";
+          }
           if (progress >= 100) {
             progress = 100;
             downloadedMb = d.totalMb;
             status = "DONE";
           }
-          const nd = { ...d, downloadedMb, progress, status };
-          if (status === "DONE") {
+          const nd = { ...d, downloadedMb, progress, status, error };
+          if (status === "DONE" && s.settings.ntfDownloads) {
             newEvents.push({ d: nd, n: {
               type: "DOWNLOAD" as const,
               workId: d.workId,
               chapterLabel: chapterLabelOf(s.works, d),
               title: workTitleOf(s.works, d.workId),
               body: `Download completed · ${d.totalMb.toFixed(1)} MB`,
+            } });
+          }
+          if (status === "ERROR" && s.settings.ntfErrors) {
+            const vlt = s.works.find((w) => w.id === d.workId)?.inVault === true;
+            newEvents.push({ d: nd, n: {
+              type: "ERROR" as const,
+              workId: d.workId,
+              chapterLabel: chapterLabelOf(s.works, d),
+              title: workTitleOf(s.works, d.workId),
+              body: `Download failed at ${Math.floor(progress)}% · network error`,
+              sensitive: vlt,
             } });
           }
           return nd;
@@ -725,24 +748,26 @@ export const useApp = create<AppState>()(
         await new Promise((r) => setTimeout(r, 1600));
         // find unread latest chapters released within last 12h
         const fresh: Omit<Notification, "id" | "createdAt" | "read">[] = [];
-        for (const w of s.works) {
-          if (w.inVault) continue;
-          const latest = w.chapters[0];
-          if (!latest || latest.isRead) continue;
-          const hours =
-            (Date.now() - new Date(latest.releaseDate).getTime()) / 3_600_000;
-          if (hours <= 10) {
-            const dup = s.notifications.some(
-              (n) => n.type === "CHAPTER" && n.workId === w.id && n.chapterLabel === `Ch. ${latest.number}`
-            );
-            if (!dup) {
-              fresh.push({
-                type: "CHAPTER",
-                workId: w.id,
-                chapterLabel: `Ch. ${latest.number}`,
-                title: w.title,
-                body: "New chapter available",
-              });
+        if (s.settings.ntfChapters) {
+          for (const w of s.works) {
+            if (w.inVault) continue;
+            const latest = w.chapters[0];
+            if (!latest || latest.isRead) continue;
+            const hours =
+              (Date.now() - new Date(latest.releaseDate).getTime()) / 3_600_000;
+            if (hours <= 10) {
+              const dup = s.notifications.some(
+                (n) => n.type === "CHAPTER" && n.workId === w.id && n.chapterLabel === `Ch. ${latest.number}`
+              );
+              if (!dup) {
+                fresh.push({
+                  type: "CHAPTER",
+                  workId: w.id,
+                  chapterLabel: `Ch. ${latest.number}`,
+                  title: w.title,
+                  body: "New chapter available",
+                });
+              }
             }
           }
         }
@@ -770,6 +795,21 @@ export const useApp = create<AppState>()(
             sessions: (d.sessions as ReadingSession[]) ?? s.sessions,
             bookmarks: (d.bookmarks as Bookmark[]) ?? s.bookmarks,
             highlights: (d.highlights as Highlight[]) ?? s.highlights,
+            // v2 backups: full library context
+            history: (d.history as HistoryEntry[]) ?? s.history,
+            savedFilters: (d.savedFilters as SavedFilter[]) ?? s.savedFilters,
+            servers: (d.servers as ServerEntry[]) ?? s.servers,
+            // sources: merge per-id enabled/pinned flags onto current set
+            sources: Array.isArray(d.sources)
+              ? s.sources.map((cur) => {
+                  const saved = (d.sources as { id: string; enabled?: boolean; pinned?: boolean }[]).find(
+                    (x) => x.id === cur.id
+                  );
+                  return saved
+                    ? { ...cur, enabled: saved.enabled ?? cur.enabled, pinned: saved.pinned ?? cur.pinned }
+                    : cur;
+                })
+              : s.sources,
             lastBackup: s.lastBackup,
           }));
           return true;
@@ -781,6 +821,25 @@ export const useApp = create<AppState>()(
     {
       name: "onilibrary-store-v1",
       storage: createJSONStorage(() => localStorage),
+      // migrate older persisted states: new Settings keys must fall back to
+      // defaults instead of undefined (e.g. volumeKeyPaging on v1.0.1 stores)
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<AppState>;
+        return {
+          ...current,
+          ...p,
+          settings: {
+            ...DEFAULT_SETTINGS,
+            ...(current.settings ?? {}),
+            ...(p.settings ?? {}),
+            readerDefaults: {
+              ...DEFAULT_SETTINGS.readerDefaults,
+              ...(current.settings?.readerDefaults ?? {}),
+              ...(p.settings?.readerDefaults ?? {}),
+            },
+          },
+        } as AppState;
+      },
       partialize: (s) => ({
         onboarded: s.onboarded,
         works: s.works,

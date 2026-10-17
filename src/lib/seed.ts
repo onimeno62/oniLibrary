@@ -991,6 +991,8 @@ export const DEFAULT_SETTINGS: Settings = {
   vaultPinHash: null,
   vaultBiometric: true,
   vaultAutoLock: true,
+  volumeKeyPaging: true,
+  libraryDensity: "cozy",
   readerDefaults: {
     mode: "PAGED",
     direction: "RTL",
