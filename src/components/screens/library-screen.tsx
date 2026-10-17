@@ -17,19 +17,30 @@ import {
   X,
   FolderPlus,
   FolderTree,
-  BookPlus,
   ShieldCheck,
   Heart,
   Trash2,
   Bookmark,
   Sparkles,
   Loader2,
+  Images,
+  FileArchive,
+  FileText,
+  BookOpen,
 } from "lucide-react";
 import { SectionHeader, WorkCover, ProgressBar, EmptyState } from "@/components/shared";
 import { useApp, useNav, workProgress, currentChapter, matchesRule } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
-import { importFiles, importFilesToWork, buildFolderPreview, importFolderCommit, UNSUPPORTED_REASON_KEYS, type FolderPreview } from "@/lib/importer";
+import {
+  buildFolderPreview,
+  importFolderCommit,
+  UNSUPPORTED_REASON_KEYS,
+  type FolderPreview,
+  type FolderItemTreatment,
+  type FolderItemPlan,
+} from "@/lib/importer";
+import { ImportDestinationDialog } from "@/components/import/import-destination-dialog";
 import { findDuplicateGroups } from "@/lib/duplicates";
 import { deleteWorkFiles } from "@/lib/local-files";
 import {
@@ -85,18 +96,16 @@ export function LibraryScreen() {
   const density = useApp((s) => s.settings.libraryDensity);
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
-  const addRef = useRef<HTMLInputElement>(null);
 
-  /* folder import (v1.2.0): preview → rename → commit */
+  /* file import (v1.2.1): the destination dialog asks existing vs new work */
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
+
+  /* folder import (v1.2.1): review plan → per-item treatment → commit */
   const [folderPreview, setFolderPreview] = useState<FolderPreview | null>(null);
   const [folderTitle, setFolderTitle] = useState("");
   const [folderBusy, setFolderBusy] = useState(false);
-  /* add-to-work (v1.2.0): pick a work → pick files → chapters appended */
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerQuery, setPickerQuery] = useState("");
-  const [addBusy, setAddBusy] = useState(false);
-  const [addTarget, setAddTarget] = useState<string | null>(null);
-  const setAddToWorkIdLocal = (id: string | null) => setAddTarget(id);
+  const [itemTreatments, setItemTreatments] = useState<Record<string, FolderItemTreatment>>({});
+  const [itemTitles, setItemTitles] = useState<Record<string, string>>({});
 
   /** snapshot of every chip/checkbox that a saved filter restores */
   const snapshotFilters = (): LibraryFilterSnapshot => ({
@@ -196,48 +205,13 @@ export function LibraryScreen() {
     );
   };
 
-  const onImport = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    try {
-      const { created, unsupported, unsupportedDetails } = await importFiles(Array.from(files));
-      const addWork = useApp.getState().addWork;
-      for (const w of created) addWork(w);
-      if (created.length) {
-        toast({ title: t("imp.added", { n: created.length }), description: created.map((c) => c.title).join(", ") });
-        // LIB-009: flag possible duplicates right after import
-        const groups = findDuplicateGroups(useApp.getState().works);
-        const fresh = groups.filter((g) => g.some((w) => created.some((c) => c.id === w.id)));
-        for (const g of fresh.slice(0, 2)) {
-          const kept = g.find((w) => created.some((c) => c.id === w.id));
-          const other = g.find((w) => w.id !== kept?.id);
-          if (kept && other) toast({ title: t("imp.duplicateFound", { t: other.title }) });
-        }
-      }
-      if (unsupported.length) {
-        const details = unsupportedDetails
-          .slice(0, 2)
-          .map((d) => `${d.name} — ${t(UNSUPPORTED_REASON_KEYS[d.reason] ?? "imp.reason.format")}`)
-          .join("\n");
-        toast({
-          title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }),
-          description: details,
-          variant: "destructive",
-        });
-      }
-    } catch {
-      toast({ title: t("imp.failed"), variant: "destructive" });
-    }
-  };
-
   /**
    * In the Android shell the WebView <input type=file> path is flaky across
    * WebView builds, so prefer the deterministic native picker bridge — the
-   * picked file arrives via `oni-android-import` and is imported by the
-   * app-shell pull handler (same channel as Share/Open-With).
+   * picked file arrives via `oni-android-import` and the app-shell opens the
+   * shared destination dialog for it (same channel as Share/Open-With).
    */
   const startImport = () => {
-    // a stale add-to-work target must never swallow a fresh import
-    try { sessionStorage.removeItem("oni-add-to-work"); } catch { /* ignore */ }
     const bridge = (window as unknown as { OniAndroid?: { pickImportFile?: () => void } }).OniAndroid;
     if (typeof bridge?.pickImportFile === "function") {
       try {
@@ -251,7 +225,7 @@ export function LibraryScreen() {
     fileRef.current?.click();
   };
 
-  /* ---------- folder import (v1.2.0) ---------- */
+  /* ---------- folder import (v1.2.1) ---------- */
   const startFolderImport = () => {
     // webkitdirectory covers web/desktop + modern Android WebView file trees;
     // where a device can't browse folders it degrades to a multi-file picker
@@ -266,6 +240,8 @@ export function LibraryScreen() {
       return;
     }
     setFolderTitle(preview.rootName);
+    setItemTreatments(Object.fromEntries(preview.items.map((it) => [it.id, it.treatment])));
+    setItemTitles(Object.fromEntries(preview.items.map((it) => [it.id, it.title])));
     setFolderPreview(preview);
   };
 
@@ -273,10 +249,24 @@ export function LibraryScreen() {
     if (!folderPreview || folderBusy) return;
     setFolderBusy(true);
     try {
-      const { work, reason } = await importFolderCommit(folderPreview, folderTitle);
-      if (work) {
-        useApp.getState().addWork(work);
-        toast({ title: t("imp.added", { n: 1 }), description: work.title });
+      const { work, works, reason } = await importFolderCommit(folderPreview, folderTitle, {
+        treatments: itemTreatments,
+        titles: itemTitles,
+      });
+      const st = useApp.getState();
+      if (work) st.addWork(work);
+      for (const w of works) st.addWork(w);
+      if (work || works.length > 0) {
+        toast({ title: t("imp.added", { n: (work ? 1 : 0) + works.length }), description: [work?.title, ...works.map((w) => w.title)].filter(Boolean).join(", ").slice(0, 90) });
+        // LIB-009: flag possible duplicates right after import
+        const groups = findDuplicateGroups(st.works);
+        const freshIds = [work?.id, ...works.map((w) => w.id)].filter(Boolean) as string[];
+        const fresh = groups.filter((g) => g.some((w) => freshIds.includes(w.id)));
+        for (const g of fresh.slice(0, 2)) {
+          const kept = g.find((w) => freshIds.includes(w.id));
+          const other = g.find((w) => w.id !== kept?.id);
+          if (kept && other) toast({ title: t("imp.duplicateFound", { t: other.title }) });
+        }
         setFolderPreview(null);
       } else {
         toast({
@@ -289,69 +279,6 @@ export function LibraryScreen() {
       toast({ title: t("imp.failed"), variant: "destructive" });
     } finally {
       setFolderBusy(false);
-    }
-  };
-
-  /* ---------- add to existing work (v1.2.0) ---------- */
-  const openWorkPicker = () => {
-    setPickerQuery("");
-    setPickerOpen(true);
-  };
-
-  const startAddForWork = (workId: string) => {
-    setPickerOpen(false);
-    const bridge = (window as unknown as { OniAndroid?: { pickImportFile?: () => void } }).OniAndroid;
-    if (typeof bridge?.pickImportFile === "function") {
-      try {
-        sessionStorage.setItem("oni-add-to-work", workId);
-        bridge.pickImportFile();
-        return;
-      } catch {
-        /* fall through to the WebView chooser */
-      }
-    }
-    setAddToWorkThen(workId);
-  };
-
-  const setAddToWorkThen = (workId: string) => {
-    setAddToWorkIdLocal(workId);
-    requestAnimationFrame(() => addRef.current?.click());
-  };
-
-  const onAddFiles = async (files: FileList | null, workId: string | null) => {
-    if (!files || files.length === 0 || !workId) return;
-    const work = useApp.getState().works.find((w) => w.id === workId);
-    if (!work) return;
-    setAddBusy(true);
-    try {
-      const startNumber = work.chapters.reduce((m, c) => Math.max(m, c.number), 0) + 1;
-      const { added, created, skipped } = await importFilesToWork(Array.from(files), workId, startNumber);
-      if (added.length) useApp.getState().appendChapters(workId, added);
-      for (const w of created) useApp.getState().addWork(w);
-      if (added.length) {
-        toast({
-          title: t("imp.addedChapters", { n: added.length }),
-          description: added.map((c) => `#${c.number} ${c.title}`).join(", ").slice(0, 90),
-        });
-      }
-      if (created.length) {
-        toast({ title: t("imp.separateWorks", { n: created.length }), description: created.map((c) => c.title).join(", ") });
-      }
-      if (skipped.length) {
-        toast({
-          title: t("imp.unsupported", { names: skipped.slice(0, 2).map((s) => s.name).join(", ") }),
-          description: skipped
-            .slice(0, 2)
-            .map((s) => `${s.name} — ${t(UNSUPPORTED_REASON_KEYS[s.reason] ?? "imp.reason.format")}`)
-            .join("\n"),
-          variant: "destructive",
-        });
-      }
-    } catch {
-      toast({ title: t("imp.failed"), variant: "destructive" });
-    } finally {
-      setAddBusy(false);
-      setAddToWorkIdLocal(null);
     }
   };
 
@@ -635,9 +562,6 @@ export function LibraryScreen() {
           <DropdownMenuItem onClick={startFolderImport} className="gap-2.5 rounded-xl text-[13px] font-semibold">
             <FolderTree className="h-4 w-4 text-primary" /> {t("imp.importFolder")}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={openWorkPicker} className="gap-2.5 rounded-xl text-[13px] font-semibold">
-            <BookPlus className="h-4 w-4 text-primary" /> {t("imp.addToWork")}
-          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setTab("discover")} className="gap-2.5 rounded-xl text-[13px] font-semibold">
             <Compass className="h-4 w-4 text-primary" /> {t("disc.title")}
           </DropdownMenuItem>
@@ -646,7 +570,18 @@ export function LibraryScreen() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <input ref={fileRef} type="file" multiple accept=".cbz,.zip,.cbr,.rar,.pdf,.epub,image/*" className="hidden" onChange={(e) => onImport(e.target.files)} />
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        accept=".cbz,.zip,.cbr,.rar,.pdf,.epub,image/*"
+        className="hidden"
+        onChange={(e) => {
+          const fs = e.target.files;
+          if (fs && fs.length > 0) setPendingFiles(Array.from(fs));
+          e.target.value = "";
+        }}
+      />
       <input
         ref={folderRef}
         type="file"
@@ -658,17 +593,9 @@ export function LibraryScreen() {
           e.target.value = "";
         }}
       />
-      <input
-        ref={addRef}
-        type="file"
-        multiple
-        accept=".cbz,.zip,.cbr,.rar,.pdf,.epub,image/*"
-        className="hidden"
-        onChange={(e) => {
-          void onAddFiles(e.target.files, addTarget);
-          e.target.value = "";
-        }}
-      />
+
+      {/* import destination (v1.2.1): existing work (smart search) or new work */}
+      <ImportDestinationDialog files={pendingFiles} onClose={() => setPendingFiles(null)} />
 
       {/* selection action bar */}
       {selection !== null && (
@@ -801,15 +728,19 @@ export function LibraryScreen() {
         </DialogContent>
       </Dialog>
 
-      {/* folder import preview (v1.2.0) — rename the work before committing */}
-      <Dialog open={!!folderPreview} onOpenChange={(o) => !o && setFolderPreview(null)}>
+      {/* folder import review (v1.2.1) — rename the work, choose a treatment
+          for every detected item, then commit */}
+      <Dialog open={!!folderPreview} onOpenChange={(o) => !o && !folderBusy && setFolderPreview(null)}>
         <DialogContent className="max-h-[76dvh] rounded-3xl p-0 max-w-[380px] mx-auto" style={{ maxWidth: 380 }}>
           <DialogHeader className="border-b border-border/60 px-5 py-4">
             <DialogTitle className="flex items-center gap-2 text-[16px] font-black">
               <FolderTree className="h-4.5 w-4.5 text-primary" /> {t("imp.importFolder")}
             </DialogTitle>
+            <p className="mt-0.5 text-[11px] font-semibold text-muted-foreground">
+              {t("imp.items", { n: folderPreview?.items.length ?? 0 })}
+            </p>
           </DialogHeader>
-          <div className="max-h-[52dvh] overflow-y-auto px-5 py-3">
+          <div className="max-h-[54dvh] overflow-y-auto thin-scrollbar px-5 py-3">
             <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{t("imp.folderTitleLabel")}</p>
             <input
               value={folderTitle}
@@ -818,19 +749,20 @@ export function LibraryScreen() {
               className="mt-1.5 h-10 w-full rounded-xl border border-border bg-background px-3 text-[14px] font-extrabold outline-none transition-colors focus:border-primary"
             />
             <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-              {t("imp.folderChapters", { n: folderPreview?.chapters.length ?? 0 })}
+              {t("imp.treat.title")}
             </p>
             <div className="mt-1.5 space-y-1.5">
-              {folderPreview?.chapters.map((g, i) => (
-                <div key={`${g.title}-${i}`} className="flex items-center gap-2.5 rounded-xl bg-secondary/60 px-3 py-2">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-coral-soft text-[11px] font-black text-primary">
-                    {i + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[12.5px] font-extrabold">{g.title}</span>
-                  <span className="shrink-0 text-[10.5px] font-bold text-muted-foreground">
-                    {g.images.length + g.archives.length} {t("imp.folderFiles")}
-                  </span>
-                </div>
+              {folderPreview?.items.map((it) => (
+                <FolderItemRow
+                  key={it.id}
+                  item={it}
+                  workTitle={folderTitle || folderPreview.rootName}
+                  treatment={itemTreatments[it.id] ?? it.treatment}
+                  title={itemTitles[it.id] ?? it.title}
+                  busy={folderBusy}
+                  onTreatment={(tr) => setItemTreatments((m) => ({ ...m, [it.id]: tr }))}
+                  onTitle={(v) => setItemTitles((m) => ({ ...m, [it.id]: v }))}
+                />
               ))}
             </div>
           </div>
@@ -843,49 +775,6 @@ export function LibraryScreen() {
               {folderBusy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Import className="h-4.5 w-4.5" />}
               {folderBusy ? t("imp.importing") : t("imp.folderImportBtn")}
             </button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* add-to-work picker (v1.2.0) */}
-      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="max-h-[70dvh] rounded-3xl p-0 max-w-[380px] mx-auto" style={{ maxWidth: 380 }}>
-          <DialogHeader className="border-b border-border/60 px-5 py-4">
-            <DialogTitle className="text-[16px] font-black">{t("imp.pickWork")}</DialogTitle>
-          </DialogHeader>
-          <div className="px-5 pt-3">
-            <div className="flex h-10 items-center gap-2 rounded-full bg-secondary px-3.5">
-              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <input
-                value={pickerQuery}
-                onChange={(e) => setPickerQuery(e.target.value)}
-                placeholder={t("lib.searchPlaceholder")}
-                aria-label={t("imp.pickWork")}
-                className="w-full bg-transparent text-[13px] font-semibold outline-none placeholder:text-muted-foreground"
-              />
-            </div>
-          </div>
-          <div className="max-h-[42dvh] overflow-y-auto p-3">
-            {publicWorks
-              .filter((w) => w.title.toLowerCase().includes(pickerQuery.trim().toLowerCase()))
-              .slice(0, 60)
-              .map((w) => (
-                <button
-                  key={w.id}
-                  onClick={() => startAddForWork(w.id)}
-                  disabled={addBusy}
-                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-start transition-colors hover:bg-secondary disabled:opacity-60"
-                >
-                  <WorkCover src={w.cover} color={w.coverColor} title={w.title} className="h-11 w-8 shrink-0 rounded-lg" sizes="32px" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13.5px] font-extrabold">{w.title}</span>
-                    <span className="block text-[11px] font-semibold text-muted-foreground">
-                      {w.chapters.length} {t("common.chapters")}
-                    </span>
-                  </span>
-                  {addBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <Plus className="h-4 w-4 shrink-0 text-primary" />}
-                </button>
-              ))}
           </div>
         </DialogContent>
       </Dialog>
@@ -1086,6 +975,100 @@ function SelAction({ icon, label, onClick, destructive }: { icon: React.ReactNod
       {icon}
       <span className="w-full truncate text-center">{label}</span>
     </button>
+  );
+}
+
+/* ---------- folder import review row (v1.2.1) ---------- */
+
+function formatBytesLabel(n: number): string {
+  if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(2)} GB`;
+  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+function FolderItemRow({
+  item,
+  workTitle,
+  treatment,
+  title,
+  busy,
+  onTreatment,
+  onTitle,
+}: {
+  item: FolderItemPlan;
+  workTitle: string;
+  treatment: FolderItemTreatment;
+  title: string;
+  busy: boolean;
+  onTreatment: (t: FolderItemTreatment) => void;
+  onTitle: (v: string) => void;
+}) {
+  const { t } = useT();
+  const Icon =
+    item.kind === "images" ? Images : item.kind === "archive" ? FileArchive : item.kind === "pdf" ? FileText : BookOpen;
+  const size = item.files.reduce((a, f) => a + (f.size || 0), 0);
+  const treatCls =
+    treatment === "chapter"
+      ? "text-primary"
+      : treatment === "work"
+        ? "text-emerald-600 dark:text-emerald-400"
+        : "text-muted-foreground line-through decoration-1";
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl bg-secondary/60 px-3 py-2 transition-opacity",
+        treatment === "skip" && "opacity-60"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-coral-soft text-primary">
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+        <input
+          value={title}
+          onChange={(e) => onTitle(e.target.value.slice(0, 120))}
+          disabled={busy}
+          aria-label={t("imp.folderTitleLabel")}
+          dir="auto"
+          className="min-w-0 flex-1 border-b border-transparent bg-transparent py-0.5 text-[12.5px] font-extrabold outline-none transition-colors focus:border-primary"
+        />
+        <span className="shrink-0 rounded-md bg-background/70 px-1.5 py-0.5 text-[9.5px] font-black uppercase tracking-wide text-secondary-foreground">
+          {item.extLabel === "Images" ? t("imp.kind.images") : item.extLabel}
+        </span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild disabled={busy}>
+            <button
+              aria-label={t("imp.treat.title")}
+              className={cn("flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-black transition-colors hover:bg-background/60", treatCls)}
+            >
+              {t(treatment === "chapter" ? "imp.treatShort.chapter" : treatment === "work" ? "imp.treatShort.work" : "imp.treatShort.skip")}
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="rounded-2xl">
+            {item.options.map((opt) => (
+              <DropdownMenuItem
+                key={opt}
+                onClick={() => onTreatment(opt)}
+                className="gap-2 rounded-xl text-[12.5px] font-semibold"
+              >
+                {opt === treatment && <Check className="h-3.5 w-3.5 text-primary" />}
+                {t(opt === "chapter" ? "imp.treat.chapter" : opt === "work" ? "imp.treat.work" : "imp.treat.skip")}
+                {opt === "chapter" && (
+                  <span className="ms-auto max-w-[110px] truncate text-[10px] font-bold text-muted-foreground">{workTitle}</span>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <p className="mt-0.5 truncate ps-9 text-[10px] font-semibold text-muted-foreground" dir="auto">
+        {item.origin} · {item.files.length} {t("imp.folderFiles")}
+        {size > 0 && ` · ${formatBytesLabel(size)}`}
+      </p>
+    </div>
   );
 }
 

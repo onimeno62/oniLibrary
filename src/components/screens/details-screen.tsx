@@ -26,6 +26,7 @@ import {
   Highlighter,
   ImagePlus,
   X,
+  FolderOpen,
 } from "lucide-react";
 import { WorkCover } from "@/components/shared";
 import { WorkMenu } from "@/components/screens/library-screen";
@@ -61,6 +62,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const [readerSettings, setReaderSettings] = useState(false);
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [ratingOpen, setRatingOpen] = useState(false);
 
   const bookmarks = useApp((s) => s.bookmarks);
   const workBookmarkCount = bookmarks.filter((b) => b.workId === workId).length;
@@ -212,60 +214,84 @@ export function DetailsScreen({ workId }: { workId: string }) {
             <span className={cn("rounded-full border px-3 py-1 text-[11px] font-bold", st.cls)}>
               {t(st.key)}
             </span>
+            {work.rating > 0 && (
+              <span className="flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-bold text-amber-300">
+                <Star className="h-3 w-3 fill-current" />
+                {work.rating.toFixed(1)}
+                {work.ratingCount > 0 ? ` (${(work.ratingCount / 1000).toFixed(1)}k)` : ""}
+              </span>
+            )}
           </div>
 
-          {/* stats row */}
+          {/* stats row (v1.2.1): Chapters · personal rating 4/5 · Status */}
           <div className="mt-4 grid grid-cols-3 rounded-3xl border border-white/8 bg-white/[0.04] py-3">
             <StatCell
               icon={<BookMarked className="h-4 w-4" />}
               value={String(work.chapters.length)}
               label={t("det.chapters")}
             />
-            <div className="border-x border-white/8" />
+            <button
+              onClick={() => setRatingOpen((o) => !o)}
+              aria-label={t("det.yourRating")}
+              aria-expanded={ratingOpen}
+              className="flex flex-col items-center gap-1 rounded-2xl border-x border-white/8 px-2 text-center transition-colors hover:bg-white/[0.05]"
+            >
+              <span className="text-[15px] font-black text-white">
+                {(work.userRating ?? 0) > 0 ? `${work.userRating}/5` : "—"}
+              </span>
+              <span className="flex items-center gap-1 text-[10px] font-bold text-white/55">
+                <Star className={cn("h-4 w-4", (work.userRating ?? 0) > 0 && "fill-[#f8694c] text-[#f8694c]")} />
+                {t("det.yourRating")}
+              </span>
+            </button>
             <StatCell
               icon={<CheckCircle2 className="h-4 w-4" />}
               value={t(`workstatus.${work.workStatus}` as TranslationKey)}
               label={t("det.status")}
             />
-            <div className="border-x border-white/8" />
-            <StatCell
-              icon={<Star className="h-4 w-4 fill-current" />}
-              value={work.rating > 0 ? work.rating.toFixed(1) : "—"}
-              label={work.ratingCount > 0 ? `(${(work.ratingCount / 1000).toFixed(1)}k)` : ""}
-            />
           </div>
 
-          {/* personal rating (TRK-001) */}
-          <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.04] px-4 py-2.5">
-            <span className="text-[11px] font-black uppercase tracking-[0.14em] text-white/50">
-              {t("det.yourRating")}
-            </span>
-            <div className="flex items-center gap-0.5" role="radiogroup" aria-label={t("det.yourRating")}>
-              {[1, 2, 3, 4, 5].map((n) => {
-                const on = (work.userRating ?? 0) >= n;
-                return (
-                  <button
-                    key={n}
-                    role="radio"
-                    aria-checked={work.userRating === n}
-                    aria-label={`${t("det.yourRating")}: ${n}/5`}
-                    onClick={() => {
-                      useApp.getState().setUserRating(work.id, n);
-                      toast({ title: t("det.rated", { n }) });
-                    }}
-                    className="p-0.5 transition-transform active:scale-75"
-                  >
-                    <Star
+          {/* numeric rating picker (v1.2.1) — replaces the old star row */}
+          {ratingOpen && (
+            <div className="mt-2 flex items-center justify-between rounded-2xl border border-primary/25 bg-coral-soft/30 px-4 py-2.5">
+              <span className="text-[11px] font-black uppercase tracking-[0.14em] text-primary">
+                {t("det.rateHint")}
+              </span>
+              <div className="flex items-center gap-1" role="radiogroup" aria-label={t("det.yourRating")}>
+                {[1, 2, 3, 4, 5].map((n) => {
+                  const on = (work.userRating ?? 0) >= n;
+                  return (
+                    <button
+                      key={n}
+                      role="radio"
+                      aria-checked={work.userRating === n}
+                      aria-label={`${t("det.yourRating")}: ${n}/5`}
+                      onClick={() => {
+                        const cur = work.userRating ?? 0;
+                        useApp.getState().setUserRating(work.id, n);
+                        if (cur !== n) toast({ title: t("det.rated", { n }) });
+                      }}
                       className={cn(
-                        "h-[18px] w-[18px] transition-colors",
-                        on ? "fill-[#f8694c] text-[#f8694c]" : "text-white/25 hover:text-white/50"
+                        "flex h-8 w-8 items-center justify-center rounded-full text-[12px] font-black transition-all active:scale-90",
+                        on
+                          ? "bg-coral-gradient text-white shadow-[0_6px_14px_-6px_rgba(248,105,76,0.8)]"
+                          : "bg-white/10 text-white/60 hover:bg-white/20"
                       )}
-                    />
-                  </button>
-                );
-              })}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+                <button
+                  aria-label={`${t("det.yourRating")}: 0/5`}
+                  onClick={() => useApp.getState().setUserRating(work.id, 0)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-white/40 transition-colors hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* personal notes (LIB-010) */}
           <button
@@ -325,6 +351,23 @@ export function DetailsScreen({ workId }: { workId: string }) {
             {expanded ? t("det.less") : t("det.more")}
             <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")} />
           </button>
+
+          {/* local import facts (v1.2.1): size / path / date added / files */}
+          {work.isLocal && work.sourceMeta && (
+            <div className="mt-3 rounded-2xl border border-white/8 bg-white/[0.04] p-3.5">
+              <p className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white/50">
+                <FolderOpen className="h-3.5 w-3.5 text-primary" />
+                {t("det.localInfo")}
+              </p>
+              <dl className="mt-2.5 space-y-1.5">
+                <InfoRow label={t("det.infoFormat")} value={work.sourceMeta.formats.join(" · ") || "—"} />
+                <InfoRow label={t("det.infoSize")} value={formatBytes(work.sourceMeta.sizeBytes)} />
+                <InfoRow label={t("det.infoPath")} value={work.sourceMeta.pathLabel || "—"} mono />
+                <InfoRow label={t("det.infoAdded")} value={formatDate(work.addedAt, lang)} />
+                <InfoRow label={t("det.infoFiles")} value={String(work.sourceMeta.fileCount)} />
+              </dl>
+            </div>
+          )}
 
           {/* progress summary */}
           <div className="mt-3 flex items-center gap-2 text-[11px] font-bold text-white/60">
@@ -516,6 +559,42 @@ function StatCell({ icon, value, label }: { icon: React.ReactNode; value: string
         {icon}
         {label}
       </span>
+    </div>
+  );
+}
+
+/* local file facts helpers (v1.2.1) */
+
+function formatBytes(n: number): string {
+  if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(2)} GB`;
+  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+function formatDate(iso: string, lang: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(lang === "fa" ? "fa-IR" : "en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
+
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="shrink-0 text-[11px] font-bold text-white/45">{label}</dt>
+      <dd
+        dir="auto"
+        title={value}
+        className={cn("min-w-0 truncate text-end font-semibold text-white/85", mono && "font-mono text-[11px]")}
+      >
+        {value}
+      </dd>
     </div>
   );
 }

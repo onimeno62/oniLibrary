@@ -4,7 +4,7 @@ import { unzipSync, inflateSync } from "fflate";
 import { putFile, blobToThumbDataUrl } from "./local-files";
 import { extractCbr, type CbrError } from "./unrar";
 import type { TranslationKey } from "./i18n";
-import type { Work, Chapter } from "./types";
+import type { Work, Chapter, WorkSourceMeta } from "./types";
 
 const IMG_RE = /\.(jpe?g|jfif|png|webp|gif|bmp|avif)$/i;
 
@@ -184,6 +184,45 @@ function salvageZip(buf: Uint8Array): {
 
 function isImageName(name: string): boolean {
   return IMG_RE.test(name) && !name.startsWith("__MACOSX") && !name.split("/").pop()?.startsWith(".");
+}
+
+/* --------------------------------------------------------------- *
+ *  source meta (v1.2.1) — static facts for the details page       *
+ * --------------------------------------------------------------- */
+
+function kindLabelOf(name: string): string {
+  const lower = name.toLowerCase();
+  if (IMG_RE.test(name)) return "Images";
+  if (lower.endsWith(".pdf")) return "PDF";
+  if (lower.endsWith(".epub")) return "EPUB";
+  if (lower.endsWith(".cbz")) return "CBZ";
+  if (lower.endsWith(".zip")) return "ZIP";
+  if (lower.endsWith(".cbr") || lower.endsWith(".rar")) return "CBR";
+  return "File";
+}
+
+/** aggregate the facts we can know at import time. SAF/content-provider
+    picks carry no real filesystem paths, so the "path" is the folder/file
+    label as the user picked it (folder import → the folder's name). */
+function sourceMetaOf(files: File[], pathLabel?: string): WorkSourceMeta {
+  const formats = new Set<string>();
+  let size = 0;
+  for (const f of files) {
+    size += f.size;
+    formats.add(kindLabelOf(f.name));
+  }
+  let label = (pathLabel ?? "").trim();
+  if (!label && files.length > 0) {
+    const rel = pathOf(files[0]);
+    const root = rel.includes("/") ? rel.split("/")[0] : "";
+    label = root || files[0].name;
+  }
+  return {
+    sizeBytes: size,
+    pathLabel: label.slice(0, 160),
+    fileCount: files.length,
+    formats: [...formats],
+  };
 }
 
 function imageNamesOf(entries: Record<string, Uint8Array>): string[] {
@@ -428,7 +467,7 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
   return { created, unsupported, unsupportedDetails };
 }
 
-async function importImageBatch(files: File[]): Promise<Work | null> {
+async function importImageBatch(files: File[], titleOverride?: string): Promise<Work | null> {
   const sorted = [...files].sort((a, b) => naturalCompare(a.name, b.name));
   const id = "w-imp-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
   const stored = await storePagesFlat(
@@ -438,7 +477,7 @@ async function importImageBatch(files: File[]): Promise<Work | null> {
   if (stored.keys.length === 0) return null;
   return {
     id,
-    title: stripExt(sorted[0].name) || "Image collection",
+    title: titleOverride?.trim().slice(0, 120) || stripExt(sorted[0].name) || "Image collection",
     author: "Local",
     cover: stored.cover,
     type: "MANGA",
@@ -469,12 +508,16 @@ async function importImageBatch(files: File[]): Promise<Work | null> {
     language: "—",
     isLocal: true,
     localPages: stored.keys,
+    sourceMeta: sourceMetaOf(files, titleOverride?.trim() || undefined),
   };
 }
 
 type ArchiveImport = { work?: Work; reason?: UnsupportedFile["reason"] };
 
-async function importArchive(f: File): Promise<ArchiveImport> {
+async function importArchive(
+  f: File,
+  opts?: { title?: string; meta?: WorkSourceMeta }
+): Promise<ArchiveImport> {
   const res = await extractArchiveImages(f);
   if (!res.ok) return { reason: res.reason };
 
@@ -482,10 +525,11 @@ async function importArchive(f: File): Promise<ArchiveImport> {
   const stored = await storePagesFlat(id, res.images);
   if (stored.keys.length === 0) return { reason: "corrupt" };
 
+  const extLabel = kindLabelOf(f.name);
   return {
     work: {
       id,
-      title: stripExt(f.name),
+      title: opts?.title?.trim().slice(0, 120) || stripExt(f.name),
       author: "Local",
       cover: stored.cover,
       type: "COMIC",
@@ -494,7 +538,7 @@ async function importArchive(f: File): Promise<ArchiveImport> {
       readingStatus: "PLANNED",
       isFavorite: false,
       inVault: false,
-      tags: ["Local", "CBZ"],
+      tags: ["Local", extLabel === "CBR" ? "CBR" : "CBZ"],
       rating: 0,
       ratingCount: 0,
       direction: "LTR",
@@ -516,6 +560,7 @@ async function importArchive(f: File): Promise<ArchiveImport> {
       language: "—",
       isLocal: true,
       localPages: stored.keys,
+      sourceMeta: opts?.meta ?? sourceMetaOf([f]),
     },
   };
 }
@@ -529,6 +574,8 @@ export interface AddToWorkResult {
   /** PDF/EPUB can't merge into an image work — they become separate works */
   created: Work[];
   skipped: { name: string; reason: UnsupportedFile["reason"] }[];
+  /** aggregate of THIS batch — callers merge it into the work's sourceMeta */
+  batchMeta: WorkSourceMeta;
 }
 
 /** append imported files as new chapters of an existing work.
@@ -607,11 +654,13 @@ export async function importFilesToWork(
   }
   await flushImages();
 
-  return { added, created, skipped };
+  return { added, created, skipped, batchMeta: sourceMetaOf(files) };
 }
 
 /* --------------------------------------------------------------- *
- *  folder import (v1.2.0) — folder = work, subfolders = chapters  *
+ *  folder import (v1.2.1) — every detected item is reviewed:      *
+ *  subfolder images / zip / rar / cbz / cbr / pdf / epub each get *
+ *  a treatment: chapter of the work · separate work · skip        *
  * --------------------------------------------------------------- */
 
 /** relative path of a picked file: webkitdirectory inputs carry it natively;
@@ -629,25 +678,62 @@ function numberHintOf(name: string): number | null {
   return m ? parseFloat(m[1]) : null;
 }
 
-export interface FolderChapterGroup {
-  title: string;
-  numberHint: number | null;
-  images: File[];
-  archives: File[];
+export type FolderItemTreatment = "chapter" | "work" | "skip";
+export type FolderItemKind = "images" | "archive" | "pdf" | "epub";
+
+export interface FolderItemPlan {
+  id: string;
+  kind: FolderItemKind;
+  extLabel: string; // CBZ / CBR / PDF / EPUB / Images…
+  title: string; // suggested chapter/work title (editable)
+  origin: string; // display path (relative dir or file name)
+  files: File[];
+  treatment: FolderItemTreatment;
+  /** treatments the UI may offer for this kind (PDF/EPUB never merge) */
+  options: FolderItemTreatment[];
 }
 
 export interface FolderPreview {
   /** suggested work title = the picked folder's own name */
   rootName: string;
-  /** true when everything sits in a single directory → one-chapter work */
-  flat: boolean;
-  chapters: FolderChapterGroup[];
+  items: FolderItemPlan[];
 }
 
-/** group picked folder contents into chapter groups (no files are read yet —
-    the preview dialog lets the user rename the work before anything is stored) */
+let planSeq = 0;
+
+function makePlan(
+  kind: FolderItemKind,
+  extLabel: string,
+  title: string,
+  origin: string,
+  files: File[],
+  treatment: FolderItemTreatment
+): FolderItemPlan {
+  planSeq += 1;
+  return {
+    id: `it${planSeq}-${Math.random().toString(36).slice(2, 6)}`,
+    kind,
+    extLabel,
+    title: title.slice(0, 120) || "Untitled",
+    origin,
+    files,
+    treatment,
+    options: kind === "pdf" || kind === "epub" ? ["work", "skip"] : ["chapter", "work", "skip"],
+  };
+}
+
+/** group picked folder contents into reviewable items (no files are read yet —
+    the preview dialog asks the user how to treat every one of them). Images
+    sitting in one subfolder become a single item; every archive/pdf/epub file
+    becomes its own item. */
 export function buildFolderPreview(files: File[]): FolderPreview | null {
-  const groups = new Map<string, FolderChapterGroup>();
+  interface DirGroup {
+    images: File[];
+    archives: File[];
+    pdfs: File[];
+    epubs: File[];
+  }
+  const groups = new Map<string, DirGroup>();
   let rootName = "";
 
   for (const f of files) {
@@ -656,78 +742,144 @@ export function buildFolderPreview(files: File[]): FolderPreview | null {
     if (segs.length >= 2 && !rootName) rootName = segs[0];
     const dir = segs.length >= 2 ? segs.slice(0, -1).join("/") : "";
     const base = segs[segs.length - 1];
-    if (!groups.has(dir)) {
-      const leaf = dir ? (dir.split("/").pop() as string) : rootName;
-      groups.set(dir, { title: leaf || "Pages", numberHint: leaf ? numberHintOf(leaf) : null, images: [], archives: [] });
-    }
+    if (!groups.has(dir)) groups.set(dir, { images: [], archives: [], pdfs: [], epubs: [] });
     const g = groups.get(dir)!;
     if (IMG_RE.test(base)) g.images.push(f);
     else if (/\.(cbz|zip|cbr|rar|cb7)$/i.test(base)) g.archives.push(f);
-    // pdf/epub/nonsense inside folders is ignored (folder import is image-first)
+    else if (/\.pdf$/i.test(base)) g.pdfs.push(f);
+    else if (/\.epub$/i.test(base)) g.epubs.push(f);
+    // anything else inside a folder is ignored (folder import is reader-first)
   }
 
   const dirs = [...groups.keys()].sort(naturalCompare);
-  const nonEmpty = dirs.filter((d) => {
-    const g = groups.get(d)!;
-    return g.images.length > 0 || g.archives.length > 0;
-  });
-  if (nonEmpty.length === 0) return null;
+  const items: FolderItemPlan[] = [];
 
-  const chapters: FolderChapterGroup[] = nonEmpty.flatMap((d) => {
+  for (const d of dirs) {
     const g = groups.get(d)!;
-    const out: FolderChapterGroup[] = [];
+    const leaf = d ? (d.split("/").pop() as string) : "";
+    const leafTitle = leaf || rootName || "Pages";
     if (g.images.length > 0) {
-      out.push({ title: g.title, numberHint: g.numberHint, images: g.images, archives: [] });
+      items.push(makePlan("images", "Images", leafTitle, d || leafTitle, g.images, "chapter"));
     }
     for (const a of g.archives.sort((x, y) => naturalCompare(x.name, y.name))) {
-      const t = stripExt(a.name);
-      out.push({ title: t || g.title, numberHint: numberHintOf(t), images: [], archives: [a] });
+      items.push(
+        makePlan("archive", kindLabelOf(a.name), stripExt(a.name) || leafTitle, d ? `${d}/${a.name}` : a.name, [a], "chapter")
+      );
     }
-    return out;
-  });
-
-  return { rootName: rootName || "Import", flat: nonEmpty.length === 1 && chapters.length === 1, chapters };
-}
-
-/** materialize a folder preview as a new work: images per group → one chapter,
-    archives → one chapter each. Numbers follow explicit hints when present,
-    otherwise 1..N in natural order. */
-export async function importFolderCommit(
-  preview: FolderPreview,
-  title: string
-): Promise<{ work?: Work; reason?: UnsupportedFile["reason"] }> {
-  const id = "w-f-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
-  const chapters: Chapter[] = [];
-  let cover = "";
-  let noAuto = 0;
-
-  const ordered = [...preview.chapters].sort((a, b) => {
-    if (a.numberHint !== null && b.numberHint !== null) return a.numberHint - b.numberHint;
-    if (a.numberHint !== null) return -1;
-    if (b.numberHint !== null) return 1;
-    return naturalCompare(a.title, b.title);
-  });
-
-  for (const g of ordered) {
-    const number = g.numberHint ?? ++noAuto;
-    if (g.images.length > 0) {
-      const sorted = [...g.images].sort((a, b) => naturalCompare(a.name, b.name));
-      const stored = await storePagesUnder(id, `ch${number}-${chapters.length}`, sorted.map((f) => ({ name: f.name, blob: f as unknown as Blob })));
-      if (stored.keys.length === 0) continue;
-      if (!cover) cover = stored.cover;
-      chapters.push(makeChapter(id, number, g.title, stored));
+    for (const p of g.pdfs.sort((x, y) => naturalCompare(x.name, y.name))) {
+      items.push(makePlan("pdf", "PDF", stripExt(p.name) || leafTitle, d ? `${d}/${p.name}` : p.name, [p], "work"));
     }
-    for (const a of g.archives) {
-      const res = await extractArchiveImages(a);
-      if (!res.ok) continue;
-      const stored = await storePagesUnder(id, `ch${number}-${chapters.length}`, res.images);
-      if (stored.keys.length === 0) continue;
-      if (!cover) cover = stored.cover;
-      chapters.push(makeChapter(id, number, g.title, stored));
+    for (const e of g.epubs.sort((x, y) => naturalCompare(x.name, y.name))) {
+      items.push(makePlan("epub", "EPUB", stripExt(e.name) || leafTitle, d ? `${d}/${e.name}` : e.name, [e], "work"));
     }
   }
 
-  if (chapters.length === 0) return { reason: "noImages" };
+  if (items.length === 0) return null;
+  return { rootName: rootName || "Import", items };
+}
+
+export interface FolderCommitResult {
+  /** the main folder work — present when at least one item became a chapter */
+  work?: Work;
+  /** items the user chose to import as separate works */
+  works: Work[];
+  reason?: UnsupportedFile["reason"];
+}
+
+/** materialize a reviewed folder plan: "chapter" items fold into the main work
+    (numbered by explicit hints when present, otherwise 1..N in natural order),
+    "work" items become standalone works, "skip" items are ignored. */
+export async function importFolderCommit(
+  preview: FolderPreview,
+  title: string,
+  overrides?: {
+    treatments?: Record<string, FolderItemTreatment>;
+    titles?: Record<string, string>;
+  }
+): Promise<FolderCommitResult> {
+  const treatments = overrides?.treatments ?? {};
+  const titles = overrides?.titles ?? {};
+  const titleOf = (it: FolderItemPlan) => (titles[it.id] ?? it.title).trim().slice(0, 120) || it.title;
+  const treatmentOf = (it: FolderItemPlan) => {
+    const t = treatments[it.id] ?? it.treatment;
+    return it.options.includes(t) ? t : it.treatment;
+  };
+
+  const id = "w-f-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+  const chapters: Chapter[] = [];
+  const works: Work[] = [];
+  let cover = "";
+  const chapterFiles: File[] = [];
+  // real folder picks carry relative paths — plain multi-file picks don't
+  const fromFolder = preview.items.some((it) => it.files.some((f) => pathOf(f).includes("/")));
+
+  const chapterItems = preview.items.filter((it) => treatmentOf(it) === "chapter");
+  const workItems = preview.items.filter((it) => treatmentOf(it) === "work");
+
+  const ordered = [...chapterItems].sort((a, b) => {
+    const na = numberHintOf(titleOf(a));
+    const nb = numberHintOf(titleOf(b));
+    if (na !== null && nb !== null) return na - nb;
+    if (na !== null) return -1;
+    if (nb !== null) return 1;
+    return naturalCompare(a.origin, b.origin);
+  });
+
+  // auto numbers continue AFTER the highest explicit hint ("Chapter 1" + two
+  // hint-less folders → 1, 2, 3 — never 1, 1, 2)
+  let noAuto = ordered.reduce((m, it) => Math.max(m, numberHintOf(titleOf(it)) ?? 0), 0);
+
+  for (const it of ordered) {
+    const number = numberHintOf(titleOf(it)) ?? ++noAuto;
+    const itemTitle = titleOf(it);
+    let stored: StoredPages | null = null;
+    if (it.kind === "images") {
+      const sorted = [...it.files].sort((a, b) => naturalCompare(a.name, b.name));
+      stored = await storePagesUnder(id, `ch${number}-${chapters.length}`, sorted.map((f) => ({ name: f.name, blob: f as unknown as Blob })));
+    } else {
+      const res = await extractArchiveImages(it.files[0]);
+      if (res.ok && res.images.length > 0) {
+        stored = await storePagesUnder(id, `ch${number}-${chapters.length}`, res.images);
+      }
+    }
+    if (!stored || stored.keys.length === 0) continue;
+    if (!cover) cover = stored.cover;
+    chapterFiles.push(...it.files);
+    chapters.push(makeChapter(id, number, itemTitle, stored));
+  }
+
+  for (const it of workItems) {
+    const t = titleOf(it);
+    if (it.kind === "images") {
+      const w = await importImageBatch(it.files, t);
+      if (w) {
+        w.sourceMeta = sourceMetaOf(it.files, it.origin);
+        works.push(w);
+      }
+    } else if (it.kind === "archive") {
+      const r = await importArchive(it.files[0]);
+      if (r.work) {
+        r.work.title = t;
+        r.work.sourceMeta = sourceMetaOf(it.files, it.origin);
+        works.push(r.work);
+      }
+    } else if (it.kind === "pdf") {
+      const f = it.files[0];
+      const w = (await importPdf(f)) ?? makeMetaWork(f, "PDF"); // unreadable pdf → demo-reader work, never silent
+      w.title = t;
+      works.push(w);
+    } else {
+      const f = it.files[0];
+      const w = (await importEpub(f)) ?? makeMetaWork(f, "EPUB");
+      w.title = t;
+      works.push(w);
+    }
+  }
+
+  if (chapters.length === 0) {
+    if (works.length > 0) return { works };
+    return { works, reason: "noImages" };
+  }
 
   return {
     work: {
@@ -751,26 +903,102 @@ export async function importFolderCommit(
       addedAt: new Date().toISOString(),
       language: "—",
       isLocal: true,
+      sourceMeta: sourceMetaOf(chapterFiles, fromFolder ? preview.rootName : undefined),
     },
+    works,
   };
 }
 
+export interface FilesAsWorkResult {
+  /** the new combined work — present when images/archives were picked */
+  work?: Work;
+  /** PDF/EPUB stay self-contained (never merge into image works) */
+  separate: Work[];
+  skipped: { name: string; reason: UnsupportedFile["reason"] }[];
+}
+
+/** "Import files → NEW work" destination: every archive becomes a chapter and
+    all loose images become one chapter of a single new work; PDF/EPUB come
+    back in `separate`. Reuses the folder-plan engine under the hood. */
+export async function importFilesAsWork(files: File[], title?: string): Promise<FilesAsWorkResult> {
+  const images: File[] = [];
+  const archives: File[] = [];
+  const pdfs: File[] = [];
+  const epubs: File[] = [];
+  const skipped: FilesAsWorkResult["skipped"] = [];
+
+  for (const f of files) {
+    const base = f.name;
+    try {
+      if (IMG_RE.test(base)) {
+        images.push(f);
+        continue;
+      }
+      const lower = base.toLowerCase();
+      if (/\.(cbz|zip|cbr|rar|cb7|7z)$/i.test(lower)) {
+        archives.push(f); // extractArchiveImages sniffs the real content later
+        continue;
+      }
+      if (/\.pdf$/i.test(lower)) {
+        pdfs.push(f);
+        continue;
+      }
+      if (/\.epub$/i.test(lower)) {
+        epubs.push(f);
+        continue;
+      }
+      // extension-less names (some content providers strip them)
+      const head = new Uint8Array(await f.slice(0, 8).arrayBuffer());
+      if (sniffArchive(head) === "zip") {
+        archives.push(f);
+      } else {
+        skipped.push({ name: base, reason: "format" });
+      }
+    } catch {
+      skipped.push({ name: base, reason: "corrupt" });
+    }
+  }
+
+  // only documents — nothing to fold into a work, each stands alone
+  if (images.length === 0 && archives.length === 0) {
+    const separate: Work[] = [];
+    for (const f of pdfs) {
+      separate.push((await importPdf(f)) ?? makeMetaWork(f, "PDF"));
+    }
+    for (const f of epubs) {
+      separate.push((await importEpub(f)) ?? makeMetaWork(f, "EPUB"));
+    }
+    return { separate, skipped };
+  }
+
+  const preview = buildFolderPreview([...images, ...archives, ...pdfs, ...epubs]);
+  if (!preview) return { separate: [], skipped };
+  const res = await importFolderCommit(preview, title?.trim() || preview.rootName);
+  if (res.work) {
+    // plain file imports read as "files", not "folder" (tags + description)
+    res.work.tags = ["Local", "Files"];
+    const n = res.work.chapters.length;
+    res.work.description = `Imported files · ${n} chapter${n === 1 ? "" : "s"} · fully readable offline`;
+  }
+  return { work: res.work, separate: res.works, skipped };
+}
+
 /** Parse a real .pdf into a single-chapter work with canvas-rendered pages (FMT-003). */
-export async function importPdf(f: File): Promise<Work | null> {
+export async function importPdf(f: File, meta?: WorkSourceMeta): Promise<Work | null> {
   try {
     const { readPdfMeta } = await import("./pdf-engine");
-    const meta = await readPdfMeta(f);
-    if (!meta.pages) return null;
+    const m = await readPdfMeta(f);
+    if (!m.pages) return null;
     const id = "w-pdf-" + Date.now().toString(36);
     await putFile(`${id}::pdf`, f);
     return {
       id,
-      title: meta.title?.slice(0, 120) || stripExt(f.name),
-      author: meta.author?.slice(0, 80) || "Local",
-      cover: meta.coverDataUrl ?? "",
-      coverColor: meta.coverDataUrl ? undefined : "from-red-500 to-rose-900",
+      title: m.title?.slice(0, 120) || stripExt(f.name),
+      author: m.author?.slice(0, 80) || "Local",
+      cover: m.coverDataUrl ?? "",
+      coverColor: m.coverDataUrl ? undefined : "from-red-500 to-rose-900",
       type: "PDF",
-      description: `PDF document · ${meta.pages} pages · fully readable offline`,
+      description: `PDF document · ${m.pages} pages · fully readable offline`,
       workStatus: "COMPLETED",
       readingStatus: "PLANNED",
       isFavorite: false,
@@ -785,8 +1013,8 @@ export async function importPdf(f: File): Promise<Work | null> {
         {
           id: `${id}-c1`,
           number: 1,
-          title: meta.title?.slice(0, 60) || "Document",
-          pages: meta.pages,
+          title: m.title?.slice(0, 60) || "Document",
+          pages: m.pages,
           releaseDate: new Date().toISOString(),
           isRead: false,
           download: "DONE",
@@ -797,6 +1025,7 @@ export async function importPdf(f: File): Promise<Work | null> {
       language: "—",
       isLocal: true,
       localPages: ["pdf"],
+      sourceMeta: meta ?? sourceMetaOf([f]),
     };
   } catch {
     return null;
@@ -900,7 +1129,7 @@ function resolvePath(baseDir: string, href: string): string {
 }
 
 /** Parse a real .epub (ZIP of XHTML) into readable chapters (FMT-002). */
-export async function importEpub(f: File): Promise<Work | null> {
+export async function importEpub(f: File, meta?: WorkSourceMeta): Promise<Work | null> {
   try {
     const buf = new Uint8Array(await f.arrayBuffer());
     const entries = unzipSync(buf);
@@ -961,7 +1190,7 @@ export async function importEpub(f: File): Promise<Work | null> {
 
     // 4) extract + sanitize chapters (embedded images are stored in IDB)
     const chapters: { id: string; title: string; html: string }[] = [];
-    const meta: { id: string; title: string }[] = [];
+    const meta2: { id: string; title: string }[] = [];
     let imgSeq = 0;
     for (let i = 0; i < spineIds.length; i++) {
       const item = manifest.get(spineIds[i]);
@@ -1001,7 +1230,7 @@ export async function importEpub(f: File): Promise<Work | null> {
       if (words < 8 && chapters.length > 0) continue; // skip near-empty cover/TOC pages
       const cid = `${id}-e${chapters.length}`;
       chapters.push({ id: cid, title: title.slice(0, 120), html });
-      meta.push({ id: cid, title: title.slice(0, 120) });
+      meta2.push({ id: cid, title: title.slice(0, 120) });
     }
     if (chapters.length === 0) return null;
 
@@ -1051,7 +1280,8 @@ export async function importEpub(f: File): Promise<Work | null> {
       language: "\u2014",
       isLocal: true,
       localPages: ["epub"],
-      epubChapters: meta,
+      epubChapters: meta2,
+      sourceMeta: meta ?? sourceMetaOf([f]),
     };
   } catch {
     return null;
@@ -1096,6 +1326,7 @@ function makeMetaWork(f: File, type: "PDF" | "EPUB"): Work {
     addedAt: new Date().toISOString(),
     language: "—",
     isLocal: true,
+    sourceMeta: sourceMetaOf([f]),
   };
 }
 

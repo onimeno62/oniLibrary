@@ -38,6 +38,14 @@ export interface Chapter {
   localPages?: string[];
 }
 
+/** static import facts shown on the details page for local works (v1.2.1) */
+export interface WorkSourceMeta {
+  sizeBytes: number; // total size of the picked files
+  pathLabel: string; // folder name / file name as picked (SAF gives no real paths)
+  fileCount: number; // number of picked files
+  formats: string[]; // e.g. ["CBZ", "RAR", "PDF", "Images"]
+}
+
 export interface Work {
   id: string;
   title: string;
@@ -70,6 +78,7 @@ export interface Work {
   userRating?: number; // personal rating 0..5 stars (TRK-001)
   customCover?: string; // user-chosen cover data url (LIB-010)
   personalNotes?: string; // free-form private notes (LIB-010)
+  sourceMeta?: WorkSourceMeta; // local-import facts for the details page (v1.2.1)
   trackerId?: number; // external tracker (AniList) media id once matched
 }
 

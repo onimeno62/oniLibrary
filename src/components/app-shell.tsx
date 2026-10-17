@@ -30,10 +30,10 @@ import { HighlightsScreen } from "@/components/screens/highlights-screen";
 import { useApp, useNav, type Overlay } from "@/lib/store";
 import { useT, useResolvedTheme, useMounted } from "@/lib/use-app";
 import { useClientEngine } from "@/lib/engine";
-import { importFiles, UNSUPPORTED_REASON_KEYS } from "@/lib/importer";
-import { toast } from "@/hooks/use-toast";
+import { ImportDestinationDialog } from "@/components/import/import-destination-dialog";
 import { cn } from "@/lib/utils";
 import { BookOpen, Compass, Download, LibraryBig, ShieldCheck, BarChart3 } from "lucide-react";
+import { useState } from "react";
 
 /* desktop side branding — mirrors the reference key visuals */
 function SideBranding() {
@@ -167,7 +167,10 @@ export function AppShell() {
   const navItems = useApp((s) => s.settings.navItems);
   const { tab, stack, pop } = useNav();
   const resolved = useResolvedTheme();
-  const { t } = useT();
+
+  // Android Share/Open-With staging (v1.2.1): the pulled file is handed to the
+  // shared destination dialog — existing work (smart search) or new work
+  const [stagedFiles, setStagedFiles] = useState<File[] | null>(null);
 
   const overlay = stack[stack.length - 1];
   const readerOpen = overlay?.kind === "reader";
@@ -211,7 +214,8 @@ export function AppShell() {
   }, []);
 
   // Android Share / Open-With import (LOC-001): the native shell stages a
-  // received file in its cache — pull it over the chunked bridge and import
+  // received file in its cache — pull it over the chunked bridge and hand it
+  // to the destination dialog (existing work via smart search, or new work)
   useEffect(() => {
     const pull = async () => {
       const b = window as unknown as {
@@ -249,70 +253,14 @@ export function AppShell() {
           if (chunks.reduce((a, c) => a + c.length, 0) > 512 * 1024 * 1024) break; // sane cap
         }
         const total = chunks.reduce((a, c) => a + c.length, 0);
+        // release the native staging slot right away — the bytes now live in JS
+        bridge.clearPendingImport?.();
         if (total > 0) {
           const file = new File(chunks as unknown as BlobPart[], info.name || "import", {
             type: info.mime || "application/octet-stream",
           });
-          // add-to-work (v1.2.0): the library screen leaves a target work id in
-          // sessionStorage before opening the native picker — route this staged
-          // file into that work as a new chapter instead of a separate work
-          let addTarget: string | null = null;
-          try {
-            addTarget = sessionStorage.getItem("oni-add-to-work");
-            sessionStorage.removeItem("oni-add-to-work");
-          } catch {
-            /* ignore */
-          }
-          if (addTarget) {
-            const st = useApp.getState();
-            const work = st.works.find((w) => w.id === addTarget);
-            if (work) {
-              const { importFilesToWork } = await import("@/lib/importer");
-              const startNumber = work.chapters.reduce((m, c) => Math.max(m, c.number), 0) + 1;
-              const { added, created, skipped } = await importFilesToWork([file], work.id, startNumber);
-              if (added.length) st.appendChapters(work.id, added);
-              for (const w of created) st.addWork(w);
-              if (added.length) {
-                toast({
-                  title: t("imp.addedChapters", { n: added.length }),
-                  description: added.map((c) => `#${c.number} ${c.title}`).join(", ").slice(0, 90),
-                });
-              }
-              if (created.length) toast({ title: t("imp.separateWorks", { n: created.length }) });
-              if (skipped.length) {
-                toast({
-                  title: t("imp.unsupported", { names: skipped.slice(0, 2).map((s) => s.name).join(", ") }),
-                  description: skipped
-                    .slice(0, 2)
-                    .map((s) => `${s.name} — ${t(UNSUPPORTED_REASON_KEYS[s.reason] ?? "imp.reason.format")}`)
-                    .join("\n"),
-                  variant: "destructive",
-                });
-              }
-              return;
-            }
-          }
-          const { created, unsupported, unsupportedDetails } = await importFiles([file]);
-          const addWork = useApp.getState().addWork;
-          for (const w of created) addWork(w);
-          if (created.length) {
-            toast({
-              title: t("imp.added", { n: created.length }),
-              description: created.map((c) => c.title).join(", "),
-            });
-          }
-          if (unsupported.length) {
-            toast({
-              title: t("imp.unsupported", { names: unsupported.slice(0, 2).join(", ") }),
-              description: unsupportedDetails
-                .slice(0, 2)
-                .map((d) => `${d.name} — ${t(UNSUPPORTED_REASON_KEYS[d.reason] ?? "imp.reason.format")}`)
-                .join("\n"),
-              variant: "destructive",
-            });
-          }
+          setStagedFiles([file]);
         }
-        bridge.clearPendingImport?.();
       } catch {
         /* malformed transfer — leave it; a retry re-pulls */
       }
@@ -402,6 +350,9 @@ export function AppShell() {
         </div>
       </div>
       </div>
+
+      {/* Android staged import → destination dialog (v1.2.1) */}
+      <ImportDestinationDialog files={stagedFiles} onClose={() => setStagedFiles(null)} />
     </div>
   );
 }

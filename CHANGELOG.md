@@ -3,6 +3,38 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.2.1] — 2026-10-17
+
+### Added
+- **Import destination asked every time** — "Import files" now opens a
+  "Where should these files go?" dialog: pick an **existing work** via a
+  smart search box (title-prefix > title > alt-title/author ranking, cover
+  thumbnails) or create a **new work** (name prefilled from the first file).
+  Picked files joining an existing work become chapters; a new work receives
+  every archive as its own chapter and loose images as one chapter. The
+  separate "Add to work…" FAB entry is gone — importing and adding are one
+  flow now. Android Share/Open-With staging feeds the same dialog.
+- **Folder import asks how to treat every file** — the folder review dialog
+  lists each detected item (subfolder image groups, ZIP/CBZ, RAR/CBR, PDF,
+  EPUB) with its origin path, file count and size, and a per-item treatment
+  selector: **Chapter of this work** / **Separate work** / **Skip** (PDF and
+  EPUB offer work/skip — they never merge into image works). Every item
+  title is editable; the work title defaults to the folder name and stays
+  editable. Unreadable PDFs/EPUBs no longer vanish — they land as
+  demo-reader works. Auto chapter numbering now continues after the highest
+  explicit hint ("Chapter 1" + two plain folders → 1, 2, 3).
+- **Local file details on the work page** — local works show a "Local file
+  details" block under the description: **Format**, **Size** (human
+  readable), **Path** (folder or file name as picked), **Date added** and
+  **Files** count. Adding files to an existing work grows its recorded size
+  and file count. Localized EN + FA.
+
+### Changed
+- **Rating is now numeric "4/5"** — "Your rating" moved into the stats band,
+  between the chapters count and the status cell, and shows your score as
+  "4/5". Tapping it opens a compact number picker (1–5 plus a clear button);
+  the average community rating moved to a star chip next to the tags.
+
 ## [1.2.0] — 2026-10-17
 
 ### Added
