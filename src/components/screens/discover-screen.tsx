@@ -2,32 +2,33 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Pin, PinOff, Power, PowerOff } from "lucide-react";
-import { SectionHeader, SourceIcon } from "@/components/shared";
-import { useApp, useNav } from "@/lib/store";
+import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe } from "lucide-react";
+import { SectionHeader, WorkCover } from "@/components/shared";
+import { useApp, useNav, continueReading } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
-import { toast } from "@/hooks/use-toast";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import type { TranslationKey } from "@/lib/i18n";
+import type { Chapter, Work } from "@/lib/types";
 
-type Cat = "ALL" | "MANGA" | "MANHWA" | "COMICS" | "BOOKS" | "MORE";
+type Cat = "ALL" | "MANGA" | "COMICS" | "BOOKS";
+type Chip = Cat | "MORE";
+
+/* coarse type groups for the library shelves (chips row) */
+function matchesCat(w: Work, cat: Cat): boolean {
+  if (cat === "ALL") return true;
+  if (cat === "MANGA") return ["MANGA", "MANHWA", "MANHUA", "WEBTOON"].includes(w.type);
+  if (cat === "COMICS") return w.type === "COMIC";
+  return ["BOOK", "NOVEL", "PDF", "EPUB"].includes(w.type); // BOOKS
+}
 
 export function DiscoverScreen() {
   const { t } = useT();
-  const sources = useApp((s) => s.sources);
-  const offlineMode = useApp((s) => s.settings.offlineMode);
+  const servers = useApp((s) => s.servers);
+  const works = useApp((s) => s.works);
   const push = useNav((s) => s.push);
   const setTab = useNav((s) => s.setTab);
-  const setSourceEnabled = useApp((s) => s.setSourceEnabled);
-  const setSourcePinned = useApp((s) => s.setSourcePinned);
+  const openWork = useNav((s) => s.openWork);
+  const openReader = useNav((s) => s.openReader);
   const [cat, setCat] = useState<Cat>("ALL");
-  const [query, setQuery] = useState("");
 
   /* promo carousel (mockup: "Discover More" banner with page dots) */
   const bannerRef = useRef<HTMLDivElement>(null);
@@ -77,35 +78,27 @@ export function DiscoverScreen() {
     return () => clearInterval(id);
   }, []);
 
-  const kindOf = (s: (typeof sources)[number]): string[] =>
-    s.kinds.flatMap((k) => k.split(" "));
+  /* ----- real library shelves (v1.2.2 — no more fake catalogs) ----- */
+  const visibleWorks = useMemo(() => works.filter((w) => !w.inVault).filter((w) => matchesCat(w, cat)), [works, cat]);
 
-  const filteredSources = useMemo(() => {
-    let list = [...sources].sort((a, b) => Number(b.pinned) - Number(a.pinned));
-    if (cat === "MANGA") list = list.filter((s) => kindOf(s).includes("Manga") && !s.kinds.includes("Anime"));
-    if (cat === "MANHWA") list = list.filter((s) => s.languages.some((l) => ["KO", "ZH"].includes(l)) || s.name === "Webtoon");
-    if (cat === "COMICS") list = list.filter((s) => s.kinds.includes("Comics"));
-    if (cat === "BOOKS") list = list.filter((s) => s.kinds.some((k) => k.includes("Novel")));
-    return list;
-  }, [sources, cat]);
+  const continueShelf = useMemo(() => {
+    return visibleWorks
+      .filter((w) => w.readingStatus === "READING")
+      .map((w) => ({ work: w, cr: continueReading(w) }))
+      .filter((x): x is { work: Work; cr: { chapter: Chapter; page: number } } => x.cr !== null)
+      .map(({ work, cr }) => ({
+        work,
+        chapterId: cr.chapter.id,
+        page: cr.page,
+        pct: Math.min(99, Math.max(1, Math.round((cr.chapter.lastPage ?? 0) * 100))),
+      }))
+      .slice(0, 10);
+  }, [visibleWorks]);
 
-  const visible = useMemo(() => {
-    const base = query.trim()
-      ? filteredSources.filter((s) => s.name.toLowerCase().includes(query.trim().toLowerCase()))
-      : filteredSources;
-    return base;
-  }, [filteredSources, query]);
-
-  const statusLabel = (s: (typeof sources)[number]) =>
-    !s.enabled
-      ? t("disc.sourceDisabled")
-      : offlineMode
-        ? t("common.offline")
-        : s.status === "ONLINE"
-          ? t("common.online")
-          : s.status === "OFFLINE"
-            ? t("disc.sourceOffline")
-            : t("disc.sourceError");
+  const recentShelf = useMemo(
+    () => [...visibleWorks].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).slice(0, 10),
+    [visibleWorks]
+  );
 
   return (
     <div className="min-h-full px-5 pb-8">
@@ -159,16 +152,13 @@ export function DiscoverScreen() {
 
       {/* search */}
       <div className="mt-4 flex items-center gap-2">
-        <div className="flex h-11 flex-1 items-center gap-2 rounded-full bg-card px-4 shadow-[0_6px_18px_-12px_rgba(43,36,29,0.35)]">
+        <button
+          onClick={() => push({ kind: "search" })}
+          className="flex h-11 flex-1 items-center gap-2 rounded-full bg-card px-4 text-start shadow-[0_6px_18px_-12px_rgba(43,36,29,0.35)]"
+        >
           <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => query.trim() && push({ kind: "search" })}
-            placeholder={t("disc.searchPlaceholder")}
-            className="w-full bg-transparent text-[14px] font-semibold outline-none placeholder:text-muted-foreground"
-          />
-        </div>
+          <span className="w-full truncate text-[14px] font-semibold text-muted-foreground">{t("disc.searchPlaceholder")}</span>
+        </button>
         <button
           onClick={() => push({ kind: "extensions" })}
           aria-label={t("ext.title")}
@@ -178,124 +168,158 @@ export function DiscoverScreen() {
         </button>
       </div>
 
-      {/* chips */}
+      {/* chips — filter the real library shelves */}
       <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto px-5 no-scrollbar">
         {(
           [
             ["ALL", t("common.all")],
             ["MANGA", t("type.MANGA")],
-            ["MANHWA", t("disc.manhwa")],
             ["COMICS", t("type.COMIC")],
             ["BOOKS", t("type.BOOK")],
             ["MORE", t("common.more")],
-          ] as [Cat, string][]
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => (id === "MORE" ? push({ kind: "extensions" }) : setCat(id))}
-            className={cn(
-              "shrink-0 rounded-full px-4 py-1.5 text-[13px] font-bold transition-all",
-              cat === id && id !== "MORE"
-                ? "bg-coral-gradient text-white shadow-[0_6px_16px_-6px_rgba(248,105,76,0.55)]"
-                : "bg-card text-secondary-foreground shadow-[0_4px_12px_-8px_rgba(43,36,29,0.3)] hover:bg-secondary"
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* sources */}
-      <section className="mt-6">
-        <SectionHeader title={t("disc.popularSources")} onSeeAll={() => push({ kind: "extensions" })} />
-        <div className="space-y-2.5">
-          {visible.map((s) => (
-            <div
-              key={s.id}
+          ] as [Chip, string][]
+        ).map(([id, label]) => {
+          const isMore = id === "MORE";
+          return (
+            <button
+              key={id}
+              onClick={() => (isMore ? push({ kind: "extensions" }) : setCat(id))}
               className={cn(
-                "flex w-full items-center gap-3.5 rounded-3xl border border-border/60 bg-card p-3 shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)] transition-all hover:shadow-[0_12px_26px_-16px_rgba(43,36,29,0.5)]",
-                !s.enabled && "opacity-60"
+                "shrink-0 rounded-full px-4 py-1.5 text-[13px] font-bold transition-all",
+                !isMore && cat === id
+                  ? "bg-coral-gradient text-white shadow-[0_6px_16px_-6px_rgba(248,105,76,0.55)]"
+                  : "bg-card text-secondary-foreground shadow-[0_4px_12px_-8px_rgba(43,36,29,0.3)] hover:bg-secondary"
               )}
             >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ====== from your library: continue reading ====== */}
+      {continueShelf.length > 0 && (
+        <section className="mt-6">
+          <SectionHeader title={t("disc.continueShelf")} onSeeAll={() => setTab("library")} />
+          <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar">
+            {continueShelf.map(({ work, chapterId, page, pct }) => (
               <button
-                onClick={() => push({ kind: "source", sourceId: s.id })}
-                className="flex min-w-0 flex-1 items-center gap-3.5 text-start"
+                key={work.id}
+                onClick={() => openReader(work.id, chapterId, page)}
+                className="group w-[96px] shrink-0 text-start"
               >
-                <SourceIcon bg={s.iconBg} text={s.iconText} size={48} />
-                <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-1.5 text-[15px] font-extrabold">
-                    {s.name}
-                    {s.pinned && <Pin className="h-3 w-3 shrink-0 rotate-45 text-primary" fill="currentColor" />}
-                  </p>
-                  <p className="truncate text-[12px] font-semibold text-muted-foreground">
-                    {s.kinds.join(" · ")} <span className="mx-1">•</span> {s.itemCount}
-                  </p>
-                  <p className="mt-0.5 flex items-center gap-1.5 text-[11px] font-bold">
-                    <span
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full",
-                        !s.enabled
-                          ? "bg-zinc-400"
-                          : offlineMode || s.status !== "ONLINE"
-                            ? "bg-amber-500"
-                            : "bg-emerald-500"
-                      )}
-                    />
-                    <span
-                      className={
-                        !s.enabled
-                          ? "text-zinc-500"
-                          : offlineMode || s.status !== "ONLINE"
-                            ? "text-amber-600"
-                            : "text-emerald-600"
-                      }
-                    >
-                      {statusLabel(s)}
-                    </span>
-                  </p>
+                <WorkCover
+                  src={work.cover}
+                  color={work.coverColor}
+                  title={work.title}
+                  className="aspect-[3/4] w-full rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.5)]"
+                  sizes="96px"
+                />
+                <p className="mt-1.5 truncate text-[12px] font-extrabold">{work.title}</p>
+                <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-secondary">
+                  <div className="h-full rounded-full bg-coral-gradient" style={{ width: `${pct}%` }} />
                 </div>
-                <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground rtl:rotate-180" />
+                <p className="mt-0.5 text-[10px] font-bold text-muted-foreground">{pct}%</p>
               </button>
-              {/* SRC-004: enable / disable / pin sources */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ====== from your library: recently added ====== */}
+      {recentShelf.length > 0 && (
+        <section className="mt-6">
+          <SectionHeader title={t("disc.recentShelf")} onSeeAll={() => setTab("library")} />
+          <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar">
+            {recentShelf.map((w) => (
+              <button key={w.id} onClick={() => openWork(w.id)} className="w-[96px] shrink-0 text-start">
+                <WorkCover
+                  src={w.cover}
+                  color={w.coverColor}
+                  title={w.title}
+                  className="aspect-[3/4] w-full rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.5)]"
+                  sizes="96px"
+                />
+                <p className="mt-1.5 truncate text-[12px] font-extrabold">{w.title}</p>
+                <p className="truncate text-[10px] font-semibold text-muted-foreground">
+                  {t("common.chapter")} {w.chapters.length} · {w.author}
+                </p>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ====== catalogs (real OPDS / Komga servers) ====== */}
+      <section className="mt-6">
+        <SectionHeader title={t("disc.catalogs")} onSeeAll={() => push({ kind: "servers" })} />
+        {servers.length === 0 ? (
+          <button
+            onClick={() => push({ kind: "servers" })}
+            className="flex w-full flex-col items-center gap-2 rounded-3xl border border-dashed border-border bg-card/50 p-6 text-center transition-colors hover:bg-card"
+          >
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-coral-soft text-primary">
+              <Plus className="h-5 w-5" />
+            </span>
+            <span className="text-[14px] font-extrabold">{t("disc.addCatalog")}</span>
+            <span className="text-[11.5px] font-semibold leading-snug text-muted-foreground">{t("disc.noCatalogsHint")}</span>
+          </button>
+        ) : (
+          <>
+            <div className="space-y-2.5">
+              {servers.map((s) => {
+                const statusColor =
+                  s.status === "OK" ? "bg-emerald-500" : s.status === "FAIL" ? "bg-red-500" : "bg-zinc-400";
+                return (
                   <button
-                    aria-label={t("common.more")}
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary"
+                    key={s.id}
+                    onClick={() => push({ kind: "catalog", serverId: s.id })}
+                    className="flex w-full items-center gap-3.5 rounded-3xl border border-border/60 bg-card p-3 text-start shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)] transition-all hover:shadow-[0_12px_26px_-16px_rgba(43,36,29,0.5)]"
                   >
-                    <Settings2 className="h-4 w-4" />
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-coral-soft text-primary">
+                      <Globe className="h-5.5 w-5.5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-2 text-[15px] font-extrabold">
+                        <span className="truncate">{s.name}</span>
+                        <span className="shrink-0 rounded-full bg-coral-soft px-2 py-0.5 text-[9.5px] font-black text-primary">
+                          {s.kind}
+                        </span>
+                      </span>
+                      <span className="block truncate text-[12px] font-semibold text-muted-foreground" dir="ltr">
+                        {(() => {
+                          try {
+                            return new URL(s.url).host;
+                          } catch {
+                            return s.url;
+                          }
+                        })()}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] font-bold">
+                        <span className={cn("h-1.5 w-1.5 rounded-full", statusColor)} aria-hidden />
+                        <span
+                          className={cn(
+                            s.status === "OK" ? "text-emerald-600" : s.status === "FAIL" ? "text-red-500" : "text-zinc-500"
+                          )}
+                        >
+                          {s.status === "OK" ? t("srv.ok") : s.status === "FAIL" ? t("srv.fail") : t("disc.untested")}
+                        </span>
+                      </span>
+                    </span>
+                    <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground rtl:rotate-180" />
                   </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="rounded-2xl">
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setSourcePinned(s.id, !s.pinned);
-                      toast({ title: s.pinned ? t("src.unpinned") : t("src.pinned"), description: s.name });
-                    }}
-                    className="gap-2.5 rounded-xl text-[13px] font-semibold"
-                  >
-                    {s.pinned ? <PinOff className="h-4 w-4 text-primary" /> : <Pin className="h-4 w-4 text-primary" />}
-                    {s.pinned ? t("src.unpin") : t("src.pin")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setSourceEnabled(s.id, !s.enabled);
-                      toast({
-                        title: s.enabled ? t("src.disabledToast") : t("src.enabledToast"),
-                        description: s.name,
-                      });
-                    }}
-                    className="gap-2.5 rounded-xl text-[13px] font-semibold"
-                  >
-                    {s.enabled ? <PowerOff className="h-4 w-4 text-destructive" /> : <Power className="h-4 w-4 text-primary" />}
-                    {s.enabled ? t("src.disable") : t("src.enable")}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                );
+              })}
             </div>
-          ))}
-        </div>
+            <button
+              onClick={() => push({ kind: "servers" })}
+              className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-3xl border border-dashed border-border py-3.5 text-[13px] font-extrabold text-primary transition-colors hover:bg-card"
+            >
+              <Plus className="h-4 w-4" />
+              {t("disc.addCatalog")}
+            </button>
+          </>
+        )}
       </section>
 
       {/* discover-more carousel (mockup: promo banner with page dots) */}
@@ -341,41 +365,5 @@ export function DiscoverScreen() {
         </div>
       </section>
     </div>
-  );
-}
-
-export function AddSourceButton({ sourceId, title }: { sourceId: string; title: string }) {
-  const { t } = useT();
-  const works = useApp((s) => s.works);
-  const inLibrary = works.some((w) => w.title === title);
-  const add = useApp((s) => s.addSampleWorkFromSource);
-  return (
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!inLibrary) {
-          add(sourceId, title);
-          toast({ title: t("disc.addToLibrary"), description: title });
-        }
-      }}
-      disabled={inLibrary}
-      className={cn(
-        "flex h-8 items-center gap-1 rounded-full px-3 text-[12px] font-extrabold transition-all",
-        inLibrary
-          ? "bg-secondary text-muted-foreground"
-          : "bg-coral-gradient text-white shadow-[0_6px_16px_-8px_rgba(248,105,76,0.6)] hover:scale-[1.03]"
-      )}
-    >
-      {inLibrary ? <CheckSmall /> : <Plus className="h-3.5 w-3.5" />}
-      {inLibrary ? t("disc.inLibrary") : t("disc.addToLibrary")}
-    </button>
-  );
-}
-
-function CheckSmall() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="3">
-      <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }

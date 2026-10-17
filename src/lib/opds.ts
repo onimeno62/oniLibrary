@@ -178,3 +178,73 @@ export async function testOpdsCatalog(entry: ServerEntry): Promise<string> {
   const feed = parseOpdsFeed(xml, url);
   return feed.title;
 }
+
+/* ---------------- search (v1.2.2) ---------------- */
+
+/**
+ * Resolve a catalog's OpenSearch template (OPDS 1.2: the feed exposes a
+ * rel="search" link to an OpenSearch DescriptionDocument whose Url template
+ * carries {searchTerms}). Best-effort — null when the catalog offers none
+ * (the UI then degrades to plain browsing).
+ */
+export async function resolveOpdsSearchTemplate(feedUrl: string): Promise<string | null> {
+  try {
+    const xml = await opdsFetchText(feedUrl);
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    if (doc.querySelector("parsererror")) return null;
+    const searchLink = [...doc.querySelectorAll("link")].find(
+      (l) => l.getAttribute("rel") === "search"
+    );
+    const href = searchLink?.getAttribute("href");
+    if (!href) return null;
+    const descUrl = absUrl(feedUrl, href);
+    const descXml = await opdsFetchText(descUrl);
+    const ddoc = new DOMParser().parseFromString(descXml, "text/xml");
+    if (ddoc.querySelector("parsererror")) return null;
+    if (!ddoc.querySelector("OpenSearchDescription")) return null;
+    const urlEl =
+      [...ddoc.querySelectorAll("Url")].find((u) =>
+        (u.getAttribute("type") ?? "").includes("atom+xml")
+      ) ?? ddoc.querySelector("Url");
+    const template = urlEl?.getAttribute("template") ?? "";
+    return template.includes("{searchTerms}") ? template : null;
+  } catch {
+    return null;
+  }
+}
+
+/** run a catalog search through a resolved OpenSearch template */
+export async function searchOpds(template: string, query: string): Promise<OpdsFeed> {
+  const url = template
+    .replace(/\{searchTerms\}/g, encodeURIComponent(query.trim()))
+    .replace(/\{startIndex\}|\{startPage\}/g, "1")
+    .replace(/\{count\}/g, "24");
+  const xml = await opdsFetchText(url);
+  return parseOpdsFeed(xml, url);
+}
+
+/** cached template resolver — one network round-trip per catalog */
+const templateCache = new Map<string, Promise<string | null>>();
+
+export function opdsSearchTemplate(srv: ServerEntry): Promise<string | null> {
+  let p = templateCache.get(srv.id);
+  if (!p) {
+    p = resolveOpdsSearchTemplate(srv.url);
+    templateCache.set(srv.id, p);
+  }
+  return p;
+}
+
+/** ping any configured server (OPDS feed or Komga libraries endpoint) */
+export async function pingServer(srv: ServerEntry): Promise<boolean> {
+  try {
+    if (srv.kind === "OPDS") {
+      await testOpdsCatalog(srv);
+    } else {
+      await opdsFetchText(srv.url.replace(/\/$/, "").concat("/api/v1/libraries?page=0"));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}

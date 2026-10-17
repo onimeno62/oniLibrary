@@ -489,10 +489,12 @@ export function ReaderScreen({
   const readerDefaults = useApp((s) => s.settings.readerDefaults);
   const bookmarks = useApp((s) => s.bookmarks);
   const allHighlights = useApp((s) => s.highlights);
-  /* PDF rect highlights for this work (stable selector + memo → getSnapshot safe) */
+  /* PDF rect highlights for this work's CURRENT chapter (stable selector +
+     memo → getSnapshot safe); chapter-scoped so pdf chapters never share marks */
   const pdfHighlights = useMemo(
-    () => allHighlights.filter((h) => h.workId === workId && h.page !== undefined),
-    [allHighlights, workId]
+    () =>
+      allHighlights.filter((h) => h.workId === workId && h.chapterId === chapterId && h.page !== undefined),
+    [allHighlights, workId, chapterId]
   );
   const pop = useNav((s) => s.pop);
   const updateWork = useApp((s) => s.updateWork);
@@ -584,7 +586,12 @@ export function ReaderScreen({
   const vertical = direction === "VERTICAL";
   const requestedMode: ReaderMode = work?.readerMode ?? readerDefaults.mode;
   const isEpub = work?.type === "EPUB" && work?.localPages?.[0] === "epub";
-  const isPdf = work?.type === "PDF" && work?.localPages?.[0] === "pdf";
+  /* v1.2.2: PDF chapters carry their own document (folder imports merge PDFs
+     as chapters); legacy single-PDF works keep the work-level marker */
+  const isPdfChapter = chapter?.localDoc === "pdf";
+  const isPdf = isPdfChapter || (work?.type === "PDF" && work?.localPages?.[0] === "pdf");
+  /** storage base for the PDF engine — per-chapter docs live under workId::chapterId */
+  const pdfDocKey = isPdfChapter ? `${workId}::${chapterId}` : workId;
   const epubFontSize = readerDefaults.epubFontSize ?? 16;
 
   const [landscape, setLandscape] = useState(false);
@@ -652,6 +659,11 @@ export function ReaderScreen({
     setScrollCmd({ page: p });
     /* chapter-scoped find state: re-marked by the new chapter's jump effect */
     setEpubMarks(0);
+    /* pdf find/TOC state belongs to the chapter's own document (v1.2.2) */
+    setPdfHits(null);
+    setPdfQuery("");
+    setFindIdx(null);
+    setPdfToc([]);
   }
 
   /* ----- progress persistence: page ratio on every page change (manga modes) ----- */
@@ -747,7 +759,7 @@ export function ReaderScreen({
     void (async () => {
       try {
         const { getPdfToc } = await import("@/lib/pdf-engine");
-        const toc = await getPdfToc(workId);
+        const toc = await getPdfToc(pdfDocKey);
         if (alive) setPdfToc(toc);
       } catch {
         /* outline unavailable */
@@ -756,7 +768,7 @@ export function ReaderScreen({
     return () => {
       alive = false;
     };
-  }, [chapterSheet, isPdf, workId]);
+  }, [chapterSheet, isPdf, pdfDocKey, chapterId]);
 
   /* ----- mark chapter read when it was fully seen and we leave it -----
      (the persisted lastPage ratio reaching the final page counts as "seen all") */
@@ -925,7 +937,7 @@ export function ReaderScreen({
   const speakPdfPage = async (p: number): Promise<boolean> => {
     try {
       const { getPdfPageText } = await import("@/lib/pdf-engine");
-      const text = await getPdfPageText(workId, p + 1);
+      const text = await getPdfPageText(pdfDocKey, p + 1);
       if (!text.trim()) return false;
       return ttsStart([text], { lang: work?.language, rate: readerDefaults.ttsRate ?? 1 });
     } catch {
@@ -1181,7 +1193,7 @@ export function ReaderScreen({
       void (async () => {
         try {
           const { searchPdfText } = await import("@/lib/pdf-engine");
-          const hits = await searchPdfText(workId, q);
+          const hits = await searchPdfText(pdfDocKey, q);
           if (alive) {
             setPdfHits(hits);
             setPdfSearching(false);
@@ -1198,7 +1210,7 @@ export function ReaderScreen({
       alive = false;
       window.clearTimeout(id);
     };
-  }, [pdfQuery, pdfSearchOpen, isPdf, workId]);
+  }, [pdfQuery, pdfSearchOpen, isPdf, pdfDocKey, chapterId]);
 
   /* ----- book (epub) full-text search: debounced committed query ----- */
   useEffect(() => {
@@ -1409,6 +1421,7 @@ export function ReaderScreen({
     if (isPdf) {
       return (
         <PdfCanvas
+          docKey={pdfDocKey}
           workId={work.id}
           chapterId={chapterId}
           page={i + 1}
@@ -1563,6 +1576,7 @@ export function ReaderScreen({
                 }}
               >
                 <PdfCanvas
+                  docKey={pdfDocKey}
                   workId={work.id}
                   chapterId={chapterId}
                   page={i + 1}

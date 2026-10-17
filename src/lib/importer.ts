@@ -391,6 +391,44 @@ function makeChapter(
   };
 }
 
+/**
+ * Materialize ONE PDF as a CHAPTER of a work (v1.2.2): the file is stored at
+ * `<workId>::<chapterId>::pdf` and the reader routes that chapter through the
+ * PDF engine with a per-chapter docKey. Returns the chapter + a cover
+ * thumbnail (usable as the work cover when the work has no image cover yet).
+ * Null when the PDF can't be parsed (caller falls back honestly).
+ */
+async function makePdfChapter(
+  workId: string,
+  number: number,
+  title: string,
+  f: File
+): Promise<{ chapter: Chapter; cover: string } | null> {
+  try {
+    const { readPdfMeta } = await import("./pdf-engine");
+    const m = await readPdfMeta(f);
+    if (!m.pages) return null;
+    const id = `${workId}-c${number}-${Math.random().toString(36).slice(2, 6)}`;
+    await putFile(`${workId}::${id}::pdf`, f);
+    return {
+      chapter: {
+        id,
+        number,
+        title: title.slice(0, 120) || `Chapter ${number}`,
+        pages: m.pages,
+        releaseDate: new Date().toISOString(),
+        isRead: false,
+        download: "DONE",
+        sizeMb: Math.round((f.size / 1_048_576) * 10) / 10,
+        localDoc: "pdf",
+      },
+      cover: m.coverDataUrl ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 /* --------------------------------------------------------------- *
  *  file import (new works) — LOC-001..005                         *
  * --------------------------------------------------------------- */
@@ -638,8 +676,15 @@ export async function importFilesToWork(
         continue;
       }
       if (/\.pdf$/i.test(name)) {
-        const w = await importPdf(f);
-        created.push(w ?? makeMetaWork(f, "PDF"));
+        await flushImages(); // keep ordering: loose images before this pdf
+        const pc = await makePdfChapter(workId, next, stripExt(name), f);
+        if (pc) {
+          added.push(pc.chapter);
+          next++;
+        } else {
+          // unreadable pdf → honest demo-reader work, never silent
+          created.push(makeMetaWork(f, "PDF"));
+        }
         continue;
       }
       if (/\.epub$/i.test(name)) {
@@ -689,7 +734,8 @@ export interface FolderItemPlan {
   origin: string; // display path (relative dir or file name)
   files: File[];
   treatment: FolderItemTreatment;
-  /** treatments the UI may offer for this kind (PDF/EPUB never merge) */
+  /** treatments the UI may offer for this kind (EPUBs are whole books and
+      never merge; PDFs merge as per-chapter documents since v1.2.2) */
   options: FolderItemTreatment[];
 }
 
@@ -718,14 +764,15 @@ function makePlan(
     origin,
     files,
     treatment,
-    options: kind === "pdf" || kind === "epub" ? ["work", "skip"] : ["chapter", "work", "skip"],
+    options: kind === "epub" ? ["work", "skip"] : ["chapter", "work", "skip"],
   };
 }
 
 /** group picked folder contents into reviewable items (no files are read yet —
     the preview dialog asks the user how to treat every one of them). Images
     sitting in one subfolder become a single item; every archive/pdf/epub file
-    becomes its own item. */
+    becomes its own item. PDFs default to CHAPTER of the folder work (each PDF
+    = one volume/chapter document); EPUBs default to separate works. */
 export function buildFolderPreview(files: File[]): FolderPreview | null {
   interface DirGroup {
     images: File[];
@@ -767,7 +814,7 @@ export function buildFolderPreview(files: File[]): FolderPreview | null {
       );
     }
     for (const p of g.pdfs.sort((x, y) => naturalCompare(x.name, y.name))) {
-      items.push(makePlan("pdf", "PDF", stripExt(p.name) || leafTitle, d ? `${d}/${p.name}` : p.name, [p], "work"));
+      items.push(makePlan("pdf", "PDF", stripExt(p.name) || leafTitle, d ? `${d}/${p.name}` : p.name, [p], "chapter"));
     }
     for (const e of g.epubs.sort((x, y) => naturalCompare(x.name, y.name))) {
       items.push(makePlan("epub", "EPUB", stripExt(e.name) || leafTitle, d ? `${d}/${e.name}` : e.name, [e], "work"));
@@ -833,6 +880,21 @@ export async function importFolderCommit(
     const number = numberHintOf(titleOf(it)) ?? ++noAuto;
     const itemTitle = titleOf(it);
     let stored: StoredPages | null = null;
+    if (it.kind === "pdf") {
+      // v1.2.2: the whole PDF becomes a self-contained chapter document
+      const pc = await makePdfChapter(id, number, itemTitle, it.files[0]);
+      if (pc) {
+        if (!cover) cover = pc.cover;
+        chapterFiles.push(...it.files);
+        chapters.push(pc.chapter);
+      } else {
+        // unreadable pdf → honest demo-reader work, never silent
+        const w = makeMetaWork(it.files[0], "PDF");
+        w.title = itemTitle;
+        works.push(w);
+      }
+      continue;
+    }
     if (it.kind === "images") {
       const sorted = [...it.files].sort((a, b) => naturalCompare(a.name, b.name));
       stored = await storePagesUnder(id, `ch${number}-${chapters.length}`, sorted.map((f) => ({ name: f.name, blob: f as unknown as Blob })));
@@ -881,22 +943,25 @@ export async function importFolderCommit(
     return { works, reason: "noImages" };
   }
 
+  // a folder made purely of PDFs is a document work (LTR paged), not manga
+  const allPdf = chapterItems.length > 0 && chapterItems.every((it) => it.kind === "pdf");
+
   return {
     work: {
       id,
       title: title.trim().slice(0, 120) || preview.rootName,
       author: "Local",
       cover,
-      type: "MANGA",
+      type: allPdf ? "PDF" : "MANGA",
       description: `Imported folder · ${chapters.length} chapter${chapters.length === 1 ? "" : "s"} · fully readable offline`,
       workStatus: "COMPLETED",
       readingStatus: "PLANNED",
       isFavorite: false,
       inVault: false,
-      tags: ["Local", "Folder"],
+      tags: allPdf ? ["Local", "PDF"] : ["Local", "Folder"],
       rating: 0,
       ratingCount: 0,
-      direction: "RTL",
+      direction: allPdf ? "LTR" : "RTL",
       readerMode: "PAGED",
       fitMode: "WIDTH",
       chapters,
@@ -910,16 +975,18 @@ export async function importFolderCommit(
 }
 
 export interface FilesAsWorkResult {
-  /** the new combined work — present when images/archives were picked */
+  /** the new combined work — present when images/archives/pdfs were picked */
   work?: Work;
-  /** PDF/EPUB stay self-contained (never merge into image works) */
+  /** EPUBs stay self-contained books (never merge); unreadable PDFs land
+      here as honest demo-reader works */
   separate: Work[];
   skipped: { name: string; reason: UnsupportedFile["reason"] }[];
 }
 
-/** "Import files → NEW work" destination: every archive becomes a chapter and
-    all loose images become one chapter of a single new work; PDF/EPUB come
-    back in `separate`. Reuses the folder-plan engine under the hood. */
+/** "Import files → NEW work" destination: every archive and every PDF becomes
+    a chapter (PDF = per-chapter document, v1.2.2) and all loose images become
+    one chapter of a single new work; EPUBs come back in `separate`. Reuses
+    the folder-plan engine under the hood. */
 export async function importFilesAsWork(files: File[], title?: string): Promise<FilesAsWorkResult> {
   const images: File[] = [];
   const archives: File[] = [];
@@ -959,16 +1026,28 @@ export async function importFilesAsWork(files: File[], title?: string): Promise<
     }
   }
 
-  // only documents — nothing to fold into a work, each stands alone
+  // only documents — PDFs still fold into ONE work (pdf chapters, v1.2.2);
+  // EPUBs are whole books and stand alone
   if (images.length === 0 && archives.length === 0) {
     const separate: Work[] = [];
-    for (const f of pdfs) {
-      separate.push((await importPdf(f)) ?? makeMetaWork(f, "PDF"));
+    let folded: Work | undefined;
+    if (pdfs.length > 0) {
+      const pdfPreview = buildFolderPreview(pdfs);
+      if (pdfPreview) {
+        const r = await importFolderCommit(pdfPreview, title?.trim() || pdfPreview.rootName);
+        folded = r.work;
+        separate.push(...r.works);
+        if (folded) {
+          folded.tags = ["Local", "Files"];
+          const n = folded.chapters.length;
+          folded.description = `Imported files · ${n} chapter${n === 1 ? "" : "s"} · fully readable offline`;
+        }
+      }
     }
     for (const f of epubs) {
       separate.push((await importEpub(f)) ?? makeMetaWork(f, "EPUB"));
     }
-    return { separate, skipped };
+    return { work: folded, separate, skipped };
   }
 
   const preview = buildFolderPreview([...images, ...archives, ...pdfs, ...epubs]);

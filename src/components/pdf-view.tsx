@@ -239,6 +239,7 @@ function PdfHlPopup({
 /* ------------------------------------------------------------------ */
 
 export function PdfCanvas({
+  docKey, // storage base for the PDF engine (workId, or workId::chapterId for pdf chapters)
   workId,
   chapterId,
   page, // 1-based
@@ -249,6 +250,7 @@ export function PdfCanvas({
   highlightMode = false,
   focusHighlightId,
 }: {
+  docKey: string;
   workId: string;
   chapterId: string;
   page: number;
@@ -328,7 +330,7 @@ export function PdfCanvas({
     setState("loading");
     (async () => {
       try {
-        const doc = await loadPdfDoc(workId);
+        const doc = await loadPdfDoc(docKey);
         const canvas = canvasRef.current;
         if (!alive || !canvas) return;
         const p = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
@@ -362,7 +364,7 @@ export function PdfCanvas({
       }
       taskRef.current = null;
     };
-  }, [workId, page, width, rotation, visible]);
+  }, [docKey, page, width, rotation, visible]);
 
   /* find-in-page marks (round 9): recompute when the highlight changes.
      Rects arrive in unrotated scale-1 user space → convert with the same
@@ -377,12 +379,12 @@ export function PdfCanvas({
     let alive = true;
     (async () => {
       try {
-        const rects = await getPdfPageMatches(workId, page, query);
+        const rects = await getPdfPageMatches(docKey, page, query);
         if (!alive || rects.length === 0) {
           if (alive) setMarks([]);
           return;
         }
-        const cssRects = await userRectsToCss(workId, page, width, rotation, rects);
+        const cssRects = await userRectsToCss(docKey, page, width, rotation, rects);
         if (alive) setMarks(cssRects);
       } catch {
         if (alive) setMarks([]);
@@ -391,7 +393,7 @@ export function PdfCanvas({
     return () => {
       alive = false;
     };
-  }, [workId, page, width, rotation, visible, query, activeIdx]);
+  }, [docKey, page, width, rotation, visible, query, activeIdx]);
 
   /* saved-highlight marks (round 11): user-space rects → CSS px, re-run on
      every geometry change so rotation/zoom stay in sync like the find marks */
@@ -405,7 +407,7 @@ export function PdfCanvas({
     (async () => {
       try {
         const css = await userRectsToCss(
-          workId,
+          docKey,
           page,
           width,
           rotation,
@@ -425,7 +427,7 @@ export function PdfCanvas({
       alive = false;
     };
      
-  }, [workId, page, width, rotation, visible, hlKey]);
+  }, [docKey, page, width, rotation, visible, hlKey]);
 
   /* manager jump: flash the focused highlight once it has a rendered mark */
   useEffect(() => {
@@ -476,7 +478,7 @@ export function PdfCanvas({
     if (w < 12 || h < 6) return; // treat tiny drags as accidental taps
     try {
       /* CSS px → unrotated scale-1 user space through the page viewport */
-      const doc = await loadPdfDoc(workId);
+      const doc = await loadPdfDoc(docKey);
       const p = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
       const base = p.getViewport({ scale: 1, rotation });
       const cssScale = width / base.width;
@@ -490,7 +492,7 @@ export function PdfCanvas({
         y2: Math.max(ay, by),
       };
       /* best-effort caption text inside the area */
-      const text = await getPdfTextInRect(workId, page, rect);
+      const text = await getPdfTextInRect(docKey, page, rect);
       const wrapRect = wrapRef.current!.getBoundingClientRect();
       const screen = new DOMRect(
         wrapRect.left + Math.min(cur.x1, cur.x2),
@@ -502,7 +504,7 @@ export function PdfCanvas({
     } catch {
       /* page gone — ignore */
     }
-  }, [workId, page, width, rotation, chapterId, putSel]);
+  }, [docKey, page, width, rotation, chapterId, putSel]);
 
   /* tap a saved mark → edit popup */
   const onSavedMarkTap = (e: React.MouseEvent, hl: Highlight) => {

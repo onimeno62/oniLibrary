@@ -42,7 +42,7 @@ export type Overlay =
   | { kind: "reader"; workId: string; chapterId: string; page?: number; highlightId?: string }
   | { kind: "highlights"; workId?: string }
   | { kind: "search" }
-  | { kind: "source"; sourceId: string }
+  | { kind: "catalog"; serverId: string }
   | { kind: "vault" }
   | { kind: "extensions" }
   | { kind: "statistics" }
@@ -119,7 +119,6 @@ interface AppState {
   setVaultFlag: (id: string, v: boolean) => void;
   deleteWorks: (ids: string[]) => void;
   addWork: (w: Work) => void;
-  addSampleWorkFromSource: (sourceId: string, title: string) => string;
 
   markChapterRead: (workId: string, chapterId: string, read: boolean, upTo?: boolean) => void;
   setChapterProgress: (workId: string, chapterId: string, page: number) => void;
@@ -366,43 +365,6 @@ export const useApp = create<AppState>()(
           ),
         })),
       addWork: (w) => set((s) => ({ works: [w, ...s.works] })),
-      addSampleWorkFromSource: (sourceId, title) => {
-        const id = "w-" + uid();
-        const source = get().sources.find((x) => x.id === sourceId);
-        const type =
-          source?.kinds[0] === "Comics"
-            ? "COMIC"
-            : source?.kinds[0] === "Light Novels"
-              ? "NOVEL"
-              : source?.name === "Webtoon"
-                ? "WEBTOON"
-                : "MANGA";
-        const work: Work = {
-          id,
-          title,
-          author: "Unknown",
-          cover: "",
-          coverColor: "from-orange-500 to-rose-900",
-          type,
-          source: sourceId,
-          description: `Added from ${source?.name ?? "source"} via Discover.`,
-          workStatus: "ONGOING",
-          readingStatus: "PLANNED",
-          isFavorite: false,
-          inVault: false,
-          tags: ["Discovered"],
-          rating: 8,
-          ratingCount: 1200 + Math.floor(Math.random() * 40000),
-          direction: type === "WEBTOON" ? "VERTICAL" : "RTL",
-          readerMode: type === "WEBTOON" ? "WEBTOON" : "PAGED",
-          fitMode: "WIDTH",
-          chapters: makeDiscoverChapters(id, 24 + Math.floor(Math.random() * 160)),
-          addedAt: new Date().toISOString(),
-          language: source?.languages[0] ?? "EN",
-        };
-        get().addWork(work);
-        return id;
-      },
 
       markChapterRead: (workId, chapterId, read, upTo) => {
         set((s) => ({
@@ -946,24 +908,6 @@ function chapterLabelOf(works: Work[], d: DownloadItem): string {
   const w = works.find((x) => x.id === d.workId);
   const c = w?.chapters.find((x) => x.id === d.chapterId);
   return c ? `Ch. ${c.number}` : "";
-}
-
-function makeDiscoverChapters(workId: string, count: number): Chapter[] {
-  const chapters: Chapter[] = [];
-  for (let i = 0; i < 12; i++) {
-    const number = count - i;
-    chapters.push({
-      id: `${workId}-c${number}`,
-      number,
-      title: `Chapter ${number}`,
-      pages: 16,
-      releaseDate: new Date(Date.now() - i * 86_400_000 * 3).toISOString(),
-      isRead: false,
-      download: "NONE",
-      sizeMb: 10 + (i % 5),
-    });
-  }
-  return chapters;
 }
 
 /* ---------- selectors / utils ---------- */

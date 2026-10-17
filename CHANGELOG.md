@@ -3,6 +3,51 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.2.2] — 2026-10-17
+
+### Fixed
+- **Folder imports with PDF files now save as ONE work** — previously every
+  PDF in a picked folder became a separate work (PDFs were hard-restricted
+  to "separate work"). PDFs now merge as **per-chapter PDF documents**:
+  each chapter carries its own `.pdf` file
+  (`<workId>::<chapterId>::pdf` in the IndexedDB blob store) and the reader
+  routes that chapter through the PDF engine with a per-chapter document
+  key. A folder of `Vol 1.pdf … Vol 4.pdf` becomes a single "PDF" work with
+  four readable chapters; mixed folders (images + PDFs) produce one work
+  with both image chapters and PDF chapters. Page counts come from real
+  pdf.js parsing, the first PDF's page 1 renders as the work cover, and an
+  unreadable PDF still falls back to an honest demo-reader work instead of
+  disappearing. The same folding applies to "Import files" (new work AND
+  existing-work append). Find-in-page, outline (TOC), read-aloud and
+  rect highlights are scoped to the current chapter's document.
+
+### Changed
+- **Discover is real now (no more mockup)** — the fake catalog sources
+  (MangaDex/Crunchyroll/… with invented item counts and statuses), the
+  fake catalog browser (24 fixed titles with invented ratings) and the
+  fake "add to library" sample seeding are gone. Discover is now a live
+  hub:
+  - **Catalogs** section lists the user's real OPDS/Komga servers with
+    real status dots (untested / connected / failed), host names, and a
+    one-tap "Add catalog" CTA into the Servers screen.
+  - Tapping a catalog opens a real **catalog browser** (shared with the
+    Servers screen): live feed entries, lazy cover thumbnails,
+    "Load more" via `rel=next`, and one-tap acquisition imports
+    (CBZ → image work, PDF/EPUB → document work).
+  - **Catalog search** uses the catalog's own **OpenSearch** endpoint
+    (feed `rel=search` → OpenSearchDescription template discovery,
+    cached per catalog); catalogs without search degrade honestly to a
+    "Browse" link.
+  - **Global search** queries every configured catalog in parallel via
+    OpenSearch and shows real results with covers and "Add to Library";
+    the fake "From sources" title pool was removed. Library matching now
+    also covers tags.
+  - New **"Continue reading"** and **"Recently added"** shelves are
+    computed from the user's actual library (with progress bars and
+    deep links straight into the reader), filterable with the type chips.
+  - The fake source browser screen, its route and the sample-work
+    seeding action were deleted; EN + FA strings updated.
+
 ## [1.2.1] — 2026-10-17
 
 ### Added

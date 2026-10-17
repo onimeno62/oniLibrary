@@ -36,6 +36,10 @@ export interface Chapter {
       (`${workId}::c{n}::p{i}`); legacy single-chapter imports keep the
       work-level `localPages` flat list instead */
   localPages?: string[];
+  /** self-contained document chapter (v1.2.2): the whole file is stored at
+      `${workId}::${chapterId}::pdf` and rendered by the PDF engine — folder
+      PDFs can merge as chapters of ONE work instead of separate works */
+  localDoc?: "pdf";
 }
 
 /** static import facts shown on the details page for local works (v1.2.1) */
