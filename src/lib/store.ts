@@ -150,6 +150,8 @@ interface AppState {
   /** manually adjust a day's logged minutes (heatmap day editing, round 11) */
   adjustDay: (date: string, delta: number) => void;
   pushHistory: (workId: string, chapterId: string, page: number) => void;
+  /** keep the history entry on the page the user actually reached (resume fix) */
+  refreshHistoryPage: (workId: string, chapterId: string, page: number) => void;
   clearHistory: () => void;
 
   addBookmark: (workId: string, chapterId: string, page: number, note?: string) => void;
@@ -695,6 +697,13 @@ export const useApp = create<AppState>()(
         })),
       clearHistory: () => set({ history: [] }),
 
+      refreshHistoryPage: (workId, chapterId, page) =>
+        set((s) => ({
+          history: s.history.map((h) =>
+            h.workId === workId && h.chapterId === chapterId ? { ...h, page } : h
+          ),
+        })),
+
       addBookmark: (workId, chapterId, page, note) =>
         set((s) => ({
           bookmarks: [
@@ -1008,7 +1017,11 @@ export function continueReading(w: Work): { chapter: Chapter; page: number } | n
   const asc = [...w.chapters].sort((a, b) => a.number - b.number);
   const next = asc.find((c) => !c.isRead);
   if (next && typeof next.lastPage === "number") {
-    return { chapter: next, page: Math.round((next.pages ?? 20) * next.lastPage) };
+    const t = Math.max(1, next.pages ?? 20);
+    // dual interpretation, matching the reader restore: lastPage <= 1 is a
+    // stored ratio, > 1 a legacy absolute page — clamped to a real page index
+    const p = next.lastPage <= 1 ? Math.round(t * next.lastPage) : Math.round(next.lastPage);
+    return { chapter: next, page: Math.max(0, Math.min(p, t - 1)) };
   }
   if (next) return { chapter: next, page: 0 };
   const last = asc[asc.length - 1];

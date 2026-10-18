@@ -669,7 +669,11 @@ export function ReaderScreen({
   /* ----- progress persistence: page ratio on every page change (manga modes) ----- */
   useEffect(() => {
     if (total <= 0 || isEpub) return; // epub view manages its own scroll-ratio progress
-    useApp.getState().setChapterProgress(workId, chapterId, Math.min(1, page / total));
+    const st = useApp.getState();
+    st.setChapterProgress(workId, chapterId, Math.min(1, page / total));
+    // keep the history entry on the page actually reached — "Resume" from the
+    // History screen must restore the latest position, not the open-page
+    st.refreshHistoryPage(workId, chapterId, page);
   }, [page, total, workId, chapterId, isEpub]);
 
   /* ----- history entry per opened chapter ----- */

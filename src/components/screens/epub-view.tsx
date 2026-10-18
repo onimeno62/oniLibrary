@@ -392,8 +392,14 @@ export function EpubBookView({
     });
   }, [html, chapter]);
 
-  /* scroll -> progress (throttled with rAF) */
+  /* scroll -> progress: rAF-throttled read + 400 ms trailing debounce for the
+     persisted write — every frame used to JSON-serialize the whole store into
+     localStorage (~60 full-store writes/s on a long book). The debounced
+     callback captures the ratio (not the DOM), so a mid-debounce chapter
+     switch can never write chapter A's scroll position onto chapter B. */
   const rafRef = useRef(0);
+  const progTimer = useRef(0);
+  const latestRatio = useRef(0);
   const onScroll = () => {
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(() => {
@@ -402,13 +408,32 @@ export function EpubBookView({
       if (!el) return;
       const max = el.scrollHeight - el.clientHeight;
       const ratio = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
-      useApp.getState().setChapterProgress(workId, chapterId, ratio);
+      latestRatio.current = ratio;
       if (ratio >= 0.95 && !markReadRef.current) {
         markReadRef.current = true;
         useApp.getState().markChapterRead(workId, chapterId, true);
       }
+      if (progTimer.current) window.clearTimeout(progTimer.current);
+      progTimer.current = window.setTimeout(() => {
+        progTimer.current = 0;
+        useApp.getState().setChapterProgress(workId, chapterId, latestRatio.current);
+      }, 400);
     });
   };
+
+  /* flush the pending write on unmount / chapter switch so the very last
+     position is never lost to the debounce window */
+  useEffect(
+    () => () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (progTimer.current) window.clearTimeout(progTimer.current);
+      progTimer.current = 0;
+      if (latestRatio.current > 0) {
+        useApp.getState().setChapterProgress(workId, chapterId, latestRatio.current);
+      }
+    },
+    [workId, chapterId]
+  );
 
   /* resolve oni-img: sources (embedded book images) to object URLs */
   const contentRef = useRef<HTMLDivElement>(null);
