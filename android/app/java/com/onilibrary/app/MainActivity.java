@@ -21,10 +21,12 @@ import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -140,25 +142,10 @@ public class MainActivity extends Activity {
             w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         }
 
-        webView = new WebView(this);
-        webView.setBackgroundColor(0xFFF7F1E8);
+        createWebView();
         setContentView(webView);
 
-        WebSettings s = webView.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setDatabaseEnabled(true);
-        s.setAllowFileAccess(false);
-        s.setAllowContentAccess(false);
-        s.setLoadWithOverviewMode(true);
-        s.setUseWideViewPort(true);
-        s.setMediaPlaybackRequiresUserGesture(false);
-        s.setCacheMode(WebSettings.LOAD_DEFAULT);
-        s.setTextZoom(100);
-
         CookieManager.getInstance().setAcceptCookie(true);
-
-        webView.addJavascriptInterface(new Bridge(), "OniAndroid");
 
         // native text-to-speech for the read-aloud feature (APK fallback —
         // WebView builds usually ship no browser voices)
@@ -177,9 +164,65 @@ public class MainActivity extends Activity {
             }
         });
 
-        // <input type=file> support: without a WebChromeClient the picker
-        // never opens and the input silently does nothing (report: "can't
-        // import local files"). onShowFileChooser is the standard fix.
+        if (savedInstanceState != null) {
+            webView.restoreState(savedInstanceState);
+        } else {
+            webView.loadUrl(START_URL);
+        }
+
+        handleIncomingIntent(getIntent());
+    }
+
+    /** open a non-virtual-host link outside the app; silently no-op if impossible */
+    private void openExternally(Uri u) {
+        if (u == null) return;
+        String scheme = u.getScheme();
+        if (scheme == null || !("http".equals(scheme) || "https".equals(scheme))) return;
+        try {
+            Intent i = new Intent(Intent.ACTION_VIEW, u);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Exception ignored) { /* no browser — drop the link */ }
+    }
+
+    /**
+     * Rebuild the WebView after a renderer crash (or other unrecoverable
+     * state): the old instance is destroyed and a fresh one loads START_URL.
+     * The web app rehydrates its persisted store, so library data survives.
+     */
+    private void rebuildWebView() {
+        mainHandler.post(() -> {
+            if (webView == null) return;
+            ViewGroup parent = (ViewGroup) webView.getParent();
+            if (parent != null) parent.removeView(webView);
+            webView.destroy();
+            createWebView();
+            setContentView(webView);
+            webView.loadUrl(START_URL);
+            toast("Reader restarted");
+        });
+    }
+
+    /** full WebView construction — shared by onCreate and rebuildWebView() */
+    @SuppressLint("SetJavaScriptEnabled")
+    private void createWebView() {
+        webView = new WebView(this);
+        webView.setBackgroundColor(0xFFF7F1E8);
+
+        WebSettings s = webView.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
+        s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false);
+        s.setLoadWithOverviewMode(true);
+        s.setUseWideViewPort(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setTextZoom(100);
+
+        webView.addJavascriptInterface(new Bridge(), "OniAndroid");
+
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onShowFileChooser(WebView view,
@@ -215,17 +258,23 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                return false;
+                Uri u = request.getUrl();
+                if (u != null && HOST.equals(u.getHost())) return false;
+                openExternally(u);
+                return true;
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                // a crashed renderer must not take the whole app down:
+                // rebuild the WebView and reload the shell (true = handled,
+                // so the system must not kill the app process)
+                rebuildWebView();
+                return true;
             }
 
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                // Serve EVERY request made to the virtual host. The bundled
-                // index.html references assets at root-absolute paths
-                // (/_next/static/..., /logo-mark.svg, /manifest.webmanifest, …)
-                // so filtering by the /assets/ prefix would break all of them —
-                // the app would render as an unstyled shell (white screen with
-                // only the orange logo). Map any host path onto assets/www/.
                 Uri u = request.getUrl();
                 if (u != null && HOST.equals(u.getHost())) {
                     String path = u.getPath();
@@ -234,14 +283,6 @@ public class MainActivity extends Activity {
                 return null;
             }
         });
-
-        if (savedInstanceState != null) {
-            webView.restoreState(savedInstanceState);
-        } else {
-            webView.loadUrl(START_URL);
-        }
-
-        handleIncomingIntent(getIntent());
     }
 
     @Override
@@ -499,7 +540,7 @@ public class MainActivity extends Activity {
         /* ------------------- OPDS catalog transport (v1.2.0) ---------------- */
 
         private HttpURLConnection openGet(String urlStr) throws IOException {
-            // allow https and plain-http LAN servers; cap redirects manually
+            // callers enforce https-only (cleartext is disabled manifest-wide)
             URL url = new URL(urlStr);
             HttpURLConnection c = (HttpURLConnection) url.openConnection();
             c.setConnectTimeout(8000);
@@ -512,7 +553,9 @@ public class MainActivity extends Activity {
         /** CORS-free GET of a text document (OPDS feeds); null on failure */
         @JavascriptInterface
         public String httpGetString(String url, String headersJson) {
-            if (url == null || !url.startsWith("http")) return null;
+            // https only — the manifest forbids cleartext traffic, so a plain-
+            // http request would fail at the platform level anyway
+            if (url == null || !url.startsWith("https://")) return null;
             try {
                 HttpURLConnection c = openGet(url);
                 c.connect();
@@ -546,7 +589,8 @@ public class MainActivity extends Activity {
             Returns the JSON manifest, or "null" on failure. */
         @JavascriptInterface
         public String fetchToCache(String url) {
-            if (url == null || !url.startsWith("http")) return "null";
+            // https only — cleartext is disabled at the manifest level
+            if (url == null || !url.startsWith("https://")) return "null";
             InputStream in = null;
             try {
                 HttpURLConnection c = openGet(url);
@@ -597,7 +641,8 @@ public class MainActivity extends Activity {
             calls this 2-arg overload, older call sites keep the 1-arg one. */
         @JavascriptInterface
         public String fetchToCache(String url, String headersJson) {
-            if (url == null || !url.startsWith("http")) return "null";
+            // https only — cleartext is disabled at the manifest level
+            if (url == null || !url.startsWith("https://")) return "null";
             InputStream in = null;
             try {
                 HttpURLConnection c = openGet(url);
@@ -781,6 +826,11 @@ public class MainActivity extends Activity {
         if (path.startsWith(ASSET_PREFIX)) path = path.substring(ASSET_PREFIX.length());
         while (path.startsWith("/")) path = path.substring(1);
         while (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+        // SECURITY: reject traversal segments before touching AssetManager
+        if (path.contains("..") || path.contains("\u0000")) {
+            byte[] empty = new byte[0];
+            return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(empty));
+        }
 
         boolean looksLikePage = path.isEmpty() || !path.contains(".");
         String resolved = resolveAsset(path, looksLikePage);
@@ -867,6 +917,12 @@ public class MainActivity extends Activity {
                 tts.shutdown();
             } catch (Exception ignored) { }
             tts = null;
+        }
+        if (webView != null) {
+            ViewGroup parent = (ViewGroup) webView.getParent();
+            if (parent != null) parent.removeView(webView);
+            webView.destroy();
+            webView = null;
         }
         super.onDestroy();
     }
