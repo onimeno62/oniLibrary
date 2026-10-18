@@ -49,7 +49,7 @@ type ArchiveKind = "zip" | "rar" | "rar5" | "7z" | null;
 /** real-world .cbz files are very often renamed RAR archives, and
     content providers sometimes return extension-less names — sniff
     the magic bytes instead of trusting the file name */
-function sniffArchive(b: Uint8Array): ArchiveKind {
+export function sniffArchive(b: Uint8Array): ArchiveKind {
   if (b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b) return "zip"; // "PK.."
   if (
     b.length >= 7 &&
@@ -748,7 +748,7 @@ export function pathOf(f: File): string {
 }
 
 /** "vol 03" / "Chapter 12.5" style folder & file names → number hint */
-function numberHintOf(name: string): number | null {
+export function numberHintOf(name: string): number | null {
   const m = name
     .trim()
     .match(/^(?:v|vol|volume|c|ch|chap|chapter|ep|episode)[\s._-]*(\d{1,4}(?:\.\d+)?)$/i);
