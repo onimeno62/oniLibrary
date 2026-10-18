@@ -84,8 +84,9 @@ export function HistoryScreen() {
                       {vault ? t("ntf.sensitive") : w.title}
                     </p>
                     <p className="text-[12px] font-semibold text-muted-foreground">
-                      {t("common.ch")} {ch.number}
-                      {h.page > 0 ? ` · ${t("common.page")} ${h.page + 1}` : ""}
+                      {vault
+                        ? t("vlt.subtitle")
+                        : `${t("common.ch")} ${ch.number}${h.page > 0 ? ` · ${t("common.page")} ${h.page + 1}` : ""}`}
                     </p>
                     <p className="text-[10px] font-bold text-muted-foreground/70">{timeAgo(h.at, lang)}</p>
                   </button>

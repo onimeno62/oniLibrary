@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
+import { legacyPinHash } from "./vault-crypto";
 import {
   DEFAULT_SETTINGS,
   SEED_WORKS,
@@ -182,12 +183,13 @@ function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
 
+/**
+ * legacy v1 PIN hash — do NOT use for new records.
+ * Kept only as a migration shim: verifyPinRecord() still accepts it and the
+ * Vault lock screen transparently upgrades to salted PBKDF2 (vault-crypto).
+ */
 export function hashPin(pin: string): string {
-  let h = 0;
-  for (let i = 0; i < pin.length; i++) {
-    h = (h * 31 + pin.charCodeAt(i)) | 0;
-  }
-  return "h" + Math.abs(h).toString(36);
+  return legacyPinHash(pin);
 }
 
 export const useApp = create<AppState>()(
@@ -370,6 +372,13 @@ export const useApp = create<AppState>()(
           workCategories: Object.fromEntries(
             Object.entries(s.workCategories).filter(([k]) => !ids.includes(k))
           ),
+          // privacy + integrity: no orphaned traces of deleted works
+          // (an orphaned notification of a deleted VAULT work used to leak
+          // its title through the "unknown work" render path)
+          notifications: s.notifications.filter((n) => !n.workId || !ids.includes(n.workId)),
+          history: s.history.filter((h) => !ids.includes(h.workId)),
+          bookmarks: s.bookmarks.filter((b) => !ids.includes(b.workId)),
+          highlights: s.highlights.filter((h) => !ids.includes(h.workId)),
         })),
       addWork: (w) => set((s) => ({ works: [w, ...s.works] })),
 
@@ -792,22 +801,58 @@ export const useApp = create<AppState>()(
 
       importBackup: (data) => {
         try {
+          // validate strictly — a malformed backup file must never corrupt the
+          // library or crash a tab screen outside an error boundary
           const d = data as Partial<AppState> & { app?: string };
-          if (!d || d.app !== "oniLibrary") return false;
+          if (!d || typeof d !== "object" || d.app !== "oniLibrary") return false;
+          const isArr = (v: unknown): v is unknown[] => Array.isArray(v);
+          // work rows: object with string id/title and a chapters array —
+          // invalid rows are dropped instead of breaking the whole restore
+          const works =
+            isArr(d.works)
+              ? (d.works as unknown[]).filter(
+                  (w): w is Work =>
+                    !!w && typeof w === "object" &&
+                    typeof (w as Work).id === "string" &&
+                    typeof (w as Work).title === "string" &&
+                    isArr((w as Work).chapters)
+                )
+              : null;
+          if (d.works !== undefined && works === null) return false; // wrong type → refuse
+          const pickArr = <T,>(v: unknown, fb: T[]): T[] => (isArr(v) ? (v as T[]) : fb);
+          const serversIn =
+            isArr(d.servers)
+              ? (d.servers as ServerEntry[]).map((sv) => {
+                  // privacy: never import stored catalog credentials
+                  const { auth: _strip, ...rest } = sv ?? ({} as ServerEntry);
+                  return rest as ServerEntry;
+                })
+              : null;
           set((s) => ({
-            works: (d.works as Work[]) ?? s.works,
-            categories: (d.categories as Category[]) ?? s.categories,
-            workCategories: d.workCategories ?? s.workCategories,
-            settings: { ...s.settings, ...(d.settings as Settings) },
-            sessions: (d.sessions as ReadingSession[]) ?? s.sessions,
-            bookmarks: (d.bookmarks as Bookmark[]) ?? s.bookmarks,
-            highlights: (d.highlights as Highlight[]) ?? s.highlights,
+            works: works ?? s.works,
+            categories: isArr(d.categories) ? (d.categories as Category[]) : s.categories,
+            workCategories:
+              d.workCategories && typeof d.workCategories === "object"
+                ? (d.workCategories as Record<string, string[]>)
+                : s.workCategories,
+            settings: {
+              ...s.settings,
+              ...((d.settings as Settings) ?? {}),
+              // privacy/integrity: the PIN stays device-local and cannot be
+              // replaced through a backup file (known-hash attack)
+              vaultPinHash: s.settings.vaultPinHash,
+            },
+            sessions: pickArr(d.sessions, s.sessions),
+            bookmarks: pickArr(d.bookmarks, s.bookmarks),
+            highlights: pickArr(d.highlights, s.highlights),
             // v2 backups: full library context
-            history: (d.history as HistoryEntry[]) ?? s.history,
-            savedFilters: (d.savedFilters as SavedFilter[]) ?? s.savedFilters,
-            servers: (d.servers as ServerEntry[]) ?? s.servers,
+            history: pickArr(d.history, s.history),
+            savedFilters: pickArr(d.savedFilters, s.savedFilters),
+            // v3 backups: the download queue restores alongside chapter flags
+            downloads: isArr(d.downloads) ? (d.downloads as DownloadItem[]) : s.downloads,
+            servers: serversIn ?? s.servers,
             // sources: merge per-id enabled/pinned flags onto current set
-            sources: Array.isArray(d.sources)
+            sources: isArr(d.sources)
               ? s.sources.map((cur) => {
                   const saved = (d.sources as { id: string; enabled?: boolean; pinned?: boolean }[]).find(
                     (x) => x.id === cur.id

@@ -57,7 +57,14 @@ export function NotificationsScreen() {
           <div className="space-y-2">
             {notifications.map((n) => {
               const meta = n.workId ? byWork.get(n.workId) : undefined;
-              const sensitive = n.workId && meta?.vault;
+              // sensitive: current vault member, OR an entry whose work is
+              // gone (deleted rows were purged, but pre-delete payloads that
+              // slipped through must never render their title), OR any
+              // notification explicitly flagged at creation time
+              const sensitive =
+                Boolean(n.sensitive) ||
+                Boolean(n.workId && meta?.vault) ||
+                Boolean(n.workId && !meta);
               return (
                 <button
                   key={n.id}

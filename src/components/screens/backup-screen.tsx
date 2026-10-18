@@ -60,6 +60,7 @@ export function BackupScreen() {
   const workCategories = useApp((s) => s.workCategories);
   const settings = useApp((s) => s.settings);
   const sessions = useApp((s) => s.sessions);
+  const downloads = useApp((s) => s.downloads);
   const bookmarks = useApp((s) => s.bookmarks);
   const highlights = useApp((s) => s.highlights);
   const history = useApp((s) => s.history);
@@ -151,14 +152,17 @@ export function BackupScreen() {
   };
 
   const createBackup = () => {
+    // privacy: the Vault PIN record and stored catalog credentials never
+    // leave the device — they are stripped from the payload
+    const { vaultPinHash: _pin, ...settingsExport } = settings;
     const payload = {
       app: "oniLibrary",
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       works,
       categories,
       workCategories,
-      settings,
+      settings: settingsExport,
       sessions,
       bookmarks,
       highlights,
@@ -166,7 +170,15 @@ export function BackupScreen() {
       history,
       savedFilters,
       sources: sources.map((s) => ({ id: s.id, enabled: s.enabled, pinned: s.pinned })),
-      servers,
+      servers: servers.map((sv) => ({
+        id: sv.id,
+        name: sv.name,
+        url: sv.url,
+        kind: sv.kind,
+        status: sv.status,
+      })),
+      // v3: the download queue restores alongside the chapter flags
+      downloads,
     };
     const name = `onilibrary-backup-${ymd()}.onibackup`;
     const content = JSON.stringify(payload, null, 2);

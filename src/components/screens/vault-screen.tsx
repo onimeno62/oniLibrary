@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ShieldCheck,
@@ -18,7 +18,8 @@ import {
 } from "lucide-react";
 import { WorkCover, ProgressBar, EmptyState } from "@/components/shared";
 import { OniLogo } from "@/components/oni-logo";
-import { useApp, useNav, hashPin, workProgress } from "@/lib/store";
+import { useApp, useNav, workProgress } from "@/lib/store";
+import { createPinRecord, verifyPinRecord, isLegacyPinRecord } from "@/lib/vault-crypto";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -278,11 +279,14 @@ function PinSetupDialog({
       }, 140);
     } else if (next === first) {
       setTimeout(() => {
-        setVaultPin(hashPin(next));
-        toast({ title: t("vlt.pinChanged") });
-        onOpenChange(false);
-        reset();
-        onDone();
+        void (async () => {
+          // store a salted PBKDF2 record — never the raw PIN or a weak hash
+          setVaultPin(await createPinRecord(next));
+          toast({ title: t("vlt.pinChanged") });
+          onOpenChange(false);
+          reset();
+          onDone();
+        })();
       }, 140);
     } else {
       setError(true);
@@ -448,6 +452,7 @@ export function VaultScreen() {
    ============================================================ */
 
 const MAX_ATTEMPTS = 5;
+const LOCKOUT_MS = 30_000;
 
 export function VaultLockScreen({
   onSuccess,
@@ -460,11 +465,39 @@ export function VaultLockScreen({
   const vaultPinHash = useApp((s) => s.settings.vaultPinHash);
   const biometric = useApp((s) => s.settings.vaultBiometric);
   const setVaultUnlocked = useApp((s) => s.setVaultUnlocked);
+  const setVaultPin = useApp((s) => s.setVaultPin);
 
   const [pin, setPin] = useState("");
   const [wrong, setWrong] = useState(0);
   const [shake, setShake] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // lockout after repeated failures — reset only by the countdown, NOT by a
+  // reload (sessionStorage survives reloads inside the same session)
+  const [lockUntil, setLockUntil] = useState<number>(() => {
+    try {
+      return Number(sessionStorage.getItem("oni-vault-lock") ?? 0);
+    } catch {
+      return 0;
+    }
+  });
+  const [now, setNow] = useState(Date.now());
+
+  const locked = lockUntil > now;
+  useEffect(() => {
+    if (!locked) return;
+    const iv = setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= lockUntil) {
+        try {
+          sessionStorage.removeItem("oni-vault-lock");
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 500);
+    return () => clearInterval(iv);
+  }, [locked, lockUntil]);
 
   const unlock = () => {
     setVaultUnlocked(true);
@@ -472,27 +505,50 @@ export function VaultLockScreen({
   };
 
   const handleDigit = (d: string) => {
-    if (shake || scanning) return;
+    if (shake || scanning || busy || locked) return;
     if (pin.length >= 4) return;
     const next = pin + d;
     setPin(next);
     if (next.length < 4) return;
-    if (hashPin(next) === vaultPinHash) {
-      setTimeout(unlock, 160);
-    } else {
-      const used = wrong + 1;
-      setWrong(used);
-      setShake(true);
-      setTimeout(() => {
-        setShake(false);
-        setPin("");
-        if (used >= MAX_ATTEMPTS) setWrong(0);
-      }, 500);
-    }
+    setBusy(true);
+    void (async () => {
+      const ok = await verifyPinRecord(vaultPinHash, next);
+      if (ok) {
+        // migration: upgrade weak legacy records to salted PBKDF2 in place
+        if (isLegacyPinRecord(vaultPinHash)) {
+          try {
+            setVaultPin(await createPinRecord(next));
+          } catch {
+            /* keep legacy record — verification already passed */
+          }
+        }
+        setBusy(false);
+        setTimeout(unlock, 160);
+      } else {
+        const used = wrong + 1;
+        setWrong(used);
+        setShake(true);
+        setBusy(false);
+        if (used >= MAX_ATTEMPTS) {
+          const until = Date.now() + LOCKOUT_MS;
+          try {
+            sessionStorage.setItem("oni-vault-lock", String(until));
+          } catch {
+            /* private mode — in-memory only */
+          }
+          setLockUntil(until);
+          setWrong(0);
+        }
+        setTimeout(() => {
+          setShake(false);
+          setPin("");
+        }, 500);
+      }
+    })();
   };
 
   const handleBiometric = () => {
-    if (scanning) return;
+    if (scanning || busy || locked) return;
     const b = window as unknown as {
       OniAndroid?: { vaultBiometric?: () => number };
       OniNativeVaultAuth?: { done: (ok: boolean) => void };
@@ -521,15 +577,13 @@ export function VaultLockScreen({
       };
       return;
     }
-    // web fallback: simulated scan
-    setScanning(true);
-    setTimeout(() => {
-      setScanning(false);
-      unlock();
-    }, 800);
+    // SECURITY: no web fallback unlock. The old simulated-scan fallback
+    // unlocked the Vault with zero authentication — the button is now
+    // hidden when the native bridge is missing (see render guard below).
   };
 
   const left = Math.max(0, MAX_ATTEMPTS - wrong);
+  const lockSecs = Math.max(0, Math.ceil((lockUntil - now) / 1000));
 
   return (
     <div className="dark flex h-full flex-col items-center justify-center bg-background text-foreground">
@@ -540,7 +594,9 @@ export function VaultLockScreen({
       >
         <OniLogo size={56} className="drop-shadow-[0_14px_30px_rgba(248,105,76,0.35)]" />
         <h1 className="mt-4 text-[20px] font-black tracking-tight">{t("vlt.locked")}</h1>
-        <p className="mt-1 text-[13px] font-semibold text-muted-foreground">{t("vlt.enterPin")}</p>
+        <p className="mt-1 text-[13px] font-semibold text-muted-foreground">
+          {locked ? t("vlt.tooMany", { n: lockSecs }) : t("vlt.enterPin")}
+        </p>
 
         <div className="mt-6">
           <PinDots filled={shake ? 4 : pin.length} />
@@ -553,10 +609,12 @@ export function VaultLockScreen({
         )}
 
         <div className="mt-7">
-          <Keypad onDigit={handleDigit} onDelete={() => setPin((p) => p.slice(0, -1))} disabled={shake} />
+          <Keypad onDigit={handleDigit} onDelete={() => setPin((p) => p.slice(0, -1))} disabled={shake || busy || locked} />
         </div>
 
-        {biometric && (
+        {biometric &&
+          typeof window !== "undefined" &&
+          (window as unknown as { OniAndroid?: { vaultBiometric?: () => number } }).OniAndroid?.vaultBiometric && (
           <button
             onClick={handleBiometric}
             aria-label={t("vlt.biometric")}
