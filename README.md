@@ -38,7 +38,7 @@ shipped as an Android app (WebView shell) and an installable PWA built with Next
 
 ## 🚀 Quick start (Android)
 
-1. Grab the latest APK from **[Releases](https://github.com/onimeno62/oniLibrary_zai_2/releases)** — or from [`download/`](download) in this repo.
+1. Grab the latest APK from **[Releases](https://github.com/onimeno62/oniLibrary/releases)** — or from [`download/`](download) in this repo.
 2. On your phone, allow *Install unknown apps* for your browser/file manager (Android will ask once).
 3. Install **`oniLibrary-v1.1.1.apk`** (minSdk 24 → Android 7.0+, target 34).
 4. Done — no permissions requested beyond network (used only for optional online sources).

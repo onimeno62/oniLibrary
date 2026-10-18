@@ -3,6 +3,78 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.3.1] — 2026-10-17 (branch `fix/security-remediation` — not yet released)
+
+Security & remediation round. Baseline was 1.3.0; everything below is verified
+in `docs/ENGINEERING_REMEDIATION_PLAN.md` and `docs/SECURITY_AND_QA_CHECKLIST.md`.
+Regression suite: `bun run test` — 28 tests, all passing.
+
+### Security (WebView)
+- **Navigation lock-down** — the shell WebView no longer follows links off the
+  app origin (previously any remote page — e.g. an external link inside an
+  OPDS catalog — could load and reach the native `OniAndroid` bridge).
+  External http(s) links open in the browser; other schemes are dropped.
+- Asset serving rejects path-traversal segments before touching AssetManager.
+- A crashed renderer no longer kills the app: the shell WebView is rebuilt
+  and the persisted library rehydrates.
+- The WebView is destroyed on activity teardown; bridge GET helpers are
+  https-only (defense in depth over the manifest's cleartext ban).
+
+### Security / Privacy (Vault)
+- **PIN records upgraded to salted PBKDF2-SHA256** (120k iterations,
+  per-install random salt). Old weak-hash records keep working and are
+  transparently upgraded on the next successful unlock — no data lost.
+- The web "simulated fingerprint" no longer unlocks the Vault — biometrics
+  require the native bridge; 5 wrong attempts now trigger a 30 s lockout.
+- History rows hide chapter/page info for Vault titles; notifications mask
+  entries whose work is gone; deleting a work purges its notifications,
+  history, bookmarks and highlights.
+- Backups (format v3) **exclude the PIN record and catalog credentials**;
+  importing a backup can never overwrite the device-local PIN.
+- `android:allowBackup="false"` (device-transfer/adb backup of app data off).
+
+### Data integrity
+- Backup restore is strictly validated: wrong-typed sections refuse the
+  restore, invalid work rows are dropped instead of white-screening the app.
+- The download queue now round-trips in backups (v3).
+
+### Import hardening
+- 600 MB import ceiling with an honest "too large" reason (en/fa) across all
+  import paths — previously multi-GB files could OOM the WebView.
+- Pages that fail to persist are counted and surfaced as a warning toast
+  instead of silently truncating chapters.
+- Unreadable PDF/EPUB demo works now have a deterministic page count.
+
+### Reader
+- History "Resume" restores the page you actually reached (the entry is kept
+  fresh while reading), not the page where the chapter was opened.
+- EPUB progress writes are debounced (400 ms) and flushed on exit — no more
+  ~60 full-store localStorage writes per second while scrolling.
+- "Continue reading" handles legacy absolute page numbers exactly like the
+  reader restore.
+
+### Offline / downloads
+- Downloads now stall on real disconnection (or Offline mode) and resume
+  automatically; the Wi-Fi-only hint is honest about WebView limits.
+- Failed downloads retry on tap instead of opening a phantom reader.
+
+### Localization
+- All new strings in Persian and English; notification bodies and the EPUB
+  re-import card are localized at creation time.
+- Verified: RTL is UI-locale-only; manga/comic page-flow direction stays
+  per-work and independent of the locale.
+
+### Fixed (build/CI hygiene)
+- `bun run lint` is clean again (third-party minified bundles and build
+  tooling excluded from eslint scope); `tsc --noEmit` clean; the APK asset
+  verifier degrades gracefully without an Android SDK.
+
+### Notes
+- Version → 1.3.1 (versionCode 11). Same signing key as 1.3.0 — installs
+  over the top and keeps all data.
+- The APK for this release must be built on a machine with the Android SDK
+  (`bash scripts/build-apk.sh --fresh` → `download/oniLibrary-v1.3.1.apk`).
+
 ## [1.3.0] — 2026-10-17
 
 ### Added
