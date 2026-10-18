@@ -11,8 +11,9 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-// pick the APK: argv[2] > newest download/*.apk
-const DL = "/home/z/my-project/download";
+// pick the APK: argv[2] > $ONI_PROJECT_ROOT/download (or repo-relative) > newest .apk
+const ROOT = process.env.ONI_PROJECT_ROOT || path.resolve(__dirname, "..");
+const DL = path.join(ROOT, "download");
 let APK = process.argv[2];
 if (!APK) {
   const apks = fs.readdirSync(DL).filter((f) => f.endsWith(".apk")).sort();
@@ -99,13 +100,17 @@ if (failures.length) {
 
 // --- manifest version check (optional — needs the Android SDK) ---
 console.log(`Verifying: ${APK}`);
-const AAPT2 = `${process.env.ANDROID_SDK_ROOT || "/home/z/android-sdk"}/build-tools/34.0.0/aapt2`;
-if (fs.existsSync(AAPT2)) {
-  const badging = execSync(`${AAPT2} dump badging ${APK}`).toString();
-  const ver = badging.match(/versionCode='(\d+)' versionName='([^']+)'/);
-  console.log(`APK version: code=${ver[1]} name=${ver[2]}`);
+if (process.env.ANDROID_SDK_ROOT) {
+  const AAPT2 = `${process.env.ANDROID_SDK_ROOT}/build-tools/34.0.0/aapt2`;
+  if (fs.existsSync(AAPT2)) {
+    const badging = execSync(`${AAPT2} dump badging ${APK}`).toString();
+    const ver = badging.match(/versionCode='(\d+)' versionName='([^']+)'/);
+    console.log(`APK version: code=${ver[1]} name=${ver[2]}`);
+  } else {
+    console.log(`SKIP APK badging — aapt2 not found at ${AAPT2} (asset verification above is independent)`);
+  }
 } else {
-  console.log(`SKIP APK badging — aapt2 not found at ${AAPT2} (asset verification above is independent)`);
+  console.log("SKIP APK badging — ANDROID_SDK_ROOT not set (asset verification above is independent)");
 }
 console.log(`assets/www files: ${execSync(`find ${WWW} -type f | wc -l`).toString().trim()}`);
 console.log("✅ ALL ASSET URLS RESOLVE — interceptor fix verified");

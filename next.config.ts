@@ -18,8 +18,9 @@ const nextConfig: NextConfig = {
           { protocol: "https", hostname: "www.gutenberg.org" },
         ],
       },
+  // BLD-02: type errors must fail builds — never mask them
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   reactStrictMode: false,
 };

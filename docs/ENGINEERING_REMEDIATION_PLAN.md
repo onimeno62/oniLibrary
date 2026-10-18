@@ -1,7 +1,7 @@
 # oniLibrary Engineering Remediation Plan
 
-**Status:** Proposed implementation plan  
-**Baseline:** Existing repository and `docs/PRD.md`  
+**Status:** Round 1 executed — branch `fix/security-remediation` (open, NOT merged). See “Execution record — Round 1” at the bottom for per-item evidence.  
+**Baseline:** Existing repository and `docs/PRD.md` — verified at `main` = `bf783f5` (v1.3.0, versionCode 10); checks at baseline: `lint` 13 errors / `tsc` 4 errors / no tests / `verify-apk-assets` crash without SDK.  
 **Scope:** Engineering, security, reliability, QA, and release hardening  
 **Important:** This is a prioritized plan, not a claim that every listed scenario has been reproduced. Validate each finding against the current branch before changing behavior.
 
@@ -235,3 +235,37 @@ For each task:
 - [Product Requirements Document](PRD.md)
 - [Security and QA Checklist](SECURITY_AND_QA_CHECKLIST.md)
 - [AI Agent Implementation Prompt](AI_AGENT_IMPLEMENTATION_PROMPT.md)
+
+## Execution record — Round 1 (branch `fix/security-remediation`, 2026-10-17)
+
+Environment: Linux sandbox, Bun 1.3.14, Node 24, TypeScript 5.9.3 — **no Android SDK** (no APK build, no device/emulator; Java changes are reviewed, not compiled here). Commits `817f4ec…4d0a343`.
+
+Checks run (exact commands):
+- `bun run lint` → **clean** (baseline had 13 errors: eslint was linting third-party minified bundles + build tooling — scope fixed in eslint.config.mjs)
+- `bunx tsc --noEmit` → **clean** (baseline had 4 errors: unresolved `Bun` global — fixed via bun-types reference; untracked `skills/` excluded)
+- `bun run test` (`bun test tests/`) → **28 tests / 104 assertions, all pass** (new regression suite)
+- `node scripts/verify-apk-assets.cjs` → **35/35 asset URLs resolve**; aapt2 badging now skips cleanly without ANDROID_SDK_ROOT (baseline: crashed)
+- Browser QA (agent-browser, 412×915): onboarding → home → reader (restored mid-chapter 13/18) → Vault PIN set → persisted record starts with `v2:` (PBKDF2) → lock screen shows **no** biometric button on web → 5 wrong PINs → “Too many attempts — try again in 29s” countdown → correct PIN unlocks → Persian switch applies RTL (screenshot-verified); browser console clean.
+
+### Item status deltas
+
+| Item | Status this round | Evidence |
+|---|---|---|
+| SEC-01 | **Implemented** | Navigation locked to exact `https` + virtual host; external links → browser; traversal/NUL rejected in `serveAsset`; renderer-crash recovery; WebView destroyed on teardown; bridge GET helpers https-only. Not done here: negative-device tests (M-1/M-2) |
+| SEC-02 | **Mostly implemented** | PIN records now salted PBKDF2-SHA256 (120k iters) — the “fast rolling hash” is gone (kept only as a verified migration shim, auto-upgraded on next unlock, tested); web fake-biometric unlock removed; 5-attempt/30 s lockout (session-persistent); Vault masking extended to History rows + orphaned notifications; deletion purges notifications/history/bookmarks/highlights; `allowBackup=false`. **Still open: at-rest encryption of Vault blobs (labeled honestly — “Encryption: not active in this build”) and persistent-across-restart throttling** |
+| SEC-03 | **Partial** | No secrets in JS logs; credentials stripped from backups. **Open: committed debug keystore + passwords remain (REL-02) — build script now overrides via `ONI_KEYSTORE*` env and labels debug signing; production signing still unresolved** |
+| SEC-04 | **Partial** | Backup import strictly validated (tests), v3 backups include download queue and exclude PIN record + catalog credentials; deletion purge covers satellite collections. **Open: blob-level deletion audit (thumbnails/caches) on device** |
+| BLD-01 | **Implemented for verify script** | `verify-apk-assets.cjs` derives the repo root from script location / `ONI_PROJECT_ROOT`; SDK path only from `ANDROID_SDK_ROOT` env; `build-apk.sh` keeps the documented `ONI_PROJECT_ROOT` override |
+| BLD-02 | **Implemented** | `next.config.ts` `typescript.ignoreBuildErrors` → `false`; tsc clean on the branch |
+| REL-01 | **Implemented** | Manifest 1.3.1 (versionCode 11) = `build-apk.sh` APK_OUT = CHANGELOG; README release link fixed to the renamed repo |
+| REL-02 | **Documented + env override** | Debug keystore labeled debug-only; release keystore path/pass/alias via env. **Open: real release signing material + protected storage** |
+| DATA-01 | **Partial** | Guarded storage already prevents hydration crashes (prior round); strict backup validation added (tests). **Open: fault-injection matrix (quota-exhaustion, interrupted writes)** |
+| IMP-01 | **Partial** | 600 MB ceiling + honest `toobig` reason (en/fa) on every path; partial-page storage failures surfaced per path (toast, en/fa); magic-byte sniffing tested. **Open: device import matrix incl. Unicode/permission-cancel cases** |
+| READ-01 | **Partial** | History resume now restores latest page (store action + test); EPUB writes debounced + flushed on unmount; `continueReading` parity fix. Browser-verified restore at 13/18. **Open: force-stop/restart + fit-mode matrix on device** |
+| OFF-01 | **Partial** | Downloads stall on real disconnection/Offline mode and auto-resume; failed downloads retry-first. **Open: airplane-mode cold-restart verification on device** |
+| DL-01 | **Partial — honest limitation** | The visible queue is still a simulation for seeded works (real byte downloads exist only in the MangaDex/OPDS import paths). Retry-first ERROR rows shipped. **Convergence remains the top open engineering item; never claimed as real** |
+| I18N-01 | **Partial** | All new strings in en+fa (parity compile-enforced + runtime-tested); notification bodies and EPUB re-import card localized; RTL vs reading-direction independence code-verified + RTL screenshot. **Open: full fa device pass** |
+| BASE-01/02, PERF-01, UX-01, SRV-01, BKP-01 | **Not started this round** | Fixtures, 1000-entry performance run, TalkBack/tablet pass, source-failure matrix, checksummed backups — queued |
+
+### Manual Android tests required (device only — cannot run here)
+M-1 external-link leaves WebView · M-2 renderer-crash recovery · M-3 Vault PIN/biometric/lockout · M-4 >600 MB import · M-5 partial-page warning under storage pressure · M-6 force-stop/restart resume (manga + EPUB) · M-7 airplane-mode download stall/resume · M-8 ERROR-row retry · M-9 fa RTL + work-direction independence · M-10 legacy PIN record auto-upgrade (install 1.3.0 → set PIN → side-load this build → unlock → record becomes `v2:…`).

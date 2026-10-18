@@ -259,7 +259,9 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri u = request.getUrl();
-                if (u != null && HOST.equals(u.getHost())) return false;
+                // exact scheme+host match — lookalike hosts and http downgrade
+                // are both refused (https is the only trusted scheme here)
+                if (u != null && "https".equals(u.getScheme()) && HOST.equals(u.getHost())) return false;
                 openExternally(u);
                 return true;
             }

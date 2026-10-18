@@ -62,14 +62,24 @@ cd $ROOT
 $BT/zipalign -f 4 $OUT/base.apk $OUT/aligned.apk
 
 echo "[7/7] Signing..."
-KS=$ROOT/android/oni-debug.keystore
+# REL-02: the committed keystore is a DEBUG keystore for local testing only.
+# For a release/signing-sensitive build, provide a protected keystore via env:
+#   ONI_KEYSTORE=/path/to/keystore ONI_KEYSTORE_PASS=... ONI_KEY_ALIAS=oni
+# The debug keystore must never be used for a production distribution.
+KS="${ONI_KEYSTORE:-$ROOT/android/oni-debug.keystore}"
+KS_PASS="${ONI_KEYSTORE_PASS:-onilibrary}"
+KEY_ALIAS="${ONI_KEY_ALIAS:-oni}"
+if [ -z "${ONI_KEYSTORE:-}" ]; then
+  echo "  NOTE: signing with the committed DEBUG keystore (local builds only)"
+fi
 APK_OUT=$ROOT/download/oniLibrary-v1.3.1.apk
 if [ ! -f $KS ]; then
-  keytool -genkeypair -v -keystore $KS -storepass onilibrary -keypass onilibrary \
-    -alias oni -keyalg RSA -keysize 2048 -validity 10000 \
+  keytool -genkeypair -v -keystore $KS -storepass "$KS_PASS" -keypass "$KS_PASS" \
+    -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
     -dname "CN=oniLibrary, OU=Oni, O=oniLibrary, L=Tokyo, C=JP" > /dev/null 2>&1
 fi
-$BT/apksigner sign --ks $KS --ks-pass pass:onilibrary --key-pass pass:onilibrary \
+$BT/apksigner sign --ks $KS --ks-pass pass:"$KS_PASS" --key-pass pass:"$KS_PASS" \
+  --ks-key-alias "$KEY_ALIAS" \
   --out $APK_OUT $OUT/aligned.apk
 
 $BT/apksigner verify --print-certs $APK_OUT | head -4
