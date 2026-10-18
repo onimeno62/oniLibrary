@@ -97,11 +97,15 @@ if (failures.length) {
   process.exit(1);
 }
 
-// --- manifest version check ---
-const AAPT2 = `${process.env.ANDROID_SDK_ROOT || "/home/z/android-sdk"}/build-tools/34.0.0/aapt2`;
-const badging = execSync(`${AAPT2} dump badging ${APK}`).toString();
-const ver = badging.match(/versionCode='(\d+)' versionName='([^']+)'/);
+// --- manifest version check (optional — needs the Android SDK) ---
 console.log(`Verifying: ${APK}`);
-console.log(`APK version: code=${ver[1]} name=${ver[2]}`);
+const AAPT2 = `${process.env.ANDROID_SDK_ROOT || "/home/z/android-sdk"}/build-tools/34.0.0/aapt2`;
+if (fs.existsSync(AAPT2)) {
+  const badging = execSync(`${AAPT2} dump badging ${APK}`).toString();
+  const ver = badging.match(/versionCode='(\d+)' versionName='([^']+)'/);
+  console.log(`APK version: code=${ver[1]} name=${ver[2]}`);
+} else {
+  console.log(`SKIP APK badging — aapt2 not found at ${AAPT2} (asset verification above is independent)`);
+}
 console.log(`assets/www files: ${execSync(`find ${WWW} -type f | wc -l`).toString().trim()}`);
 console.log("✅ ALL ASSET URLS RESOLVE — interceptor fix verified");

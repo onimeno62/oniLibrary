@@ -1,3 +1,4 @@
+/// <reference types="bun-types" />
 /**
  * Mimics MainActivity's asset interceptor so the static export can be
  * exercised in a desktop browser EXACTLY like inside the APK:

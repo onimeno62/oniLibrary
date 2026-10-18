@@ -44,7 +44,14 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "android/**", "download/**", "next-env.d.ts", "examples/**", "skills"]
+  ignores: [
+    "node_modules/**", ".next/**", "out/**", "build/**", "android/**", "download/**",
+    "next-env.d.ts", "examples/**", "skills",
+    // third-party minified bundles shipped as-is (pdf.js worker, pdf-wasm fallbacks)
+    "public/**",
+    // build tooling (node cjs / Bun server) — not shipped app code
+    "scripts/**",
+  ]
 }];
 
 export default eslintConfig;
