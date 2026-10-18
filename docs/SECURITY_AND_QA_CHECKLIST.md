@@ -1,111 +1,161 @@
-# Security & QA Checklist — oniLibrary
+# oniLibrary Security and QA Checklist
 
-Checked items were **verified in this round** on branch `fix/security-remediation`
-(method noted per item). Unchecked items are open and prioritized in
-`ENGINEERING_REMEDIATION_PLAN.md`. Nothing on this list is assumed — each
-claim links to the check that proves it.
+Use this checklist before merging high-risk changes and before distributing a release. Checkboxes are not evidence by themselves: record the test/device, result, and any linked issue.
 
-## A. WebView / bridge security
-- [x] Navigation from the shell WebView is locked to the app origin; external
-  http(s) opens the system browser; non-http schemes are dropped.
-  *(code review — MainActivity `shouldOverrideUrlLoading`, `openExternally`)*
-- [x] The `OniAndroid` bridge can only ever be reached by the bundled app
-  origin (consequence of the navigation lock; the interface remains attached
-  by design for the shell itself).
-- [x] Asset serving rejects `..` and NUL before touching AssetManager.
-- [x] Renderer crash does not kill the app: `onRenderProcessGone` handled,
-  returns `true`, rebuilds the shell.
-- [x] `allowFileAccess=false`, `allowContentAccess=false`; no
-  `setAllowUniversalAccessFromFileURLs` anywhere.
-- [x] `usesCleartextTraffic=false` AND the bridge GET helpers reject non-https
-  (defense in depth — platform + call-site).
-- [x] WebView destroyed on activity teardown; no leaked bridge after exit.
-- [x] `ShareProvider` (content provider) remains strictly flat with a
-  canonical-path containment check; `exported=false`.
-- [ ] **Open**: fuzz the asset interceptor with encoded paths (`%2e%2e`,
-  double-encoding) against a real device.
-- [ ] **Open**: consider CSP meta tag for the bundled app (defense in depth
-  for the SPA itself).
+## Release record
 
-## B. Vault privacy
-- [x] PIN records: salted PBKDF2-SHA256 (120k iterations, 128-bit random
-  salt, WebCrypto); no plaintext, no weak hash for new records.
-  *(tests/vault-crypto.test.ts)*
-- [x] Legacy hash records migrate transparently on the next successful
-  unlock; verification still accepts them meanwhile (no lockouts on upgrade).
-  *(tests + manual test M-10)*
-- [x] No unauthenticated unlock path: the web “simulated scan” fallback is
-  removed; biometrics require the native bridge. *(code review)*
-- [x] Brute force: 5 attempts → 30 s lockout (session-persistent).
-- [x] Vault metadata masking on Library / Home / Discover / Search / Stats /
-  Updates / More / Notifications / History (audit table in the plan).
-- [x] Deleting a Vault work purges its notifications/history/bookmarks so the
-  title cannot leak from orphaned entries. *(tests)*
-- [x] Backup export strips the PIN record and catalog credentials; import
-  never overwrites the device-local PIN. *(tests)*
-- [x] `allowBackup=false` (cloud/adb backup of app data disabled).
-- [ ] **Open**: encrypt Vault page blobs at rest (Keystore-wrapped key via
-  native bridge) — VLT-003.
-- [ ] **Open**: server-side HTTP Basic credentials are still plaintext at
-  rest in localStorage (masked from backups now). Move to
-  sessionStorage or native Keystore later.
+- Commit / tag:
+- Build environment:
+- Android device and OS:
+- Test date:
+- Tester:
+- APK SHA-256:
+- Result: PASS / FAIL / BLOCKED / NOT RUN
 
-## C. Data integrity
-- [x] Backup import validates every section; wrong types refuse the restore;
-  invalid work rows are dropped; the download queue restores with v3.
-  *(tests/store-logic.test.ts)*
-- [x] Works deletion cleans all satellite collections. *(tests)*
-- [x] Persisted store reads/writes through guarded storage (corrupt payload
-  or private-mode exceptions degrade, never crash hydration).
-- [x] Version-bump chain intact: manifest 1.3.0→**1.3.1 (versionCode 11)** on
-  this branch; `verify-apk-assets.cjs` validates the built APK assets (35/35
-  on the last available build) and degrades gracefully without the SDK.
-- [ ] **Open**: a dedicated store `version`/migrate step for future schema
-  changes (the `merge` fallback covers new settings keys today).
+## 1. WebView and native bridge security
 
-## D. File import
-- [x] Extension never trusted alone — magic-byte sniffing for
-  ZIP/RAR4/RAR5/7z. *(tests/importer-logic.test.ts)*
-- [x] 600 MB ceiling with an honest `toobig` reason in every import path.
-- [x] Partial-page storage failures counted and surfaced per path (import
-  files, add-to-work, folder commit, files-as-work) with an en/fa toast.
-- [x] Per-file error isolation (one corrupt file never aborts a batch).
-- [x] “Meta work” fallback is deterministic (12 pages) and honestly labeled.
-- [ ] **Open**: stream large archives instead of full buffering (would raise
-  the ceiling safely) — engineering-heavy; keep the cap meanwhile.
-- [ ] **Open**: automatic duplicate detection at import time (manual
-  duplicates screen exists).
+- [ ] Only documented trusted origins load inside the privileged WebView.
+- [ ] External links open outside the privileged WebView.
+- [ ] Scheme, host, and port are validated exactly; lookalike domains are rejected.
+- [ ] Redirects and unexpected navigation cannot bypass origin checks.
+- [ ] Untrusted frames/pages cannot invoke native bridge methods.
+- [ ] Every bridge method has a minimal capability scope and validates arguments.
+- [ ] JavaScript, file access, content access, mixed content, debugging, and intent handling are reviewed.
+- [ ] File picker grants only the required access and cancellation is safe.
+- [ ] Negative tests cover untrusted URLs, malformed bridge arguments, and unexpected navigation.
+- [ ] Release builds do not expose WebView debugging.
 
-## E. Reader progress & offline
-- [x] History “Resume” restores the latest page (entry refreshed on page
-  change). *(tests + manual M-6)*
-- [x] EPUB progress writes debounced (400 ms) + flushed on unmount; no
-  per-frame full-store serialization.
-- [x] `continueReading` handles ratio and legacy absolute lastPage identically
-  to the reader restore, clamped to range. *(tests)*
-- [x] Downloads stall on real disconnection or Offline mode and resume
-  automatically; hint text honest about Wi-Fi *type* detection limits.
-- [x] Failed downloads offer retry, not a phantom “Open”.
-- [ ] **Open**: wire the demo download queue to real byte downloads for
-  remote sources (DWN convergence — plan §P2-28).
-- [ ] **Open**: surface an explicit offline banner when reading remote-source
-  works with no cached copy.
+**Evidence / issues:**
 
-## F. Localization / RTL
-- [x] en/fa key parity compile-enforced (`Record<TranslationKey, string>`) and
-  runtime-tested; all new strings exist in both locales. *(tests/i18n.test.ts)*
-- [x] No hardcoded user-facing English strings left in the touched screens
-  (notification bodies and EPUB re-import card were the last ones).
-- [x] RTL layout is locale-driven; manga/comic reading direction is
-  work-driven and never flips with the locale (reader paged track, tap
-  zones, keyboard arrows all read `work.direction`). *(code review + M-9)*
+## 2. Vault and private data
 
-## G. Release gates (per release)
-- [x] `bun run lint` clean. *(this branch)*
-- [x] `bunx tsc --noEmit` clean. *(this branch)*
-- [x] `bun run test` — 28/28. *(this branch)*
-- [x] `node scripts/verify-apk-assets.cjs` — 35/35 asset URLs resolve;
-  aapt2 badging optional when the SDK is absent.
-- [ ] **Open (this branch)**: `bash scripts/build-apk.sh --fresh` must be run
-  on an Android-SDK machine; APK output name updated to v1.3.1.
-- [ ] **Open (this branch)**: manual suite M-1…M-10 in the remediation plan.
+- [ ] UI lock, hidden content, and encryption are described as separate protection levels.
+- [ ] Public Home, search, suggestions, recents, library counts, notifications, and logs do not leak Vault metadata while locked.
+- [ ] Locking the Vault clears sensitive content from the visible UI and relevant in-memory state.
+- [ ] PIN verification does not use a fast rolling hash or a custom cryptographic algorithm.
+- [ ] Retry throttling survives reopening the screen and process restart.
+- [ ] Recovery/reset behavior is documented and does not silently bypass the protection model.
+- [ ] Original files, covers, thumbnails, caches, temporary files, exports, and backups are included in the threat model.
+- [ ] Encryption claims are supported by tests for data at rest and key management; otherwise the product explicitly says content is not encrypted.
+- [ ] Android backup/device-transfer behavior is an intentional, documented choice.
+- [ ] Vault deletion and movement do not leave unexpected app-managed copies.
+
+**Evidence / issues:**
+
+## 3. Secrets, permissions, network, and extensions
+
+- [ ] No passwords, API tokens, PINs, private keys, or production keystores are committed.
+- [ ] Logs and crash reports exclude credentials and unnecessary private paths/content.
+- [ ] Credentials are not placed in query strings or fragment identifiers.
+- [ ] TLS/certificate failures are surfaced; validation is not bypassed.
+- [ ] Permissions are requested only when needed and denial is handled gracefully.
+- [ ] Third-party sources/extensions have documented origin, compatibility, trust, and permission boundaries.
+- [ ] Untrusted archives and metadata are treated as hostile input.
+
+**Evidence / issues:**
+
+## 4. Storage, import, and deletion
+
+- [ ] PDF, EPUB, CBZ/ZIP, JPG/JPEG, PNG, WebP, and supported image batches are tested.
+- [ ] Unsupported formats fail with a clear explanation rather than a crash.
+- [ ] Unicode filenames, Persian/English mixed strings, spaces, punctuation, and natural numeric sorting are tested.
+- [ ] Corrupt archives, corrupt images, password-protected files, duplicates, and large files are tested.
+- [ ] Archive extraction prevents path traversal and uncontrolled resource consumption.
+- [ ] Storage quota exhaustion and failed writes do not silently erase or corrupt existing data.
+- [ ] Interrupted imports are recoverable and do not mark partial items complete.
+- [ ] Metadata and binary content remain consistent across IndexedDB/localStorage or other stores.
+- [ ] Delete operations account for records, blobs, covers, thumbnails, caches, and temporary files.
+- [ ] Cache/index rebuilds do not delete originals without explicit confirmation.
+- [ ] Database migrations and backup restore are tested against older supported data versions.
+
+**Evidence / issues:**
+
+## 5. Reader and progress
+
+- [ ] Paged, continuous, and Webtoon modes are tested where supported.
+- [ ] Manga RTL and comic LTR reading work independently of interface language.
+- [ ] Fit Width, Fit Height, Fit Screen, Original Size, zoom, pan, and reset work.
+- [ ] Wide pages, long strips, large PDF dimensions, rotated pages, and high-resolution images are tested.
+- [ ] Navigation and progress are correct at first/last page and chapter boundaries.
+- [ ] Position survives reader exit, app backgrounding, force-stop, and restart.
+- [ ] Per-series settings do not leak into other works unintentionally.
+- [ ] A corrupt page/file does not make unrelated library items unreadable.
+- [ ] Reader controls remain discoverable and do not obstruct content unnecessarily.
+
+**Evidence / issues:**
+
+## 6. Offline and downloads
+
+- [ ] Imported local files open in airplane mode after a cold restart.
+- [ ] Fully completed downloads open offline.
+- [ ] Download start, pause, resume, cancel, retry, and restart recovery are tested.
+- [ ] Incomplete downloads are not presented as complete.
+- [ ] Storage-full, network-loss, timeout, authentication, and source errors are distinguishable.
+- [ ] Duplicate download requests do not corrupt the queue or produce conflicting records.
+- [ ] Offline UI accurately separates local capabilities from network-dependent features.
+
+**Evidence / issues:**
+
+## 7. Localization, accessibility, and navigation
+
+- [ ] Fresh setup is tested in English and Persian.
+- [ ] All P0 screens, menus, dialogs, empty states, errors, notifications, and accessibility labels are translated.
+- [ ] Persian shaping, RTL layout, punctuation, URLs, filenames, mixed scripts, and digits are checked.
+- [ ] Interface language does not change a work's reading direction.
+- [ ] Android Back behavior is tested on nested screens, overlays, picker, and Reader.
+- [ ] Rotation, activity recreation, process death, and system text/display scaling are tested.
+- [ ] TalkBack names and actions are meaningful.
+- [ ] Primary controls have suitable contrast and touch-target size.
+- [ ] Phone, tablet, portrait, and landscape layouts are checked.
+
+**Evidence / issues:**
+
+## 8. Backup, restore, and external services
+
+- [ ] Backup scope is shown before creation and restore.
+- [ ] Vault/private content is excluded by default unless a secure, informed opt-in is implemented.
+- [ ] Invalid, incomplete, older-version, and oversized backups fail safely.
+- [ ] Restore does not unexpectedly overwrite existing data; conflicts are explained.
+- [ ] Server/source timeouts, redirects, rate limits, authentication failures, and recovery are tested.
+- [ ] A remote source outage never hides or deletes local content.
+- [ ] Unsupported source/extension compatibility is not advertised as verified.
+
+**Evidence / issues:**
+
+## 9. Build and release integrity
+
+- [ ] Build works from a clean checkout without developer-specific absolute paths.
+- [ ] TypeScript/build errors are not ignored.
+- [ ] Lint, typecheck, unit tests, integration tests, and build are run where available.
+- [ ] APK assets are verified against the actual artifact path.
+- [ ] The packaged APK launches on a target Android device.
+- [ ] App version, manifest version, package metadata, APK filename, README, and release notes agree.
+- [ ] Production signing uses protected release secrets, not a committed debug key or hardcoded password.
+- [ ] APK SHA-256 is recorded and matches the distributed artifact.
+- [ ] CI failure stops release; skipped checks are recorded as NOT RUN.
+- [ ] README and download links point to the correct repository and release artifact.
+
+**Evidence / issues:**
+
+## 10. Minimum end-to-end acceptance run
+
+- [ ] Fresh install → choose English → import a supported file → read → exit → reopen → position restored.
+- [ ] Fresh install or settings change → choose Persian → verify RTL UI → read an LTR work.
+- [ ] Read an RTL manga while the UI is English.
+- [ ] Import an archive with Unicode filenames and verify natural page order.
+- [ ] Force-stop during/after import and confirm safe recovery.
+- [ ] Open local content in airplane mode after restart.
+- [ ] Download a chapter, restart, then open it offline.
+- [ ] Lock Vault and inspect public screens, search, recents, notifications, and exports for leaks.
+- [ ] Restore a valid backup and reject a malformed backup without damaging the current library.
+- [ ] Verify system Back, picker cancellation, rotation, and large text.
+- [ ] Verify the release APK starts on a real Android device.
+
+## Sign-off
+
+- **Critical security issues:** none open / list:
+- **Data-loss issues:** none open / list:
+- **P0 acceptance:** PASS / FAIL / BLOCKED
+- **Known limitations:** 
+- **Release decision:** GO / NO-GO
+- **Approver and date:**

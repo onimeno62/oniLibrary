@@ -1,107 +1,237 @@
-# Engineering Remediation Plan — oniLibrary
+# oniLibrary Engineering Remediation Plan
 
-Status: **Round 1 executed** on branch `fix/security-remediation` (not merged).
-Baseline: `main` @ `bf783f5` (v1.3.0, versionCode 10). Every item below lists
-the verified result of that round; remaining limitations are explicit and
-honest — nothing here is marked done without a check or test behind it.
+**Status:** Proposed implementation plan  
+**Baseline:** Existing repository and `docs/PRD.md`  
+**Scope:** Engineering, security, reliability, QA, and release hardening  
+**Important:** This is a prioritized plan, not a claim that every listed scenario has been reproduced. Validate each finding against the current branch before changing behavior.
 
-> Provenance note: this plan was created by the remediation round itself
-> because no `ENGINEERING_REMEDIATION_PLAN.md` existed in the repo (only
-> `PRD.md`, `ARCHITECTURE.md`, `BUILDING.md`). The referenced baseline
-> documents that do not exist are listed under “Open gaps” below.
+## Goals
 
-## Priority order (as executed)
+1. Protect users and private content before distributing public builds.
+2. Make clean builds and CI reproducible.
+3. Preserve user files, library metadata, and reading progress through errors and restarts.
+4. Test P0 user journeys against the PRD on real Android devices.
+5. Clearly distinguish implemented, partial, unsupported, and unverified features.
 
-### P1 — Critical WebView security
-| # | Finding (baseline) | Fix | Verified by |
-|---|---|---|---|
-| 1 | `shouldOverrideUrlLoading` returned `false` unconditionally → any remote page (OPDS catalog link, redirect) could navigate the shell WebView and inherit the `OniAndroid` bridge (`exportFile`, `fetchToCache`, import chunk channel, biometrics) | Navigation locked to the virtual host; external http(s) handed to the browser (`openExternally`), everything else blocked | Code review; manual Android test M-1 (below) |
-| 2 | `serveAsset()` passed `..` segments through to AssetManager | Traversal + NUL rejected before resolution | Code review |
-| 3 | Renderer crash killed the whole app | `onRenderProcessGone` returns `true` (handled) and rebuilds the WebView; persisted store rehydrates | Code review; manual test M-2 |
-| 4 | WebView never destroyed on activity teardown | `onDestroy` detaches + `webView.destroy()` | Code review |
-| 5 | Bridge transport accepted `http://` while the manifest forbids cleartext (dead, misleading path) | `httpGetString`/`fetchToCache` enforce https-only | Code review |
-| 6 | `android:allowBackup="true"` exposed localStorage (incl. Vault PIN record) to `adb backup` | `allowBackup="false"` | Manifest inspection |
+## Severity and delivery rules
 
-### P1 — Vault privacy
-| # | Finding | Fix | Verified by |
-|---|---|---|---|
-| 7 | PIN stored as an unsalted 32-bit multiplicative hash (10 000-combination space, trivially enumerable from localStorage) | Salted PBKDF2-SHA256 records (`v2:<salt>:<hash>`, 120k iterations, WebCrypto); legacy records still verify and are transparently upgraded on the next successful unlock (no data loss) | `tests/vault-crypto.test.ts` (7 tests) |
-| 8 | Web “simulated scan” biometric fallback unlocked the Vault with **zero authentication** | Fingerprint button only renders when the real native bridge exists; no web fallback unlock remains | Code review; manual test M-3 |
-| 9 | Unlimited PIN attempts (counter reset every 5) | 30 s lockout after 5 failures, persisted in sessionStorage for the session | Manual test M-3 |
-| 10 | History rows leaked chapter/page position of Vault titles | Vault rows show the masked label only | Code review |
-| 11 | Deleting a work left orphaned notifications; a deleted Vault work’s title leaked through the unknown-work render path | `deleteWorks` purges notifications/history/bookmarks/highlights of the deleted ids; notifications also mask `workId` without metadata and honor the stored `sensitive` flag | `tests/store-logic.test.ts` (orphan purge) |
-| 12 | Backups carried the PIN record and plaintext catalog credentials | Export strips `vaultPinHash` and `servers[].auth` (backup format v3); import re-strips credentials and refuses to overwrite the device-local PIN (known-hash attack blocked) | `tests/store-logic.test.ts` |
+- **P0 / Critical:** Security boundary, privacy exposure, data loss, or build/release blocker. Do not publish a production release while an unresolved P0 is present.
+- **P1 / High:** Core journey unreliable or a release gate missing.
+- **P2 / Medium:** Important product quality or maintainability improvement.
+- **P3 / Low:** Polish or optional future capability.
 
-### P1 — Build reliability / TypeScript
-| # | Finding | Fix | Verified |
-|---|---|---|---|
-| 13 | `bun run lint` failed: 13 errors, 1290 warnings — eslint was linting third-party minified bundles (`public/pdf/pdf.worker.min.mjs`, `public/pdf-wasm/*_fallback.js`) and build tooling | `public/**` and `scripts/**` added to eslint ignores (not app code) | `bun run lint` exits clean |
-| 14 | `tsc --noEmit` failed: `Bun` global unresolved in `scripts/apk-mimic-server.ts` | `/// <reference types="bun-types" />` added (bun-types already in devDependencies) | `bunx tsc --noEmit` clean |
-| 15 | `node scripts/verify-apk-assets.cjs` crashed when the Android SDK is absent | aapt2 badging is now an optional, clearly-labeled SKIP; asset verification (35/35) is independent | Script run in this environment: 35/35 RESOLVED, graceful skip |
-| 16 | Untracked local `skills/` tooling polluted tsc | Added to tsconfig `exclude` | tsc clean |
+Each item must be tracked with an owner, evidence, reproduction steps, implementation notes, tests, and acceptance criteria. Do not mark an item complete because code was changed; mark it complete only after its acceptance criteria pass.
 
-### P2 — Data integrity
-| # | Finding | Fix | Verified by |
-|---|---|---|---|
-| 17 | `importBackup` accepted any payload after the `app` tag check — `works: {}`, `history: 5` etc. would white-screen tab screens | Strict per-section validation: arrays type-checked, work rows require string id/title + chapters array, invalid rows dropped, wrong-typed `works` refuses the whole restore; download queue restored (v3) | `tests/store-logic.test.ts` (4 restore tests) |
-| 18 | Restore carried download flags with no queue context | v3 backups include `downloads`; import restores them when present | test |
-| 19 | Deleted works left orphaned history/bookmarks/highlights | Purged in `deleteWorks` | test |
+## Phase 0 — Establish a verified baseline
 
-### P2 — File import
-| # | Finding | Fix | Verified by |
-|---|---|---|---|
-| 20 | Unbounded `arrayBuffer()` buffering — multi-GB CBZ/PDF/EPUB could OOM the WebView | 600 MB ceiling (`MAX_IMPORT_BYTES`), honest `toobig` reason + en/fa strings, enforced in every routing path (`importFiles`, `importFilesToWork`, `importFilesAsWork`, `importArchive`, `importPdf`, `importEpub`) | `tests/importer-logic.test.ts`; manual test M-4 |
-| 21 | Per-page `putFile` failures were silently swallowed → truncated chapters presented as complete | `StoredPages.failed` counted on every path; `partial` surfaced by `importFiles` / `importFilesToWork` / `importFolderCommit` / `importFilesAsWork` and toasted in the UI | Code review; manual test M-5 |
-| 22 | Unparseable PDF/EPUB became “meta works” with a random 24–224 page count (fabricated data) | Deterministic 12-page demo; description already honest | Code review |
+### BASE-01 — Inventory the actual implementation (P0)
+- Read the PRD, repository instructions, package scripts, Android manifest, WebView shell, storage code, reader engines, source integrations, and release workflow.
+- Build a feature matrix: implemented and verified / implemented but unverified / partial / missing / unsupported.
+- Record toolchain versions, supported Android API levels, build commands, test commands, and the exact baseline commit.
+- Avoid assuming that a visible screen means the underlying workflow is functional.
 
-### P2 — Reader progress restoration
-| # | Finding | Fix | Verified by |
-|---|---|---|---|
-| 23 | History “Resume” reopened the page where the chapter was *opened* (history written once at mount) | New `refreshHistoryPage` store action; the page-change effect keeps the history entry on the page actually reached | `tests/store-logic.test.ts` (progress math); manual test M-6 |
-| 24 | EPUB scroll wrote the full store to localStorage per animation frame (~60 writes/s) | 400 ms trailing debounce capturing the ratio (chapter-switch safe) + unmount flush so the last position is never lost | Code review; manual test M-6 |
-| 25 | `continueReading()` mishandled legacy absolute `lastPage` (> 1) | Same dual interpretation as the reader restore, clamped to page range | test |
+**Acceptance:** A reproducible baseline report exists; commands and current failures are recorded without hiding failures.
 
-### P2 — Offline reading & download recovery
-| # | Finding | Fix | Verified by |
-|---|---|---|---|
-| 26 | Downloads stalled only when `offlineMode && wifiOnly` were BOTH on (nonsensical); no real connectivity awareness | Tick stalls when `offlineMode` is on OR `navigator.onLine === false`; resumes automatically; Wi-Fi *type* detection is impossible in a WebView and the hint text now says so honestly | Code review; manual test M-7 |
-| 27 | Failed downloads rendered a “Read” affordance into content that never downloaded | ERROR rows retry-first (tap = retry), Open action hidden | Code review; manual test M-8 |
-| 28 | (documented, unchanged) The Downloads queue is a simulation for seeded works; MangaDex/OPDS imports download real bytes into IndexedDB and read fully offline. Converging the two systems is a tracked big-ticket item, not quietly claimed as done | — | Open gaps |
+### BASE-02 — Create representative test fixtures (P1)
+- Maintain small, redistributable fixtures for PDF, EPUB, CBZ/ZIP, images, Unicode filenames, corrupt files, and large-file cases.
+- Never commit copyrighted user content, private files, secrets, keystores, or real service credentials.
 
-### P2 — Persian/English localization
-- New strings added in **both** locales: `vlt.tooMany`, `epub.reimportTitle/Hint`,
-  `ntf.dlDoneBody`, `ntf.dlFailBody`, `ntf.newChapterBody`, `imp.reason.toobig`,
-  `imp.partialPages`, `imp.partialChapters`; `dl.wifiOnlyHint` re-worded honestly.
-- Notification bodies are now localized at creation time via `translate(settings.lang, …)`.
-- **RTL vs reading direction**: verified independent — the shell applies `dir`
-  per UI locale (`app-shell.tsx`), while page flow direction is a per-work
-  property (`work.direction`) used exclusively by the reader (paged track,
-  tap zones, keyboard arrows). A Persian UI with an LTR comic reads LTR and
-  vice versa. `fa` key parity is compile-enforced and runtime-tested
-  (`tests/i18n.test.ts`).
+**Acceptance:** Tests can run from documented fixtures and do not depend on a user’s personal library.
 
-## Regression tests
-`bun test tests/` (script `bun run test`) — **28 tests, 104 assertions, all passing**:
-- `tests/vault-crypto.test.ts` — PBKDF2 records, wrong-PIN/corrupt-record rejection, salt uniqueness, legacy migration
-- `tests/store-logic.test.ts` — progress math, restore validation/replacement semantics, credential stripping, orphan purge, legacy hash shim
-- `tests/importer-logic.test.ts` — magic-byte sniffing, folder numbering hints, size ceiling
-- `tests/i18n.test.ts` — en/fa parity for every new key, interpolation, Persian digits
+## Phase 1 — Security and privacy (do first)
 
-## Open gaps / next candidates (priority order)
-1. **Converge the simulated download queue with real IndexedDB downloads** (DWN): make `startDownload` fetch + store chapter pages via `local-files.ts` for remote sources, keep the simulation only for seed/demo works.
-2. **Vault content encryption at rest** (VLT-003): the Vault currently hides works and locks metadata; page blobs in IndexedDB are not encrypted. WebCrypto key wrapped by native Keystore via a bridge method would close this.
-3. **Backup of downloaded media** remains out of scope (metadata-only backups; the UI says so honestly).
-4. **Real APK build + manual Android suite** (below) — this sandbox has no Android SDK; Java changes are reviewed but **not compiled here**.
-5. Refactor note: `MainActivity.onCreate`/`createWebView` were deduplicated this round; a follow-up could extract the bridge into its own file for reviewability.
+### SEC-01 — Restrict WebView navigation and bridge exposure (P0 / Critical)
+**Areas to inspect:** `android/app/java/com/onilibrary/app/MainActivity.java`, WebView configuration, navigation handling, and every method exposed through `addJavascriptInterface`.
 
-## Manual Android tests still required (cannot run in this sandbox)
-- **M-1** Open an OPDS catalog entry’s external link → must open the browser, never navigate the in-app WebView.
-- **M-2** Trigger a renderer crash (or `adb shell am crash com.onilibrary.app`) → app rebuilds the shell, library intact.
-- **M-3** Vault: set PIN (v2 record stored), unlock, 5 wrong attempts → 30 s lockout; fingerprint button hidden in the web build, BiometricPrompt on device.
-- **M-4** Import a >600 MB file → honest “too large” toast, no crash.
-- **M-5** Fill storage nearly full, import a CBZ → partial-page warning toast appears.
-- **M-6** Read to page N, close, History → Resume lands on page N (manga + EPUB).
-- **M-7** Toggle airplane mode mid-download → queue stalls; restore network → resumes.
-- **M-8** Failed download row → tap retries, no “Open” affordance.
-- **M-9** Persian locale: global RTL holds, manga pages still turn in the work’s direction.
-- **M-10** Legacy upgrade: install v1.3.0, set a PIN, side-load this build, unlock once → PIN record upgraded to `v2:…` (check via remote debugger), data intact.
+- Define the exact trusted origin(s) used by the packaged application.
+- Reject or open externally any navigation that is not explicitly trusted. Validate scheme, host, and port; do not use loose substring matching.
+- Ensure untrusted pages, redirects, popups, and frames cannot call privileged native bridge methods.
+- Expose the smallest possible bridge API; validate every argument and reject malformed input.
+- Review JavaScript settings, file access, content access, mixed content, debugging, intent handling, and file-picker behavior.
+- Add tests for untrusted URLs, HTTP downgrade, lookalike domains, redirects, malformed arguments, and expected trusted navigation.
+
+**Acceptance:** Untrusted origins cannot access native capabilities; legitimate app flows continue to work; the security decision and supported origins are documented.
+
+### SEC-02 — Make Vault claims match actual protection (P0 / Critical)
+**Areas to inspect:** `src/lib/store.ts`, `src/lib/local-files.ts`, Vault screens, search, recent items, logs, exports, cache and backup paths.
+
+- Treat a UI lock or hidden route as access control, not encryption.
+- Remove sensitive Vault titles, covers, metadata, and progress from public Home, search, suggestions, recent items, notifications, and ordinary exports while locked.
+- Review whether localStorage or IndexedDB contains sensitive material and whether it is accessible to other scripts in the WebView origin.
+- Define a threat model and use vetted Android cryptographic primitives and Android Keystore-backed key management for any promised encryption. Do not invent a custom cipher or use a fast rolling hash as a PIN verifier.
+- Apply persistent retry throttling and a clear recovery policy. Reopening a screen or process must not reset a security control.
+- Include thumbnails, temporary copies, cache entries, exports, and backups in the data-lifecycle review.
+- Review Android backup/device-transfer policy, including `android:allowBackup`, and make an explicit decision for private data.
+- If complete encryption cannot safely be implemented in the current architecture, accurately label the Vault as UI-protected and do not claim encryption.
+
+**Acceptance:** A written threat model exists; no sensitive content leaks through normal views or exports; encryption claims are supported by tested at-rest protection and key lifecycle handling, or the product explicitly states that it is not encrypted.
+
+### SEC-03 — Audit logs, secrets, extensions, and network traffic (P0)
+- Ensure tokens, passwords, PINs, private filenames, and sensitive paths are not logged.
+- Keep credentials out of URLs and source control.
+- Validate TLS behavior and report certificate/authentication failures; never silently bypass certificate validation.
+- Treat extension packages and source metadata as untrusted input. Document provenance, permissions, compatibility, and license considerations.
+
+**Acceptance:** Static searches and tests find no known embedded credentials or sensitive log output; network and extension failure behavior is documented.
+
+### SEC-04 — Data deletion and backup privacy (P0)
+- Trace deletion across database records, binary blobs, covers, thumbnails, caches, and download temporary files.
+- Make export/backup scope explicit; exclude Vault content by default unless a secure, informed opt-in flow is implemented.
+- Validate imported backups before mutation and recover cleanly from malformed or partial archives.
+
+**Acceptance:** Deleting an item leaves no app-managed orphaned copies in the documented scope; backup contents are previewed and tested.
+
+## Phase 2 — Build and release reliability
+
+### BLD-01 — Remove machine-specific paths from build scripts (P0)
+**Areas to inspect:** `scripts/build-apk.sh`, `scripts/verify-apk-assets.cjs`, `.github/workflows/apk.yml`.
+
+- Derive repository root from the script location or a documented environment override.
+- Pass explicit artifact paths into verification rather than assuming one download directory.
+- Fail immediately when required commands or artifacts are missing.
+- Test from a clean checkout in the same environment used by CI.
+
+**Acceptance:** A clean GitHub Actions run builds and verifies the expected APK without relying on a developer-specific absolute path.
+
+### BLD-02 — Restore type safety (P0)
+**Area:** `next.config.ts` and CI checks.
+
+- Remove `typescript.ignoreBuildErrors: true` after fixing reported errors.
+- Add explicit typecheck, lint, unit test, and production-build commands where supported by the project.
+- Do not mask failures with `|| true`, swallowed exceptions, or non-failing scripts.
+
+**Acceptance:** CI fails on a deliberate type error and passes only when checks genuinely pass.
+
+### REL-01 — Establish a single version source (P1)
+- Reconcile the version in README, Android manifest, package metadata, APK naming, release notes, and download links.
+- Prefer one canonical version value with validated propagation where the current toolchain allows it.
+- Verify links refer to this repository and to an actual artifact.
+
+**Acceptance:** The app version and published artifact name agree; documentation contains no stale repository or release link.
+
+### REL-02 — Separate development and production signing (P0 before public release)
+- Never use a committed debug keystore or hardcoded passwords as production signing credentials.
+- Store production signing material in an appropriately restricted secret store; document recovery and rotation.
+- Keep local debug builds easy to reproduce without exposing release keys.
+
+**Acceptance:** Production release signing uses protected secrets; repository history and current files are checked for accidental secrets.
+
+### REL-03 — Make CI a meaningful release gate (P1)
+- Run typecheck, lint, tests, production build, APK asset verification, and applicable Android smoke tests.
+- Preserve test logs and artifacts when useful; fail the job if a required step fails.
+- Add a release checklist and document what is not yet automated.
+
+**Acceptance:** A release cannot be considered green if a required validation step failed or was skipped.
+
+## Phase 3 — Core workflows and data integrity
+
+### DATA-01 — Persistence resilience (P0)
+- Test missing, malformed, and outdated local state; IndexedDB open/migration failures; quota exhaustion; interrupted writes; and process death.
+- Keep related metadata and binary-file operations consistent, or implement a reconciliation/recovery path.
+- Never overwrite a valid library with an empty/default state because one read failed.
+- Make storage errors actionable and avoid deleting original files during cache/index recovery.
+
+**Acceptance:** Fault-injection tests demonstrate safe failure and recovery without silent library or progress loss.
+
+### IMP-01 — File import and archive validation (P0)
+- Verify PDF, EPUB, CBZ/ZIP, image files, and image batches as advertised by the PRD.
+- Handle Unicode and mixed Persian/English filenames, natural numeric ordering, duplicate imports, malformed archives, unsupported formats, and password-protected documents.
+- Enforce sensible limits and safe extraction paths; prevent path traversal and decompression/resource exhaustion.
+- Make cancellation and partial failure recoverable.
+
+**Acceptance:** Each supported format has positive and negative tests; one corrupt file does not crash the library or corrupt other items.
+
+### READ-01 — Reader progress and navigation (P0)
+- Verify page/chapter ordering, independent per-series settings, RTL/LTR behavior, zoom/pan, fit modes, long Webtoon images, and large PDF page dimensions.
+- Persist position at appropriate checkpoints and restore it after reader exit, force-stop, and restart.
+- Ensure changing reader mode does not unexpectedly reset progress.
+
+**Acceptance:** Reader test matrix passes for representative formats and both reading directions; progress survives forced termination.
+
+### OFF-01 — Offline contract (P0)
+- Verify imported local files and completed downloads open with networking disabled.
+- Distinguish local functionality from network-dependent sections in UI and errors.
+- Ensure cached metadata is not presented as a successful fresh online result.
+
+**Acceptance:** Core local reading and saved downloads work in airplane mode after a cold restart.
+
+### DL-01 — Download queue correctness (P0)
+- Test start, pause, resume, cancel, retry, process death, storage-full errors, partial files, duplicate requests, and completion state.
+- Persist enough state to recover safely; never show a partial file as completed.
+- Report source errors separately from file-write and storage errors.
+
+**Acceptance:** Queue state recovers after restart and every operation has a deterministic, tested outcome.
+
+### I18N-01 — Persian/English and RTL/LTR quality (P0)
+- Test all critical flows in both languages, including empty/loading/error/success states, dialogs, accessibility labels, notifications, and system back behavior.
+- Test mixed Persian/English titles, URLs, punctuation, digits, and file names.
+- Keep UI direction independent of the content reading direction.
+
+**Acceptance:** No untranslated critical strings, clipped controls, broken Persian shaping, or incorrect directional navigation remain in P0 flows.
+
+## Phase 4 — Integrations and product acceptance
+
+### SRV-01 — Online sources and personal servers (P1)
+- Test authentication, redirects, timeouts, rate limits, malformed responses, unavailable servers, and recovery after connectivity returns.
+- Make supported source/extension compatibility explicit; do not claim universal Mihon compatibility without verification.
+- Ensure a source outage never hides or deletes the local library.
+
+**Acceptance:** Each claimed integration has documented supported behavior and failure-mode tests.
+
+### BKP-01 — Backup/restore and migration (P1)
+- Preview what will be included, excluded, merged, or overwritten.
+- Validate schema/version, checksums where appropriate, and file size limits before applying changes.
+- Test partial restore failure and recovery.
+
+**Acceptance:** A backup round-trip preserves all documented fields; invalid backups fail safely without damaging existing data.
+
+### UX-01 — Navigation, accessibility, and adaptive layouts (P1)
+- Test Android Back, overlays, reader exit, picker cancellation, activity recreation, screen rotation, and system text scaling.
+- Verify TalkBack labels, contrast, touch targets, keyboard interaction where relevant, and phone/tablet layouts.
+
+**Acceptance:** Critical flows remain operable without accidental exit, inaccessible controls, or major clipping.
+
+### PERF-01 — Measure large-library and reader performance (P1)
+- Profile with a documented fixture of at least 1,000 library entries and representative large files on a named reference device.
+- Measure startup-to-usable, scrolling, search, memory, image decode, and storage operations.
+- Optimize only after collecting repeatable measurements.
+
+**Acceptance:** Measurements and regressions are recorded; no performance guarantee is claimed without evidence.
+
+## Phase 5 — UI and product polish
+
+- Compare implemented screens with the supplied oniLibrary mockups.
+- Standardize spacing, typography, icons, controls, loading states, dialogs, and empty states.
+- Verify Light, Dark, and Follow System themes.
+- Validate responsive behavior on phones, tablets, and landscape orientation.
+
+**Acceptance:** Differences from the mockups are documented; critical readability, navigation, and accessibility issues are resolved.
+
+## Required engineering workflow
+
+For each task:
+
+1. Read the current implementation and relevant PRD requirements before editing.
+2. Reproduce the issue or record why it cannot yet be reproduced.
+3. Write or update a failing test where practical.
+4. Implement the smallest safe change consistent with the existing architecture.
+5. Run the relevant tests plus all available required checks.
+6. Review the diff for security, data-loss, localization, and accessibility regressions.
+7. Update this plan and the test report with evidence and status.
+8. Report exact commands and results. Never claim tests passed if they were not run.
+
+## Definition of done
+
+- The change maps to a PRD requirement or a documented engineering issue.
+- Acceptance criteria and regression tests are present.
+- No secrets, personal content, or private test fixtures are added.
+- Typecheck, lint, tests, and build pass where available; unrun checks are explicitly listed.
+- User-facing behavior is localized in Persian and English where applicable.
+- Data migration and rollback/recovery behavior are considered.
+- Documentation accurately distinguishes verified behavior from planned or unsupported behavior.
+
+## Related documents
+
+- [Product Requirements Document](PRD.md)
+- [Security and QA Checklist](SECURITY_AND_QA_CHECKLIST.md)
+- [AI Agent Implementation Prompt](AI_AGENT_IMPLEMENTATION_PROMPT.md)
