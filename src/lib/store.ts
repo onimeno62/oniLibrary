@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
 import { legacyPinHash } from "./vault-crypto";
+import { translate } from "./i18n";
 import {
   DEFAULT_SETTINGS,
   SEED_WORKS,
@@ -493,7 +494,13 @@ export const useApp = create<AppState>()(
         })),
       tickDownloads: () => {
         const s = get();
-        if (s.settings.offlineMode && s.settings.wifiOnly) return; // stalled
+        // stall when the user toggled offline mode OR the device actually lost
+        // connectivity — progress resumes automatically on the next tick once
+        // the condition clears. (Network *type* — Wi-Fi vs mobile data —
+        // cannot be detected inside a WebView, so wifiOnly is only a hint.)
+        const offline =
+          typeof navigator !== "undefined" && typeof navigator.onLine === "boolean" && !navigator.onLine;
+        if (s.settings.offlineMode || offline) return; // stalled
         let changed = false;
         const newEvents: { n: Omit<Notification, "id" | "createdAt" | "read">; d: DownloadItem }[] = [];
         let downloads = s.downloads.map((d) => {
@@ -527,7 +534,7 @@ export const useApp = create<AppState>()(
               workId: d.workId,
               chapterLabel: chapterLabelOf(s.works, d),
               title: workTitleOf(s.works, d.workId),
-              body: `Download completed · ${d.totalMb.toFixed(1)} MB`,
+              body: translate(s.settings.lang, "ntf.dlDoneBody", { mb: d.totalMb.toFixed(1) }),
             } });
           }
           if (status === "ERROR" && s.settings.ntfErrors) {
@@ -537,7 +544,7 @@ export const useApp = create<AppState>()(
               workId: d.workId,
               chapterLabel: chapterLabelOf(s.works, d),
               title: workTitleOf(s.works, d.workId),
-              body: `Download failed at ${Math.floor(progress)}% · network error`,
+              body: translate(s.settings.lang, "ntf.dlFailBody", { pct: String(Math.floor(progress)) }),
               sensitive: vlt,
             } });
           }
@@ -790,7 +797,7 @@ export const useApp = create<AppState>()(
                   workId: w.id,
                   chapterLabel: `Ch. ${latest.number}`,
                   title: w.title,
-                  body: "New chapter available",
+                  body: translate(s.settings.lang, "ntf.newChapterBody"),
                 });
               }
             }

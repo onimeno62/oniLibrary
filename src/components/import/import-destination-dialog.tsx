@@ -100,11 +100,17 @@ export function ImportDestinationDialog({
             variant: "destructive",
           });
         }
+        if (res.partial.length) {
+          toast({
+            title: t("imp.partialPages"),
+            description: t("imp.partialChapters", { names: res.partial.slice(0, 3).join(", ") }),
+          });
+        }
       } else {
         const work = st.works.find((w) => w.id === targetId);
         if (!work) return;
         const startNumber = work.chapters.reduce((m, c) => Math.max(m, c.number), 0) + 1;
-        const { added, created, skipped, batchMeta } = await importFilesToWork(files, work.id, startNumber);
+        const { added, created, skipped, batchMeta, partial } = await importFilesToWork(files, work.id, startNumber);
         if (added.length) st.appendChapters(work.id, added);
         for (const w of created) st.addWork(w);
         // grow the work's static import facts (details page block)
@@ -140,6 +146,12 @@ export function ImportDestinationDialog({
               .map((s) => `${s.name} — ${t(UNSUPPORTED_REASON_KEYS[s.reason] ?? "imp.reason.format")}`)
               .join("\n"),
             variant: "destructive",
+          });
+        }
+        if (partial.length) {
+          toast({
+            title: t("imp.partialPages"),
+            description: t("imp.partialChapters", { names: partial.slice(0, 3).join(", ") }),
           });
         }
       }

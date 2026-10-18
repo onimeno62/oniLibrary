@@ -343,6 +343,7 @@ export function EpubBookView({
   /** reports how many in-chapter matches were just marked (drives the find bar) */
   onMarksFound?: (count: number) => void;
 }) {
+  const { t } = useT();
   const workId = work.id;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [html, setHtml] = useState<string | null>(null);
@@ -672,8 +673,8 @@ export function EpubBookView({
   if (missing) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
-        <p className="text-[14px] font-bold text-white/80">{`This book's chapters need re-import.`}</p>
-        <p className="text-[12px] text-white/50">{`Reopen the original .epub file to restore the text.`}</p>
+        <p className="text-[14px] font-bold text-white/80">{t("epub.reimportTitle")}</p>
+        <p className="text-[12px] text-white/50">{t("epub.reimportHint")}</p>
       </div>
     );
   }

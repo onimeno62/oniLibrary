@@ -344,12 +344,14 @@ function DoneRow({
   const retry = useApp((s) => s.retryDownload);
   const failed = d.status === "ERROR";
   if (!meta) return null;
+  // failed downloads must not "open" into the reader — the tap retries instead
+  const primary = () => (failed ? retry(d.id) : onRead());
   return (
     <div className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-2.5 shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)]">
-      <button onClick={onRead}>
+      <button onClick={primary}>
         <WorkCover src={meta.cover} color={meta.color} title={meta.title} className="h-[64px] w-[52px] rounded-2xl" sizes="52px" />
       </button>
-      <button onClick={onRead} className="min-w-0 flex-1 text-start">
+      <button onClick={primary} className="min-w-0 flex-1 text-start">
         <p className="truncate text-[14px] font-extrabold">{meta.title}</p>
         <p className="text-[12px] font-semibold text-muted-foreground">
           {t("common.chapter")} {meta.num}
@@ -388,9 +390,11 @@ function DoneRow({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="rounded-2xl">
-          <DropdownMenuItem onClick={onRead} className="gap-2.5 rounded-xl text-[13px] font-semibold">
-            <BookOpen className="h-4 w-4 text-primary" /> {t("common.open")}
-          </DropdownMenuItem>
+          {!failed && (
+            <DropdownMenuItem onClick={onRead} className="gap-2.5 rounded-xl text-[13px] font-semibold">
+              <BookOpen className="h-4 w-4 text-primary" /> {t("common.open")}
+            </DropdownMenuItem>
+          )}
           {failed && (
             <DropdownMenuItem onClick={() => retry(d.id)} className="gap-2.5 rounded-xl text-[13px] font-semibold">
               <RotateCcw className="h-4 w-4 text-primary" /> {t("dl.retry")}

@@ -15,7 +15,7 @@ function naturalCompare(a: string, b: string): number {
 export interface UnsupportedFile {
   name: string;
   /** stable reason code — screens map it to imp.reason.* i18n keys */
-  reason: "cbr" | "7z" | "encrypted" | "noImages" | "corrupt" | "format";
+  reason: "cbr" | "7z" | "encrypted" | "noImages" | "corrupt" | "format" | "toobig";
 }
 
 export const UNSUPPORTED_REASON_KEYS: Record<UnsupportedFile["reason"], TranslationKey> = {
@@ -25,12 +25,19 @@ export const UNSUPPORTED_REASON_KEYS: Record<UnsupportedFile["reason"], Translat
   noImages: "imp.reason.noImages",
   corrupt: "imp.reason.corrupt",
   format: "imp.reason.format",
+  toobig: "imp.reason.toobig",
 };
+
+/** hard memory ceiling — WebView OOM-crashes buffering bigger blobs */
+export const MAX_IMPORT_BYTES = 600 * 1_048_576; // 600 MB
+export const isTooBig = (f: File): boolean => f.size > MAX_IMPORT_BYTES;
 
 export interface ImportResult {
   created: Work[];
   unsupported: string[];
   unsupportedDetails: UnsupportedFile[];
+  /** works stored with fewer pages than the source had (quota/IDB failures) */
+  partial: string[];
 }
 
 /* --------------------------------------------------------------- *
@@ -320,6 +327,8 @@ export interface StoredPages {
   keys: string[]; // IndexedDB keys in reading order
   cover: string; // data-url thumb of the first page ("" on failure)
   sizeMb: number;
+  /** source pages that could not be stored (quota / IDB hiccup) */
+  failed: number;
 }
 
 /** legacy flat scheme used by single-chapter works: `${workId}::p{i}` */
@@ -327,36 +336,13 @@ async function storePagesFlat(id: string, images: ExtractedImages): Promise<Stor
   const keys: string[] = [];
   let cover = "";
   let sizeMb = 0;
+  let failed = 0;
   for (let i = 0; i < images.length; i++) {
     const key = `${id}::p${i}`;
     try {
       await putFile(key, images[i].blob);
     } catch {
-      continue; // storage full / IDB hiccup on this page — keep the rest
-    }
-    if (i === 0) {
-      try {
-        cover = await blobToThumbDataUrl(images[i].blob);
-      } catch {
-        cover = "";
-      }
-    }
-    sizeMb += images[i].blob.size / 1_048_576;
-    keys.push(key);
-  }
-  return { keys, cover, sizeMb };
-}
-
-/** per-chapter scheme used by multi-chapter works: `${workId}::${chapterId}::p{i}` */
-async function storePagesUnder(workId: string, chapterId: string, images: ExtractedImages): Promise<StoredPages> {
-  const keys: string[] = [];
-  let cover = "";
-  let sizeMb = 0;
-  for (let i = 0; i < images.length; i++) {
-    const key = `${workId}::${chapterId}::p${i}`;
-    try {
-      await putFile(key, images[i].blob);
-    } catch {
+      failed++; // storage full / IDB hiccup on this page — keep the rest
       continue;
     }
     if (i === 0) {
@@ -369,7 +355,34 @@ async function storePagesUnder(workId: string, chapterId: string, images: Extrac
     sizeMb += images[i].blob.size / 1_048_576;
     keys.push(key);
   }
-  return { keys, cover, sizeMb };
+  return { keys, cover, sizeMb, failed };
+}
+
+/** per-chapter scheme used by multi-chapter works: `${workId}::${chapterId}::p{i}` */
+async function storePagesUnder(workId: string, chapterId: string, images: ExtractedImages): Promise<StoredPages> {
+  const keys: string[] = [];
+  let cover = "";
+  let sizeMb = 0;
+  let failed = 0;
+  for (let i = 0; i < images.length; i++) {
+    const key = `${workId}::${chapterId}::p${i}`;
+    try {
+      await putFile(key, images[i].blob);
+    } catch {
+      failed++; // counted — callers warn about truncated chapters
+      continue;
+    }
+    if (i === 0) {
+      try {
+        cover = await blobToThumbDataUrl(images[i].blob);
+      } catch {
+        cover = "";
+      }
+    }
+    sizeMb += images[i].blob.size / 1_048_576;
+    keys.push(key);
+  }
+  return { keys, cover, sizeMb, failed };
 }
 
 function makeChapter(
@@ -450,6 +463,10 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
     const name = f.name;
     const lower = name.toLowerCase();
     try {
+      if (isTooBig(f)) {
+        markUnsupported(name, "toobig");
+        continue;
+      }
       if (IMG_RE.test(name)) {
         imageFiles.push(f);
         continue;
@@ -502,7 +519,12 @@ export async function importFiles(files: File[]): Promise<ImportResult> {
     }
   }
 
-  return { created, unsupported, unsupportedDetails };
+  // warn about works whose pages could not all be stored
+  const partial = created
+    .filter((w) => (w.chapters ?? []).some((c) => (c.pages ?? 0) > 0 && (c.localPages?.length ?? 0) < (c.pages ?? 0)))
+    .map((w) => w.title);
+
+  return { created, unsupported, unsupportedDetails, partial };
 }
 
 async function importImageBatch(files: File[], titleOverride?: string): Promise<Work | null> {
@@ -556,6 +578,7 @@ async function importArchive(
   f: File,
   opts?: { title?: string; meta?: WorkSourceMeta }
 ): Promise<ArchiveImport> {
+  if (isTooBig(f)) return { reason: "toobig" };
   const res = await extractArchiveImages(f);
   if (!res.ok) return { reason: res.reason };
 
@@ -614,6 +637,8 @@ export interface AddToWorkResult {
   skipped: { name: string; reason: UnsupportedFile["reason"] }[];
   /** aggregate of THIS batch — callers merge it into the work's sourceMeta */
   batchMeta: WorkSourceMeta;
+  /** chapters stored with missing pages (quota / IDB failures) */
+  partial: string[];
 }
 
 /** append imported files as new chapters of an existing work.
@@ -627,6 +652,7 @@ export async function importFilesToWork(
   const added: Chapter[] = [];
   const created: Work[] = [];
   const skipped: { name: string; reason: UnsupportedFile["reason"] }[] = [];
+  const partial: string[] = [];
   const imageFiles: File[] = [];
   let next = startNumber;
 
@@ -641,6 +667,7 @@ export async function importFilesToWork(
       );
       if (stored.keys.length > 0) {
         added.push(makeChapter(workId, next, "Pages", stored));
+        if (stored.failed > 0) partial.push(...sorted.map((f) => f.name));
         next++;
       } else {
         skipped.push({ name: sorted[0].name, reason: "corrupt" });
@@ -655,6 +682,10 @@ export async function importFilesToWork(
     const name = f.name;
     const lower = name.toLowerCase();
     try {
+      if (isTooBig(f)) {
+        skipped.push({ name, reason: "toobig" });
+        continue;
+      }
       if (IMG_RE.test(name)) {
         imageFiles.push(f);
         continue;
@@ -672,6 +703,7 @@ export async function importFilesToWork(
           continue;
         }
         added.push(makeChapter(workId, next, stripExt(name), stored));
+        if (stored.failed > 0) partial.push(name);
         next++;
         continue;
       }
@@ -699,7 +731,7 @@ export async function importFilesToWork(
   }
   await flushImages();
 
-  return { added, created, skipped, batchMeta: sourceMetaOf(files) };
+  return { added, created, skipped, batchMeta: sourceMetaOf(files), partial };
 }
 
 /* --------------------------------------------------------------- *
@@ -831,6 +863,8 @@ export interface FolderCommitResult {
   /** items the user chose to import as separate works */
   works: Work[];
   reason?: UnsupportedFile["reason"];
+  /** items whose pages could not all be stored (quota / IDB failures) */
+  partial: string[];
 }
 
 /** materialize a reviewed folder plan: "chapter" items fold into the main work
@@ -855,6 +889,7 @@ export async function importFolderCommit(
   const id = "w-f-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
   const chapters: Chapter[] = [];
   const works: Work[] = [];
+  const partial: string[] = [];
   let cover = "";
   const chapterFiles: File[] = [];
   // real folder picks carry relative paths — plain multi-file picks don't
@@ -908,6 +943,7 @@ export async function importFolderCommit(
     if (!cover) cover = stored.cover;
     chapterFiles.push(...it.files);
     chapters.push(makeChapter(id, number, itemTitle, stored));
+    if (stored.failed > 0) partial.push(itemTitle);
   }
 
   for (const it of workItems) {
@@ -939,8 +975,8 @@ export async function importFolderCommit(
   }
 
   if (chapters.length === 0) {
-    if (works.length > 0) return { works };
-    return { works, reason: "noImages" };
+    if (works.length > 0) return { works, partial };
+    return { works, reason: "noImages", partial };
   }
 
   // a folder made purely of PDFs is a document work (LTR paged), not manga
@@ -971,6 +1007,7 @@ export async function importFolderCommit(
       sourceMeta: sourceMetaOf(chapterFiles, fromFolder ? preview.rootName : undefined),
     },
     works,
+    partial,
   };
 }
 
@@ -981,6 +1018,8 @@ export interface FilesAsWorkResult {
       here as honest demo-reader works */
   separate: Work[];
   skipped: { name: string; reason: UnsupportedFile["reason"] }[];
+  /** items whose pages could not all be stored (quota / IDB failures) */
+  partial: string[];
 }
 
 /** "Import files → NEW work" destination: every archive and every PDF becomes
@@ -993,10 +1032,15 @@ export async function importFilesAsWork(files: File[], title?: string): Promise<
   const pdfs: File[] = [];
   const epubs: File[] = [];
   const skipped: FilesAsWorkResult["skipped"] = [];
+  const partial: string[] = [];
 
   for (const f of files) {
     const base = f.name;
     try {
+      if (isTooBig(f)) {
+        skipped.push({ name: base, reason: "toobig" });
+        continue;
+      }
       if (IMG_RE.test(base)) {
         images.push(f);
         continue;
@@ -1037,6 +1081,7 @@ export async function importFilesAsWork(files: File[], title?: string): Promise<
         const r = await importFolderCommit(pdfPreview, title?.trim() || pdfPreview.rootName);
         folded = r.work;
         separate.push(...r.works);
+        partial.push(...r.partial);
         if (folded) {
           folded.tags = ["Local", "Files"];
           const n = folded.chapters.length;
@@ -1047,11 +1092,11 @@ export async function importFilesAsWork(files: File[], title?: string): Promise<
     for (const f of epubs) {
       separate.push((await importEpub(f)) ?? makeMetaWork(f, "EPUB"));
     }
-    return { work: folded, separate, skipped };
+    return { work: folded, separate, skipped, partial };
   }
 
   const preview = buildFolderPreview([...images, ...archives, ...pdfs, ...epubs]);
-  if (!preview) return { separate: [], skipped };
+  if (!preview) return { separate: [], skipped, partial };
   const res = await importFolderCommit(preview, title?.trim() || preview.rootName);
   if (res.work) {
     // plain file imports read as "files", not "folder" (tags + description)
@@ -1059,11 +1104,13 @@ export async function importFilesAsWork(files: File[], title?: string): Promise<
     const n = res.work.chapters.length;
     res.work.description = `Imported files · ${n} chapter${n === 1 ? "" : "s"} · fully readable offline`;
   }
-  return { work: res.work, separate: res.works, skipped };
+  partial.push(...res.partial);
+  return { work: res.work, separate: res.works, skipped, partial };
 }
 
 /** Parse a real .pdf into a single-chapter work with canvas-rendered pages (FMT-003). */
 export async function importPdf(f: File, meta?: WorkSourceMeta): Promise<Work | null> {
+  if (isTooBig(f)) return null; // >600 MB — readPdfMeta buffers the whole file
   try {
     const { readPdfMeta } = await import("./pdf-engine");
     const m = await readPdfMeta(f);
@@ -1209,6 +1256,7 @@ function resolvePath(baseDir: string, href: string): string {
 
 /** Parse a real .epub (ZIP of XHTML) into readable chapters (FMT-002). */
 export async function importEpub(f: File, meta?: WorkSourceMeta): Promise<Work | null> {
+  if (isTooBig(f)) return null; // >600 MB — the whole archive is buffered
   try {
     const buf = new Uint8Array(await f.arrayBuffer());
     const entries = unzipSync(buf);
@@ -1369,7 +1417,8 @@ export async function importEpub(f: File, meta?: WorkSourceMeta): Promise<Work |
 
 function makeMetaWork(f: File, type: "PDF" | "EPUB"): Work {
   const id = "w-imp-" + Date.now().toString(36) + type.toLowerCase();
-  const pages = 24 + Math.floor(Math.random() * 200);
+  // deterministic demo size — the old random page count fabricated library data
+  const pages = 12;
   return {
     id,
     title: stripExt(f.name),

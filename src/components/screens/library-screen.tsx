@@ -249,7 +249,7 @@ export function LibraryScreen() {
     if (!folderPreview || folderBusy) return;
     setFolderBusy(true);
     try {
-      const { work, works, reason } = await importFolderCommit(folderPreview, folderTitle, {
+      const { work, works, reason, partial } = await importFolderCommit(folderPreview, folderTitle, {
         treatments: itemTreatments,
         titles: itemTitles,
       });
@@ -258,6 +258,13 @@ export function LibraryScreen() {
       for (const w of works) st.addWork(w);
       if (work || works.length > 0) {
         toast({ title: t("imp.added", { n: (work ? 1 : 0) + works.length }), description: [work?.title, ...works.map((w) => w.title)].filter(Boolean).join(", ").slice(0, 90) });
+        // honest warning: some chapters lost pages to storage pressure
+        if (partial.length) {
+          toast({
+            title: t("imp.partialPages"),
+            description: t("imp.partialChapters", { names: partial.slice(0, 3).join(", ") }),
+          });
+        }
         // LIB-009: flag possible duplicates right after import
         const groups = findDuplicateGroups(st.works);
         const freshIds = [work?.id, ...works.map((w) => w.id)].filter(Boolean) as string[];
