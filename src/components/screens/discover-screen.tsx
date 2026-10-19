@@ -5,7 +5,7 @@ import Image from "next/image";
 import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe } from "lucide-react";
 import { SectionHeader, WorkCover } from "@/components/shared";
 import { MangaDexCard, FreeCatalogList } from "@/components/sources/free-catalogs";
-import { useApp, useNav, continueReading } from "@/lib/store";
+import { useApp, useNav, continueReading, chapterProgressFraction } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import type { Chapter, Work } from "@/lib/types";
@@ -91,7 +91,9 @@ export function DiscoverScreen() {
         work,
         chapterId: cr.chapter.id,
         page: cr.page,
-        pct: Math.min(99, Math.max(1, Math.round((cr.chapter.lastPage ?? 0) * 100))),
+        // dual lastPage interpretation (ratio now / absolute legacy) — same
+        // normalization as workProgress(); legacy records showed a fake 99%
+        pct: Math.min(99, Math.max(1, Math.round(chapterProgressFraction(cr.chapter) * 100))),
       }))
       .slice(0, 10);
   }, [visibleWorks]);

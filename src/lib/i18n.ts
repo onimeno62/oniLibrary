@@ -1694,6 +1694,10 @@ const fa: Record<TranslationKey, string> = {
 
 const dicts: Record<Lang, Record<TranslationKey, string>> = { en, fa };
 
+/** exported for the regression suite (tests/i18n-parity.test.ts) — lets tests
+    enumerate keys and prove en/fa completeness at runtime, not just at tsc */
+export const dictionaries = dicts;
+
 export function translate(lang: Lang, key: TranslationKey, vars?: Record<string, string | number>): string {
   let s = dicts[lang]?.[key] ?? dicts.en[key] ?? key;
   if (vars) {

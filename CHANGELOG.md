@@ -3,11 +3,11 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
-## [1.3.1] — 2026-10-17 (branch `fix/security-remediation` — not yet released)
+## [1.3.1] — 2026-10-19
 
 Security & remediation round. Baseline was 1.3.0; everything below is verified
 in `docs/ENGINEERING_REMEDIATION_PLAN.md` and `docs/SECURITY_AND_QA_CHECKLIST.md`.
-Regression suite: `bun run test` — 28 tests, all passing.
+Regression suite: `bun run test` — 48 tests, all passing.
 
 ### Security (WebView)
 - **Navigation lock-down** — the shell WebView no longer follows links off the
@@ -68,6 +68,26 @@ Regression suite: `bun run test` — 28 tests, all passing.
 - `bun run lint` is clean again (third-party minified bundles and build
   tooling excluded from eslint scope); `tsc --noEmit` clean; the APK asset
   verifier degrades gracefully without an Android SDK.
+
+### Fixed (release audit round)
+- **Library progress bars were wrong for legacy absolute page records** —
+  the current reader stores `lastPage` as a 0..1 ratio (page/pages), but
+  v1.0.x-era records store absolute page indices; `workProgress()` assumed
+  a ratio, so a work whose current chapter carried `lastPage: 10` (absolute)
+  showed ~100% instead of ~38%. It now normalizes through the same dual
+  interpretation (ratio ≤ 1 / absolute page > 1) as the reader restore
+  (`chapterProgressFraction()`, shared with the Discover "Continue reading"
+  cards, which showed a clamped fake 99% for the same records).
+  Caught by the new regression suite.
+- **The regression suite is actually in the repo now** — commit b6e2005
+  claimed "28 tests" but `.gitignore` contained `/tests/`, so the test files
+  never got committed. `/tests/` is un-ignored; the suite is rebuilt and
+  extended to 48 tests (vault crypto, backup restore validation, credential
+  stripping, orphan purge, progress math, archive sniffing, folder
+  numbering, i18n en/fa runtime parity).
+- **CI quality gate added** (`.github/workflows/ci.yml`): eslint +
+  `tsc --noEmit` + `bun test` on every push/PR — the follow-up the QA
+  checklist asked for; APK builds stay in the manual `apk.yml`.
 
 ### Notes
 - Version → 1.3.1 (versionCode 11). Same signing key as 1.3.0 — installs

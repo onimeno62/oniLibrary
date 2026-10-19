@@ -7,7 +7,7 @@
 A modern, fully-offline reader for **manga · comics · webtoons · PDFs · e-books** —
 shipped as an Android app (WebView shell) and an installable PWA built with Next.js.
 
-![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-coral) ![Version](https://img.shields.io/badge/version-1.1.1-E8442F) ![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-coral) ![Version](https://img.shields.io/badge/version-1.3.1-E8442F) ![License](https://img.shields.io/badge/license-MIT-green) ![CI](https://github.com/onimeno62/oniLibrary/actions/workflows/ci.yml/badge.svg)
 
 <img src="docs/design/app-showcase.png" alt="oniLibrary app showcase" width="32%"/> <img src="docs/design/reader-mockup.png" alt="oniLibrary reader mockup" width="32%"/> <img src="docs/design/discover-downloads-mockup.png" alt="oniLibrary discover mockup" width="32%"/>
 
@@ -40,7 +40,7 @@ shipped as an Android app (WebView shell) and an installable PWA built with Next
 
 1. Grab the latest APK from **[Releases](https://github.com/onimeno62/oniLibrary/releases)** — or from [`download/`](download) in this repo.
 2. On your phone, allow *Install unknown apps* for your browser/file manager (Android will ask once).
-3. Install **`oniLibrary-v1.1.1.apk`** (minSdk 24 → Android 7.0+, target 34).
+3. Install **`oniLibrary-v1.3.1.apk`** (minSdk 24 → Android 7.0+, target 34).
 4. Done — no permissions requested beyond network (used only for optional online sources).
 
 > Upgrades install in place: releases are signed with the same key, versionCode always increases.
@@ -51,10 +51,15 @@ shipped as an Android app (WebView shell) and an installable PWA built with Next
 bun install          # or npm/pnpm install
 bun run dev          # http://localhost:3000
 bun run lint         # eslint
+bunx tsc --noEmit    # typecheck
+bun run test         # regression suite (tests/ — vault crypto, restore
+                     # semantics, progress math, import sniffing, i18n parity)
 ```
 
 The same UI runs as a PWA in any browser; the Android app is a thin native shell
 (`MainActivity.java`) around a static export of it.
+Every push to `main` runs the same checks in CI
+(`.github/workflows/ci.yml`); APK builds live in the manual `apk.yml` workflow.
 
 ## 📦 Build the APK yourself
 
@@ -89,13 +94,16 @@ A **GitHub Actions workflow** (`.github/workflows/apk.yml`, manual trigger) buil
 - [Product Requirements (PRD v2)](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Building & signing](docs/BUILDING.md)
+- [Engineering remediation plan](docs/ENGINEERING_REMEDIATION_PLAN.md)
+- [Security & QA checklist](docs/SECURITY_AND_QA_CHECKLIST.md)
 - [Changelog](CHANGELOG.md)
 
 ## 🧭 Roadmap ideas
 
-- Online catalogue sources (pluggable, PRD §5)
-- Cloud backup / restore of `.onibackup` archives
-- OPDS browsing, per-chapter preloading
+- ~~Online catalogue sources~~ **done in v1.3.0** (MangaDex, Gutenberg, Standard Ebooks + OPDS servers)
+- Biometric (native) Vault unlock on Android
+- Production signing secret provisioning (REL-02 — currently debug-signed builds)
+- Cloud sync of `.onibackup` archives
 - Tablet / two-page landscape layout
 
 ## 📄 License

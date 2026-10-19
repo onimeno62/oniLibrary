@@ -132,10 +132,10 @@ Use this checklist before merging high-risk changes and before distributing a re
 - [x] App version, manifest version, package metadata, APK filename, README, and release notes agree. *(1.3.1 / versionCode 11 across manifest, build script, CHANGELOG)*
 - [ ] Production signing uses protected release secrets, not a committed debug key or hardcoded password. **OPEN P0 — debug keystore committed; env-based override shipped; release secret provisioning pending (REL-02)**
 - [ ] APK SHA-256 is recorded and matches the distributed artifact. *(pending APK build)*
-- [ ] CI failure stops release; skipped checks are recorded as NOT RUN. *(no CI workflow exists in-repo yet — candidate follow-up)*
+- [ ] CI failure stops release; skipped checks are recorded as NOT RUN. *(ci.yml gate added Round 2 — enforcement-on-release still manual)*
 - [x] README and download links point to the correct repository and release artifact. *(repo link fixed after the `oniLibrary_zai_2` → `oniLibrary` rename)*
 
-**Evidence / issues:** Round 1: BLD-01/BLD-02/REL-01 implemented; REL-02 partially (env overrides + labeling). No CI workflow file yet — recommend adding a GitHub Actions gate (lint/tsc/test/verify) as a follow-up.*
+**Evidence / issues:** Round 1: BLD-01/BLD-02/REL-01 implemented; REL-02 partially (env overrides + labeling). Round 2 (release audit): the recommended gate now exists — `.github/workflows/ci.yml` runs eslint + `tsc --noEmit` + `bun test` (48 tests) on every push/PR; APK builds stay in manual `apk.yml`. REL-02 provisioning still open.*
 
 ## 10. Minimum end-to-end acceptance run
 

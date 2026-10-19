@@ -1007,11 +1007,21 @@ export function matchesRule(w: Work, rule: SmartRule): boolean {
   return true;
 }
 
+/** chapter-level read fraction 0..1 with the dual lastPage interpretation
+    (ratio ≤ 1 = current reader format, absolute page > 1 = legacy records);
+    shared by workProgress() and the Discover continue-reading cards */
+export function chapterProgressFraction(c: Chapter): number {
+  if (typeof c.lastPage !== "number") return 0;
+  return c.lastPage > 1
+    ? Math.min(1, c.lastPage / Math.max(1, c.pages ?? 20))
+    : Math.max(0, c.lastPage);
+}
+
 export function workProgress(w: Work): number {
   if (w.chapters.length === 0) return 0;
   const read = w.chapters.filter((c) => c.isRead).length;
-  const current = w.chapters.find((c) => !c.isRead && c.lastPage);
-  const frac = current ? (current.lastPage ?? 0) : 0;
+  const current = w.chapters.find((c) => !c.isRead && typeof c.lastPage === "number");
+  const frac = current ? chapterProgressFraction(current) : 0;
   return Math.min(100, Math.round(((read + frac) / w.chapters.length) * 100));
 }
 

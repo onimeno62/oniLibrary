@@ -60,7 +60,6 @@ server.log
 /tool-results/
 /upload/
 /examples/
-/tests/
 /mini-services/
 /db/
 /android/app/build/
