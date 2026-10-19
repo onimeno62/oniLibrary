@@ -7,7 +7,7 @@
 A modern, fully-offline reader for **manga · comics · webtoons · PDFs · e-books** —
 shipped as an Android app (WebView shell) and an installable PWA built with Next.js.
 
-![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-coral) ![Version](https://img.shields.io/badge/version-1.3.1-E8442F) ![License](https://img.shields.io/badge/license-MIT-green) ![CI](https://github.com/onimeno62/oniLibrary/actions/workflows/ci.yml/badge.svg)
+![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Web-coral) ![Version](https://img.shields.io/badge/version-1.4.0-E8442F) ![License](https://img.shields.io/badge/license-MIT-green) ![CI](https://github.com/onimeno62/oniLibrary/actions/workflows/ci.yml/badge.svg)
 
 <img src="docs/design/app-showcase.png" alt="oniLibrary app showcase" width="32%"/> <img src="docs/design/reader-mockup.png" alt="oniLibrary reader mockup" width="32%"/> <img src="docs/design/discover-downloads-mockup.png" alt="oniLibrary discover mockup" width="32%"/>
 
@@ -40,7 +40,7 @@ shipped as an Android app (WebView shell) and an installable PWA built with Next
 
 1. Grab the latest APK from **[Releases](https://github.com/onimeno62/oniLibrary/releases)** — or from [`download/`](download) in this repo.
 2. On your phone, allow *Install unknown apps* for your browser/file manager (Android will ask once).
-3. Install **`oniLibrary-v1.3.1.apk`** (minSdk 24 → Android 7.0+, target 34).
+3. Install **`oniLibrary-v1.4.0.apk`** (minSdk 24 → Android 7.0+, target 34).
 4. Done — no permissions requested beyond network (used only for optional online sources).
 
 > Upgrades install in place: releases are signed with the same key, versionCode always increases.

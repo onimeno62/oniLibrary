@@ -12,7 +12,6 @@ import { useApp, useNav, workProgress, currentChapter } from "@/lib/store";
  *   double-count minutes and skew the daily goal)
  */
 export function useClientEngine(readerOpen: boolean) {
-  const tickDownloads = useApp((s) => s.tickDownloads);
   const vaultAutoLock = useApp((s) => s.settings.vaultAutoLock);
   const vaultUnlocked = useApp((s) => s.vaultUnlocked);
   const setVaultUnlocked = useApp((s) => s.setVaultUnlocked);
@@ -20,11 +19,9 @@ export function useClientEngine(readerOpen: boolean) {
   const autoUpdateCheck = useApp((s) => s.settings.autoUpdateCheck);
   const updateChecking = useApp((s) => s.updateCheck.checking);
 
-  // download tick
-  useEffect(() => {
-    const id = setInterval(() => tickDownloads(), 1000);
-    return () => clearInterval(id);
-  }, [tickDownloads]);
+  // v1.4.0: the simulated download ticker is gone — downloads are real
+  // background jobs now (src/lib/bg-downloads.ts) and the Downloads screen
+  // shows their true progress.
 
   // auto library update check (UPD-002/004) — every 15 min while app is open
   useEffect(() => {

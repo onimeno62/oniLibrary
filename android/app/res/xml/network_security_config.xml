@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Network security config (v1.4.0).
+
+  Why: several free-source hosts chain to roots that are missing from the
+  system trust store of many Android releases — e.g. gutenberg.org now
+  chains to "SSL.com TLS RSA Root CA 2022" (not present before recent
+  Android updates), and parts of the Let's Encrypt ecosystem moved to the
+  new ISRG roots. On devices without those roots the native bridge fetch
+  and WebView image loads fail TLS validation and the app shows a generic
+  "connection failed".
+
+  Adding the public roots as extra trust anchors (system store stays in
+  place) fixes OPDS/MangaDex TLS on those devices without weakening
+  anything: http is still banned manifest-wide, and user-added CAs remain
+  untrusted.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/isrg_root_x1" />
+            <certificates src="@raw/isrg_root_x2" />
+            <certificates src="@raw/sslcom_tls_rsa_root_2022" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

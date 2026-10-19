@@ -27,6 +27,7 @@ import {
   Flame,
   Highlighter,
   ImageOff,
+  WifiOff,
   Keyboard,
   List,
   ListTree,
@@ -405,6 +406,62 @@ function SheetRow({ label, children }: { label: string; children: React.ReactNod
 }
 
 /* ------------------------------------------------------------------ */
+/* streamed page (v1.4.0) — read not-downloaded chapters directly      */
+/* from the source (MangaDex at-home URLs resolved once per chapter)   */
+/* ------------------------------------------------------------------ */
+
+function StreamPageImage({
+  url,
+  ready,
+  failed,
+  offline,
+  className,
+}: {
+  url?: string;
+  ready: boolean;
+  failed: boolean;
+  offline: boolean;
+  className?: string;
+}) {
+  const { t } = useT();
+  const [broken, setBroken] = useState(false);
+  // render-phase reset when the url changes (no setState-in-effect)
+  const [lastUrl, setLastUrl] = useState(url);
+  if (lastUrl !== url) {
+    setLastUrl(url);
+    setBroken(false);
+  }
+
+  if (offline) {
+    return (
+      <div className={cn("flex w-full flex-col items-center justify-center gap-2 bg-[#151312] p-8 text-center", className)}>
+        <WifiOff className="h-8 w-8 text-white/25" />
+        <p className="text-[13px] font-bold text-white/70">{t("rdr.streamOfflineTitle")}</p>
+        <p className="text-[11px] font-semibold text-white/60">{t("rdr.streamOfflineHint")}</p>
+      </div>
+    );
+  }
+  if (failed || broken) {
+    return (
+      <div className={cn("flex w-full flex-col items-center justify-center gap-2 bg-[#151312] p-8 text-center", className)}>
+        <ImageOff className="h-8 w-8 text-white/25" />
+        <p className="text-[13px] font-bold text-white/70">{t("rdr.streamFailedTitle")}</p>
+        <p className="text-[11px] font-semibold text-white/60">{t("rdr.streamFailedHint")}</p>
+      </div>
+    );
+  }
+  if (!ready || !url) {
+    return (
+      <div className={cn("flex w-full items-center justify-center gap-2 bg-[#151312]", className)}>
+        <Loader2 className="h-6 w-6 animate-spin text-white/55" />
+        <span className="text-[11px] font-bold text-white/60">{t("rdr.streamingBadge")}</span>
+      </div>
+    );
+  }
+  return <img src={url} alt="" draggable={false} onError={() => setBroken(true)} className={className} />;
+}
+
+/* ------------------------------------------------------------------ */
 /* local page (IndexedDB object URLs)                                  */
 /* ------------------------------------------------------------------ */
 
@@ -447,14 +504,14 @@ function LocalPageImage({ storageKey, className }: { storageKey: string; classNa
       <div className={cn("flex w-full flex-col items-center justify-center gap-2 bg-[#151312] p-6 text-center", className)}>
         <ImageOff className="h-8 w-8 text-white/25" />
         <p className="text-[13px] font-bold text-white/70">{t("rdr.localMissing")}</p>
-        <p className="text-[11px] font-semibold text-white/40">{t("rdr.localMissingHint")}</p>
+        <p className="text-[11px] font-semibold text-white/60">{t("rdr.localMissingHint")}</p>
       </div>
     );
   }
   if (!url) {
     return (
       <div className={cn("flex w-full items-center justify-center bg-[#151312]", className)}>
-        <Loader2 className="h-7 w-7 animate-spin text-white/35" />
+        <Loader2 className="h-7 w-7 animate-spin text-white/55" />
       </div>
     );
   }
@@ -617,6 +674,44 @@ export function ReaderScreen({
   const isLocal = Boolean(work?.isLocal && (work.localPages?.length || chapter?.localPages?.length));
   /** per-chapter page keys win; legacy single-chapter imports fall back to the work-level list */
   const chapterPageKeys = chapter?.localPages?.length ? chapter.localPages : work?.localPages;
+
+  /* ----- source streaming (v1.4.0): read not-downloaded chapters straight
+     from the source. Page URLs are resolved once per chapter change. ----- */
+  const offlineMode = useApp((s) => s.settings.offlineMode);
+  const isMdSource = work?.sourceRef?.sourceId === "mangadex";
+  const streamChapterId = chapter?.sourceChapterId ?? null;
+  const needsStream = !isLocal && isMdSource && !!streamChapterId;
+  const streamOffline = offlineMode || (typeof navigator !== "undefined" && navigator.onLine === false);
+  const [streamState, setStreamState] = useState<{
+    chId: string | null;
+    urls: string[] | null;
+    failed: boolean;
+  }>({ chId: null, urls: null, failed: false });
+  // render-phase reset when the chapter changes (no setState-in-effect)
+  if (streamState.chId !== streamChapterId) {
+    setStreamState({ chId: streamChapterId, urls: null, failed: false });
+  }
+  const streamUrls = streamState.chId === streamChapterId ? streamState.urls : null;
+  const streamFailed = streamState.chId === streamChapterId ? streamState.failed : false;
+
+  useEffect(() => {
+    if (!needsStream || !streamChapterId) return;
+    if (streamOffline) return; // honest offline panel instead of a spinner
+    let alive = true;
+    (async () => {
+      try {
+        const { mdPageUrls } = await import("@/lib/mangadex");
+        const urls = await mdPageUrls(streamChapterId);
+        if (!alive) return;
+        setStreamState({ chId: streamChapterId, urls: urls.length ? urls : null, failed: urls.length === 0 });
+      } catch {
+        if (alive) setStreamState({ chId: streamChapterId, urls: null, failed: true });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [streamChapterId, needsStream, streamOffline]);
 
   const chaptersAsc = useMemo<ChapterLite[]>(
     () =>
@@ -1295,6 +1390,7 @@ export function ReaderScreen({
 
   /* ----- tap zones: center toggles chrome, sides flip pages (UX-005) ----- */
   const handleZone = (zone: "start" | "center" | "end") => {
+    if (swipeSuppressRef.current) return; // a swipe must not also register as a tap
     const now = Date.now();
     if (now - lastTapRef.current < 320) {
       // double tap → zoom toggle (RDR-004)
@@ -1319,6 +1415,46 @@ export function ReaderScreen({
       if (forward) next();
       else prev();
     }, 280);
+  };
+
+  /* ----- swipe gestures (v1.4.0): drag horizontally to flip pages.
+     Matches the tap-zone direction semantics: LTR swipes left→next,
+     RTL (manga) swipes right→next. Vertical drift cancels (scroll intent). */
+  const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const swipeSuppressRef = useRef(false);
+
+  const onReaderTouchStart = (e: React.TouchEvent) => {
+    const t0 = e.touches[0];
+    swipeStartRef.current = { x: t0.clientX, y: t0.clientY, t: Date.now() };
+  };
+  const onReaderTouchMove = (e: React.TouchEvent) => {
+    const s = swipeStartRef.current;
+    if (!s) return;
+    const t0 = e.touches[0];
+    // vertical intent — give up on the horizontal swipe
+    if (Math.abs(t0.clientY - s.y) > Math.abs(t0.clientX - s.x) + 12) {
+      swipeStartRef.current = null;
+    }
+  };
+  const onReaderTouchEnd = (e: React.TouchEvent) => {
+    const s = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!s || panBlock || vertical || scrollable) return;
+    const t0 = e.changedTouches[0];
+    const dx = t0.clientX - s.x;
+    const dy = t0.clientY - s.y;
+    const dt = Date.now() - s.t;
+    if (dt > 700 || Math.abs(dx) < 64 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+    swipeSuppressRef.current = true;
+    window.setTimeout(() => {
+      swipeSuppressRef.current = false;
+    }, 400);
+    if (pendingNavRef.current) {
+      window.clearTimeout(pendingNavRef.current);
+      pendingNavRef.current = 0;
+    }
+    if (rtl ? dx > 0 : dx < 0) next();
+    else prev();
   };
 
   /* ----- bookmarks (RDR-013) ----- */
@@ -1439,6 +1575,17 @@ export function ReaderScreen({
     }
     if (isLocal && chapterPageKeys?.[i]) {
       return <LocalPageImage storageKey={chapterPageKeys[i]} className={cls} />;
+    }
+    if (needsStream) {
+      return (
+        <StreamPageImage
+          url={streamUrls?.[i]}
+          ready={streamUrls !== null}
+          failed={streamFailed}
+          offline={streamOffline}
+          className={cls}
+        />
+      );
     }
     return (
       <MangaPage
@@ -1606,9 +1753,14 @@ export function ReaderScreen({
             onClick={() => setControlsVisible((v) => !v)}
           />
         )}
-        {/* tap zones (none in webtoon; sides disabled while panning) */}
+        {/* tap zones (none in webtoon; sides disabled while panning) + swipe gestures */}
         {!vertical && !scrollable && (
-          <div className="absolute inset-0 z-10 flex">
+          <div
+            className="absolute inset-0 z-10 flex"
+            onTouchStart={onReaderTouchStart}
+            onTouchMove={onReaderTouchMove}
+            onTouchEnd={onReaderTouchEnd}
+          >
             <button
               type="button"
               tabIndex={-1}
@@ -1657,6 +1809,21 @@ export function ReaderScreen({
         >
           <Download className="h-3 w-3" />
           {t("rdr.offlineReading")}
+        </div>
+      )}
+      {/* ============ streaming badge (v1.4.0) ============ */}
+      {needsStream && (
+        <div
+          className={cn(
+            "absolute right-3 top-14 z-30 flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-1.5 text-[10px] font-bold text-white/85 backdrop-blur transition-opacity duration-300",
+            controlsVisible ? "opacity-100" : "pointer-events-none opacity-0"
+          )}
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+          </span>
+          {t("rdr.streamingBadge")}
         </div>
       )}
 

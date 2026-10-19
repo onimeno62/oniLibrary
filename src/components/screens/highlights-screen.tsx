@@ -260,7 +260,7 @@ export function HighlightsScreen({ workId }: { workId?: string }) {
   const editingHl = editing ? highlights.find((h) => h.id === editing) : undefined;
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       <OverlayHeader
         title={t("nhl.title")}
         right={

@@ -236,7 +236,7 @@ export function StatisticsScreen() {
   const C = 2 * Math.PI * R;
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       <OverlayHeader title={t("stat.title")} />
 
       {/* history entry point (TRK-002) */}

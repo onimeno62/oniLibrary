@@ -69,7 +69,7 @@ export function CatalogScreen({ serverId }: { serverId: string }) {
   };
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       <OverlayHeader
         right={
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-coral-soft text-primary">

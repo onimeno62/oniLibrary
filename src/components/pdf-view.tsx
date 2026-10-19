@@ -213,7 +213,7 @@ function PdfHlPopup({
             maxLength={280}
             placeholder={t("hl.notePlaceholder")}
             aria-label={t("hl.note")}
-            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] font-semibold leading-snug text-foreground outline-none placeholder:text-white/35 focus:border-primary/50"
+            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] font-semibold leading-snug text-foreground outline-none placeholder:text-white/55 focus:border-primary/50"
           />
           {state.mode === "edit" && (
             <div className="mt-1.5 flex justify-end">
@@ -635,20 +635,20 @@ export function PdfCanvas({
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#151312]">
           {state === "loading" ? (
             <>
-              <Loader2 className="h-7 w-7 animate-spin text-white/35" />
-              <p className="text-[11px] font-bold text-white/40">{t("rdr.pdfRendering")}</p>
+              <Loader2 className="h-7 w-7 animate-spin text-white/55" />
+              <p className="text-[11px] font-bold text-white/60">{t("rdr.pdfRendering")}</p>
             </>
           ) : state === "webview" ? (
             <>
               <FileText className="h-8 w-8 text-white/25" />
               <p className="text-[13px] font-bold text-white/70">{t("rdr.pdfWebview")}</p>
-              <p className="text-[11px] font-semibold text-white/40">{t("rdr.pdfWebviewHint")}</p>
+              <p className="text-[11px] font-semibold text-white/60">{t("rdr.pdfWebviewHint")}</p>
             </>
           ) : (
             <>
               <FileText className="h-8 w-8 text-white/25" />
               <p className="text-[13px] font-bold text-white/70">{t("rdr.pdfMissing")}</p>
-              <p className="text-[11px] font-semibold text-white/40">{t("rdr.localMissingHint")}</p>
+              <p className="text-[11px] font-semibold text-white/60">{t("rdr.localMissingHint")}</p>
             </>
           )}
         </div>

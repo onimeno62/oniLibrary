@@ -22,6 +22,7 @@ import { STORAGE } from "@/lib/seed";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { cancelBgDownload, enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,10 +44,20 @@ export function DownloadsScreen() {
   const [filter, setFilter] = useState<Filter>("ALL");
 
   const byId = useMemo(() => {
-    const m = new Map<string, { title: string; cover: string; color?: string; num: number }>();
+    const m = new Map<string, { title: string; cover: string; color?: string; num: number; workId: string; streamable: boolean; pages: number; publishedAt: string; sourceChapterId?: string }>();
     for (const w of works) {
       for (const c of w.chapters) {
-        m.set(c.id, { title: w.title, cover: w.cover, color: w.coverColor, num: c.number });
+        m.set(c.id, {
+          title: w.title,
+          cover: w.cover,
+          color: w.coverColor,
+          num: c.number,
+          workId: w.id,
+          streamable: w.sourceRef?.sourceId === "mangadex" && !!c.sourceChapterId,
+          pages: c.pages,
+          publishedAt: c.releaseDate,
+          sourceChapterId: c.sourceChapterId,
+        });
       }
     }
     return m;
@@ -281,7 +292,7 @@ function ActiveRow({
   onOpen,
 }: {
   d: DownloadItem;
-  meta?: { title: string; cover: string; color?: string; num: number };
+  meta?: { title: string; cover: string; color?: string; num: number; workId: string; streamable: boolean; pages: number; publishedAt: string; sourceChapterId?: string };
   onOpen: () => void;
 }) {
   const { t, lang } = useT();
@@ -290,6 +301,13 @@ function ActiveRow({
   const cancel = useApp((s) => s.cancelDownload);
   if (!meta) return null;
   const paused = d.status === "PAUSED" || d.status === "QUEUED";
+  // v1.4.0: real background rows cannot be paused mid-page — cancelling
+  // signals the pipeline through the bg registry and removes the row
+  const isBgRow = d.id.startsWith("dlbg-");
+  const stop = () => {
+    if (isBgRow) cancelBgDownload(d.id);
+    cancel(d.id);
+  };
   return (
     <div className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-2.5 shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)]">
       <button onClick={onOpen}>
@@ -312,15 +330,25 @@ function ActiveRow({
           )}
         </p>
       </div>
+      {isBgRow ? (
+        <button
+          onClick={stop}
+          aria-label={t("dl.cancelDl")}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      ) : (
+        <button
+          onClick={() => (paused ? resume(d.id) : pause(d.id))}
+          aria-label={paused ? t("dl.resume") : t("dl.pause")}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-primary"
+        >
+          {paused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
+        </button>
+      )}
       <button
-        onClick={() => (paused ? resume(d.id) : pause(d.id))}
-        aria-label={paused ? t("dl.resume") : t("dl.pause")}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-primary"
-      >
-        {paused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
-      </button>
-      <button
-        onClick={() => cancel(d.id)}
+        onClick={stop}
         aria-label={t("dl.cancelDl")}
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
       >
@@ -336,16 +364,35 @@ function DoneRow({
   onRead,
 }: {
   d: DownloadItem;
-  meta?: { title: string; cover: string; color?: string; num: number };
+  meta?: { title: string; cover: string; color?: string; num: number; workId: string; streamable: boolean; pages: number; publishedAt: string; sourceChapterId?: string };
   onRead: () => void;
 }) {
   const { t } = useT();
   const remove = useApp((s) => s.removeDownload);
   const retry = useApp((s) => s.retryDownload);
+  const works = useApp((s) => s.works);
   const failed = d.status === "ERROR";
   if (!meta) return null;
   // failed downloads must not "open" into the reader — the tap retries instead
-  const primary = () => (failed ? retry(d.id) : onRead());
+  const primary = () => {
+    if (!failed) return onRead();
+    // v1.4.0: source chapters retry through the REAL background pipeline;
+    // legacy demo rows keep the legacy queue
+    const w = works.find((x) => x.id === meta.workId);
+    if (meta.streamable && w) {
+      const idx = w.chapters.findIndex((c) => c.id === d.chapterId);
+      const ch = w.chapters[idx];
+      if (idx >= 0 && ch?.sourceChapterId) {
+        remove(d.id);
+        enqueueMangaDexChapterDownloads(w, [
+          { chapterIndex: idx, md: { id: ch.sourceChapterId, number: ch.number, title: "", pages: ch.pages, publishedAt: ch.releaseDate } },
+        ]);
+        toast({ title: t("dl.queued"), description: meta.title });
+        return;
+      }
+    }
+    retry(d.id);
+  };
   return (
     <div className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-2.5 shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)]">
       <button onClick={primary}>

@@ -128,7 +128,7 @@ export function ServersScreen() {
 
   if (browseFor) {
     return (
-      <div className="min-h-full px-5 pb-8">
+      <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
         <div className="flex items-center gap-2 pt-2">
           <button
             onClick={() => setBrowseFor(null)}
@@ -154,7 +154,7 @@ export function ServersScreen() {
   /* ---------------- main server list ---------------- */
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       <OverlayHeader title={t("srv.title")} subtitle={t("srv.subtitle")} />
 
       {/* info banner */}

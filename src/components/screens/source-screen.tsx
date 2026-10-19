@@ -9,8 +9,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, Search, X, Download, Check, Globe, BookOpen } from "lucide-react";
-import { OverlayHeader, EmptyState, ProgressBar, Chip } from "@/components/shared";
+import { RefreshCw, Search, X, Download, Check, Globe, BookOpen, LibraryBig } from "lucide-react";
+import { OverlayHeader, EmptyState, Chip } from "@/components/shared";
+import { MdCover } from "@/components/sources/free-catalogs";
 import { useApp, useNav } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
@@ -29,16 +30,17 @@ import {
   mdManga,
   mdChapters,
   mdChapterLabel,
-  importMangaDexWork,
+  addMangaDexToLibrary,
+  mdCoverThumbDataUrl,
   type MdManga,
   type MdChapter,
-  type MdImportProgress,
 } from "@/lib/mangadex";
+import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
 import { MANGADEX_ID } from "@/lib/builtin-sources";
 import type { Work } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
 
-/* ---------------- detail / download sheet ---------------- */
+/* ---------------- detail / add sheet ---------------- */
 
 function MdSheet({
   manga,
@@ -56,14 +58,19 @@ function MdSheet({
   const [chapters, setChapters] = useState<MdChapter[] | null>(null);
   const [chErr, setChErr] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [importing, setImporting] = useState(false);
-  const [prog, setProg] = useState<MdImportProgress | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
+  // render-phase reset when a different manga is opened (no setState-in-effect)
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  if (loadedFor !== manga.id) {
+    setLoadedFor(manga.id);
     setChapters(null);
     setChErr(false);
     setPicked(new Set());
+  }
+
+  useEffect(() => {
+    let alive = true;
     mdChapters(manga.id, 60)
       .then((list) => {
         if (!alive) return;
@@ -84,70 +91,59 @@ function MdSheet({
     });
   };
 
-  const pct = prog
-    ? Math.round(((prog.chapterDone + (prog.pageTotal > 0 ? prog.pageDone / prog.pageTotal : 0)) / prog.chapterTotal) * 100)
-    : 0;
+  const statusKey = `md.status.${manga.status}` as TranslationKey;
 
-  const runImport = async () => {
-    if (importing || !chapters) return;
+  const addToLibrary = async (downloadToo: boolean) => {
+    if (busy || !chapters) return;
     const selected = chapters.filter((c) => picked.has(c.id));
-    if (selected.length === 0) return;
-    setImporting(true);
-    setProg(null);
+    if (downloadToo && selected.length === 0) return;
+    setBusy(true);
     try {
-      const work = await importMangaDexWork(manga, selected, setProg);
+      // fast path: metadata + streamable chapter rows (no pages fetched);
+      // the cover thumbnail is patched in afterwards (never blocks the add)
+      const work = await addMangaDexToLibrary(manga, chapters);
       addWork(work);
-      toast({ title: t("md.imported"), description: work.title });
+      void mdCoverThumbDataUrl(manga.coverUrl).then((cover) => {
+        if (cover) useApp.getState().updateWork(work.id, { cover });
+      });
+      if (downloadToo) {
+        // pages flow in the background — the Downloads screen shows the
+        // real per-chapter progress; nothing blocks this dialog
+        const byId = new Map(chapters.map((c, i) => [c.id, i]));
+        const jobs = selected
+          .map((c) => ({ chapterIndex: byId.get(c.id) ?? 0, md: c }))
+          .filter((j) => work.chapters[j.chapterIndex]);
+        enqueueMangaDexChapterDownloads(work, jobs);
+        toast({ title: t("md.bgDownloading", { n: selected.length }), description: work.title });
+      } else {
+        toast({ title: t("md.added"), description: work.title });
+      }
+      setBusy(false);
       onAdded(work);
       onClose();
     } catch (e) {
+      setBusy(false);
       toast({
         title: t("md.importFailed"),
         description: (e as Error).message?.slice(0, 80),
         variant: "destructive",
       });
-    } finally {
-      setImporting(false);
-      setProg(null);
     }
   };
-
-  const statusKey = `md.status.${manga.status}` as TranslationKey;
 
   return (
     <Dialog
       open
       onOpenChange={(v) => {
-        if (!v && !importing) onClose();
+        if (!v && !busy) onClose();
       }}
     >
       <DialogContent className="max-w-[400px] rounded-3xl border-border bg-card p-0" style={{ maxWidth: 400 }}>
-        {importing ? (
-          <div className="p-6">
-            <DialogHeader>
-              <DialogTitle className="text-[16px] font-extrabold">{t("md.downloading")}</DialogTitle>
-            </DialogHeader>
-            <p className="mt-2 truncate text-[12px] font-bold text-muted-foreground" dir="ltr">
-              {prog?.chapterLabel ?? manga.title}
-            </p>
-            <ProgressBar value={pct} className="mt-3" />
-            <p className="mt-2 text-[11px] font-bold text-muted-foreground">
-              {pct}% · {t("md.pageCount", { p: (prog?.pageDone ?? 0) + (prog && prog.pageTotal > 0 ? 1 : 0), total: prog?.pageTotal ?? 0 })}
-            </p>
-            <p className="mt-3 text-[11px] font-semibold text-muted-foreground">{t("md.keepOpen")}</p>
-          </div>
-        ) : (
-          <div className="max-h-[80vh] overflow-y-auto thin-scrollbar">
+        <div className="max-h-[80vh] overflow-y-auto thin-scrollbar">
             {/* head */}
             <div className="flex gap-3 p-4 pb-3">
               <div className="h-[132px] w-[92px] shrink-0 overflow-hidden rounded-2xl bg-secondary shadow-[0_10px_22px_-12px_rgba(43,36,29,0.5)]">
-                {manga.coverUrl ? (
-                  <img src={manga.coverUrl} alt={manga.title} className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-coral-soft text-primary">
-                    <BookOpen className="h-6 w-6" />
-                  </div>
-                )}
+                <MdCover url={manga.coverUrl} title={manga.title} className="h-full w-full" />
               </div>
               <div className="min-w-0 flex-1">
                 <DialogTitle className="text-[16px] font-extrabold leading-snug">{manga.title}</DialogTitle>
@@ -246,29 +242,37 @@ function MdSheet({
               )}
             </div>
 
-            {/* actions */}
-            <div className="flex items-center gap-2.5 p-4 pt-2">
-              <button
-                onClick={onClose}
-                className="flex-1 rounded-full border border-border bg-background py-2.5 text-[13px] font-extrabold text-foreground transition-colors hover:bg-secondary"
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                onClick={() => void runImport()}
-                disabled={picked.size === 0}
-                className="flex flex-[1.4] items-center justify-center gap-2 rounded-full bg-coral-gradient py-2.5 text-[13px] font-extrabold text-white shadow-[0_10px_24px_-10px_rgba(248,105,76,0.6)] transition-transform active:scale-[0.98] disabled:opacity-50"
-              >
-                <Download className="h-4 w-4" />
-                {t("md.downloadN", { n: picked.size })}
-              </button>
+            {/* actions — add to library first (v1.4.0): the work lands in the
+                library instantly with streamable chapters; downloads are
+                optional, per-chapter, and run in the background */}
+            <div className="space-y-2 p-4 pt-2">
+              <div className="flex items-center gap-2.5">
+                <button
+                  onClick={() => void addToLibrary(false)}
+                  disabled={busy || !chapters || chapters.length === 0}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-full border border-border bg-background py-2.5 text-[13px] font-extrabold text-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+                >
+                  {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <LibraryBig className="h-4 w-4" />}
+                  {t("md.addToLibrary")}
+                </button>
+                <button
+                  onClick={() => void addToLibrary(true)}
+                  disabled={busy || picked.size === 0}
+                  className="flex flex-[1.2] items-center justify-center gap-2 rounded-full bg-coral-gradient py-2.5 text-[13px] font-extrabold text-white shadow-[0_10px_24px_-10px_rgba(248,105,76,0.6)] transition-transform active:scale-[0.98] disabled:opacity-50"
+                >
+                  {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  {t("md.addDownloadN", { n: picked.size })}
+                </button>
+              </div>
+              <p className="text-center text-[10.5px] font-semibold leading-snug text-muted-foreground">
+                {t("md.bgHint")}
+              </p>
             </div>
             {/* footer link keeps the honest source reference [SRC-003] */}
             <p className="pb-3 text-center text-[10.5px] font-semibold text-muted-foreground" dir="ltr">
               MangaDex.org · {t("md.langNote")}
             </p>
           </div>
-        )}
       </DialogContent>
     </Dialog>
   );
@@ -346,7 +350,7 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
 
   if (disabled) {
     return (
-      <div className="min-h-full px-5 pb-8">
+      <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
         <OverlayHeader title="MangaDex" />
         <EmptyState icon={<Globe className="h-6 w-6" />} title={t("md.disabled")} hint={t("md.disabledHint")} />
         <button
@@ -361,7 +365,7 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
   }
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       <OverlayHeader
         title="MangaDex"
         subtitle={t("md.subtitle")}
@@ -457,18 +461,7 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
                   )}
                   style={{ aspectRatio: "2/3" }}
                 >
-                  {m.coverUrl ? (
-                    <img
-                      src={m.coverUrl}
-                      alt={m.title}
-                      loading="lazy"
-                      className="absolute inset-0 h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-coral-soft text-primary">
-                      <BookOpen className="h-5 w-5" />
-                    </div>
-                  )}
+                  <MdCover url={m.coverUrl} title={m.title} className="absolute inset-0" />
                 </div>
                 <p className="mt-1.5 line-clamp-2 text-[11.5px] font-extrabold leading-tight">{m.title}</p>
               </button>

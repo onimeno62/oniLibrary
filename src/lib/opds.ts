@@ -19,6 +19,9 @@ import type { ServerEntry } from "./types";
 interface OniHttpBridge {
   httpGetString?: (url: string, headersJson: string) => string | null;
   fetchToCache?: (url: string) => string | null;
+  /** v1.4.0 — readable reason of the last failed native fetch (null when the
+      last fetch succeeded); surfaces real TLS/DNS/HTTP causes in toasts */
+  lastHttpError?: () => string | null;
   pendingImportInfo?: () => string | null;
   readImportChunk?: (offset: number, length: number) => string;
   clearPendingImport?: () => void;
@@ -49,9 +52,18 @@ export async function opdsFetchText(url: string, headers: Record<string, string>
       /* fall through to fetch */
     }
   }
-  const r = await fetch(url, { headers: { Accept: "application/atom+xml", ...headers } });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.text();
+  try {
+    const r = await fetch(url, { headers: { Accept: "application/atom+xml", ...headers } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.text();
+  } catch (e) {
+    // honest failure: prefer the native bridge's reason (TLS trust, DNS,
+    // HTTP status) over a bare TypeError, so "connection failed" toasts
+    // finally say WHY
+    const native = b?.lastHttpError?.();
+    const reason = native || (e instanceof Error ? e.message : String(e));
+    throw new Error(reason ? `${reason}` : "network error");
+  }
 }
 
 /** download a binary (cover / acquisition file) as a File, via cache bridge or fetch */

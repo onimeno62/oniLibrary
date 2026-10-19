@@ -30,12 +30,14 @@ import {
   RefreshCw,
   Globe,
 } from "lucide-react";
-import { WorkCover, ProgressBar } from "@/components/shared";
+import { WorkCover } from "@/components/shared";
 import { WorkMenu } from "@/components/screens/library-screen";
 import { useApp, useNav, continueReading, timeAgo, workProgress, toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
+import { mdChapterToStored } from "@/lib/mangadex";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,7 +52,7 @@ import {
 } from "@/components/ui/dialog";
 import type { Chapter, ReadingStatus, ReaderMode, ReadingDirection, FitMode, Work } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
-import { mdNewChapters, appendMangaDexChapters, mdChapterLabel, type MdChapter, type MdImportProgress } from "@/lib/mangadex";
+import { mdNewChapters, mdChapterLabel, type MdChapter } from "@/lib/mangadex";
 
 export function DetailsScreen({ workId }: { workId: string }) {
   const { t, lang, rtl } = useT();
@@ -66,12 +68,17 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [ratingOpen, setRatingOpen] = useState(false);
+  /* chapter management mode (v1.4.0): multi-select → rename / move / delete */
+  const [manageMode, setManageMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [renameChOpen, setRenameChOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   /* source update check (v1.3.0, [UPD-001]) — MangaDex works only */
   const [updChecking, setUpdChecking] = useState(false);
   const [updNew, setUpdNew] = useState<MdChapter[] | null>(null);
   const [updBusy, setUpdBusy] = useState(false);
-  const [updProg, setUpdProg] = useState<MdImportProgress | null>(null);
 
   const bookmarks = useApp((s) => s.bookmarks);
   const workBookmarkCount = bookmarks.filter((b) => b.workId === workId).length;
@@ -122,31 +129,31 @@ export function DetailsScreen({ workId }: { workId: string }) {
     }
   };
 
-  const downloadNewChapters = async () => {
+  const downloadNewChapters = () => {
     if (!work?.sourceRef || !updNew || updBusy) return;
     setUpdBusy(true);
-    setUpdProg(null);
     try {
-      const added = await appendMangaDexChapters(work, updNew, setUpdProg);
-      useApp.getState().appendChapters(work.id, added);
+      // append the new chapters as STREAMABLE rows instantly, then let the
+      // background manager fetch their pages — nothing blocks the UI
+      const st = useApp.getState();
+      const startIdx = work.chapters.length;
+      const rows = updNew.map((ch, i) => mdChapterToStored(work.id, ch, startIdx + i, false));
+      st.appendSourceChapters(work.id, rows);
+      const wNow = useApp.getState().works.find((x) => x.id === work.id);
+      if (wNow) {
+        const bySource = new Map(wNow.chapters.map((c, i) => [c.sourceChapterId, i]));
+        const jobs = updNew
+          .map((ch) => ({ chapterIndex: bySource.get(ch.id) ?? -1, md: ch }))
+          .filter((j) => j.chapterIndex >= 0);
+        enqueueMangaDexChapterDownloads(wNow, jobs);
+      }
       useApp.getState().updateWork(work.id, { lastSourceCheck: new Date().toISOString() });
-      toast({ title: t("upd.addedN", { n: added.length }), description: work.title });
+      toast({ title: t("upd.addedN", { n: updNew.length }), description: work.title });
       setUpdNew(null);
-    } catch (e) {
-      toast({
-        title: t("md.importFailed"),
-        description: (e as Error).message?.slice(0, 80),
-        variant: "destructive",
-      });
     } finally {
       setUpdBusy(false);
-      setUpdProg(null);
     }
   };
-
-  const updPct = updProg
-    ? Math.round(((updProg.chapterDone + (updProg.pageTotal > 0 ? updProg.pageDone / updProg.pageTotal : 0)) / updProg.chapterTotal) * 100)
-    : 0;
 
   const statusChip = (): { key: TranslationKey; cls: string } => {
     switch (work.readingStatus) {
@@ -341,7 +348,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
                 <button
                   aria-label={`${t("det.yourRating")}: 0/5`}
                   onClick={() => useApp.getState().setUserRating(work.id, 0)}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-white/40 transition-colors hover:text-white"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-white/60 transition-colors hover:text-white"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -367,7 +374,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
               dir="auto"
               className={cn(
                 "mt-1.5 block whitespace-pre-wrap text-[12.5px] font-medium leading-relaxed",
-                work.personalNotes ? "text-white/85" : "text-white/40 italic"
+                work.personalNotes ? "text-white/85" : "text-white/60 italic"
               )}
             >
               {work.personalNotes || t("det.notesEmpty")}
@@ -388,7 +395,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
                 {lang === "fa" ? toFa(workHighlightCount) : workHighlightCount}
               </span>
             )}
-            <ChevronRight className="h-4 w-4 shrink-0 text-white/40 rtl:rotate-180" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-white/60 rtl:rotate-180" />
           </button>
 
           {/* description */}
@@ -449,7 +456,7 @@ export function DetailsScreen({ workId }: { workId: string }) {
                 </button>
               </div>
               {work.lastSourceCheck && (
-                <p className="mt-2 text-[10px] font-bold text-white/40">
+                <p className="mt-2 text-[10px] font-bold text-white/60">
                   {t("upd.lastChecked")}: {formatDate(work.lastSourceCheck, lang)}
                 </p>
               )}
@@ -488,35 +495,139 @@ export function DetailsScreen({ workId }: { workId: string }) {
           {/* chapters */}
           <div className="mt-6 flex items-center justify-between">
             <h2 className="text-[17px] font-extrabold text-white">{t("det.chapters")}</h2>
-            <button
-              onClick={() => setSortNewest((v) => !v)}
-              className="flex items-center gap-1 text-[12px] font-bold text-white/70 transition-colors hover:text-white"
-            >
-              {t("det.sortBy")} {sortNewest ? t("det.latest") : t("det.oldest")}
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            <div className="flex items-center gap-2">
+              {manageMode && (
+                <button
+                  onClick={() => {
+                    setSelected(new Set(work.chapters.map((c) => c.id)));
+                  }}
+                  className="text-[12px] font-bold text-white/70 transition-colors hover:text-white"
+                >
+                  {t("det.selectAll")}
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setManageMode((v) => !v);
+                  setSelected(new Set());
+                }}
+                aria-label={t("det.manageChapters")}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                  manageMode ? "bg-coral-gradient text-white" : "text-white/70 hover:bg-white/10"
+                )}
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setSortNewest((v) => !v)}
+                className="flex items-center gap-1 text-[12px] font-bold text-white/70 transition-colors hover:text-white"
+              >
+                {t("det.sortBy")} {sortNewest ? t("det.latest") : t("det.oldest")}
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="mt-3 space-y-2 pb-40">
-            {chapters.map((ch) => (
-              <ChapterRow
-                key={ch.id}
-                ch={ch}
-                work={work}
-                onRead={() => openReader(work.id, ch.id)}
-                onDownload={() => {
-                  startDownload(work.id, ch.id);
-                  toast({ title: `${t("det.download")} — ${t("common.chapter")} ${ch.number}` });
-                }}
-                onMarkRead={() => markChapterRead(work.id, ch.id, !ch.isRead, true)}
-              />
-            ))}
+            {chapters.map((ch) => {
+              const idx = work.chapters.findIndex((c) => c.id === ch.id);
+              return (
+                <ChapterRow
+                  key={ch.id}
+                  ch={ch}
+                  work={work}
+                  manage={manageMode}
+                  selected={selected.has(ch.id)}
+                  onToggleSelect={() => {
+                    setSelected((prev) => {
+                      const n = new Set(prev);
+                      if (n.has(ch.id)) n.delete(ch.id);
+                      else n.add(ch.id);
+                      return n;
+                    });
+                  }}
+                  onRead={() => openReader(work.id, ch.id)}
+                  onDownload={() => {
+                    if (work.sourceRef?.sourceId === "mangadex" && ch.sourceChapterId) {
+                      // real background download for source chapters
+                      enqueueMangaDexChapterDownloads(work, [
+                        {
+                          chapterIndex: idx,
+                          md: {
+                            id: ch.sourceChapterId,
+                            number: ch.number,
+                            title: "",
+                            pages: ch.pages,
+                            publishedAt: ch.releaseDate,
+                          },
+                        },
+                      ]);
+                      toast({ title: t("dl.queued"), description: `${t("common.chapter")} ${ch.number}` });
+                    } else {
+                      // seeded demo library — keep the legacy simulated queue
+                      startDownload(work.id, ch.id);
+                      toast({ title: `${t("det.download")} — ${t("common.chapter")} ${ch.number}` });
+                    }
+                  }}
+                  onMarkRead={() => markChapterRead(work.id, ch.id, !ch.isRead, true)}
+                />
+              );
+            })}
           </div>
         </div>
       </div>
 
+      {/* manage-mode action bar (fixed above the CTA zone) */}
+      {manageMode && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-2 z-30 px-5">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/10 bg-[#1c1a18]/95 p-2 shadow-[0_18px_44px_-12px_rgba(0,0,0,0.65)] backdrop-blur">
+            <button
+              onClick={() => {
+                if (selected.size !== 1) return;
+                setRenameChOpen(true);
+              }}
+              disabled={selected.size !== 1}
+              className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-white/10 text-[12px] font-extrabold text-white transition-colors hover:bg-white/20 disabled:opacity-40"
+            >
+              <Pencil className="h-3.5 w-3.5" /> {t("det.rename")}
+            </button>
+            <button
+              onClick={() => {
+                if (selected.size === 0) return;
+                setMoveOpen(true);
+              }}
+              disabled={selected.size === 0}
+              className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-white/10 text-[12px] font-extrabold text-white transition-colors hover:bg-white/20 disabled:opacity-40"
+            >
+              <FolderOpen className="h-3.5 w-3.5" /> {t("det.moveToWork", { n: selected.size })}
+            </button>
+            <button
+              onClick={() => {
+                if (selected.size === 0) return;
+                setDeleteConfirm(true);
+              }}
+              disabled={selected.size === 0}
+              className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full bg-red-500/20 text-[12px] font-extrabold text-red-300 transition-colors hover:bg-red-500/30 disabled:opacity-40"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> {t("common.delete")}
+            </button>
+            <button
+              onClick={() => {
+                setManageMode(false);
+                setSelected(new Set());
+              }}
+              aria-label={t("common.close")}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* continue CTA */}
-      {cr && (
+      {cr && !manageMode && (
         <div className="pointer-events-none absolute inset-x-0 bottom-2 z-30 px-5">
           <button
             onClick={() => openReader(work.id, cr.chapter.id)}
@@ -550,56 +661,43 @@ export function DetailsScreen({ workId }: { workId: string }) {
         </DialogContent>
       </Dialog>
 
-      {/* new chapters from the source update check (v1.3.0, [UPD-001]) */}
-      <Dialog open={updNew !== null || updBusy} onOpenChange={(v) => !v && !updBusy && setUpdNew(null)}>
+      {/* new chapters from the source update check (v1.3.0, [UPD-001]) —
+          v1.4.0: chapters append instantly as streamable rows, pages download
+          in the background (no more blocking progress dialog) */}
+      <Dialog open={updNew !== null} onOpenChange={(v) => !v && setUpdNew(null)}>
         <DialogContent className="max-w-[380px] rounded-3xl border-border bg-card p-5" style={{ maxWidth: 380 }}>
-          {updBusy ? (
-            <>
-              <DialogHeader>
-                <DialogTitle className="text-[16px] font-extrabold">{t("md.downloading")}</DialogTitle>
-              </DialogHeader>
-              <p className="mt-1 truncate text-[12px] font-bold text-muted-foreground" dir="ltr">
-                {updProg?.chapterLabel ?? "…"}
-              </p>
-              <ProgressBar value={updPct} className="mt-3" />
-              <p className="mt-2 text-[11px] font-bold text-muted-foreground">
-                {updPct}% · {t("upd.chapterOf", { d: (updProg?.chapterDone ?? 0) + 1, total: updProg?.chapterTotal ?? 0 })}
-              </p>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle className="text-[16px] font-extrabold">
-                  {t("upd.newChapters", { n: updNew?.length ?? 0 })}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="max-h-56 space-y-1 overflow-y-auto rounded-2xl border border-border/60 p-2 thin-scrollbar">
-                {(updNew ?? []).map((c) => (
-                  <p key={c.id} className="truncate px-2 py-1 text-[12px] font-bold" dir="ltr">
-                    {mdChapterLabel(c)}
-                  </p>
-                ))}
-              </div>
-              <p className="text-[10.5px] font-semibold leading-snug text-muted-foreground">{t("upd.viaMangadex")}</p>
-              <div className="flex gap-2.5">
-                <button
-                  onClick={() => setUpdNew(null)}
-                  disabled={updBusy}
-                  className="flex-1 rounded-full border border-border bg-background py-2.5 text-[13px] font-extrabold transition-colors hover:bg-secondary"
-                >
-                  {t("common.later")}
-                </button>
-                <button
-                  onClick={() => void downloadNewChapters()}
-                  disabled={updBusy}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-full bg-coral-gradient py-2.5 text-[13px] font-extrabold text-white shadow-[0_10px_24px_-10px_rgba(248,105,76,0.6)] disabled:opacity-50"
-                >
-                  <Download className="h-4 w-4" />
-                  {t("md.downloadN", { n: updNew?.length ?? 0 })}
-                </button>
-              </div>
-            </>
-          )}
+          <>
+            <DialogHeader>
+              <DialogTitle className="text-[16px] font-extrabold">
+                {t("upd.newChapters", { n: updNew?.length ?? 0 })}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="max-h-56 space-y-1 overflow-y-auto rounded-2xl border border-border/60 p-2 thin-scrollbar">
+              {(updNew ?? []).map((c) => (
+                <p key={c.id} className="truncate px-2 py-1 text-[12px] font-bold" dir="ltr">
+                  {mdChapterLabel(c)}
+                </p>
+              ))}
+            </div>
+            <p className="text-[10.5px] font-semibold leading-snug text-muted-foreground">{t("upd.viaMangadex")}</p>
+            <div className="flex gap-2.5">
+              <button
+                onClick={() => setUpdNew(null)}
+                disabled={updBusy}
+                className="flex-1 rounded-full border border-border bg-background py-2.5 text-[13px] font-extrabold transition-colors hover:bg-secondary"
+              >
+                {t("common.later")}
+              </button>
+              <button
+                onClick={() => downloadNewChapters()}
+                disabled={updBusy}
+                className="flex flex-1 items-center justify-center gap-2 rounded-full bg-coral-gradient py-2.5 text-[13px] font-extrabold text-white shadow-[0_10px_24px_-10px_rgba(248,105,76,0.6)] disabled:opacity-50"
+              >
+                {updBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {t("md.downloadN", { n: updNew?.length ?? 0 })}
+              </button>
+            </div>
+          </>
         </DialogContent>
       </Dialog>
 
@@ -613,6 +711,58 @@ export function DetailsScreen({ workId }: { workId: string }) {
           openReader(work.id, chapterId, page);
         }}
       />
+
+      {/* chapter rename (v1.4.0) */}
+      <RenameChapterDialog
+        workId={work.id}
+        chapterId={selected.size === 1 ? [...selected][0] : ""}
+        open={renameChOpen}
+        onOpenChange={(v) => {
+          setRenameChOpen(v);
+          if (!v) setSelected(new Set());
+        }}
+      />
+
+      {/* move chapters to another work (v1.4.0) */}
+      <MoveChaptersDialog
+        fromId={work.id}
+        chapterIds={[...selected]}
+        open={moveOpen}
+        onOpenChange={(v) => {
+          setMoveOpen(v);
+          if (!v) setSelected(new Set());
+        }}
+      />
+
+      {/* delete-chapters confirm (v1.4.0) */}
+      <Dialog open={deleteConfirm} onOpenChange={setDeleteConfirm}>
+        <DialogContent className="rounded-3xl bg-card p-5 max-w-[360px] mx-auto" style={{ maxWidth: 360 }}>
+          <DialogHeader>
+            <DialogTitle className="text-[16px] font-extrabold">{t("det.deleteChaptersTitle", { n: selected.size })}</DialogTitle>
+          </DialogHeader>
+          <p className="text-[12px] font-semibold leading-relaxed text-muted-foreground">{t("det.deleteChaptersBody")}</p>
+          <div className="mt-3 flex gap-2.5">
+            <button
+              onClick={() => setDeleteConfirm(false)}
+              className="flex-1 rounded-full border border-border bg-background py-2.5 text-[13px] font-extrabold transition-colors hover:bg-secondary"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
+              onClick={() => {
+                useApp.getState().deleteChapters(work.id, [...selected]);
+                toast({ title: t("det.chaptersDeleted", { n: selected.size }) });
+                setDeleteConfirm(false);
+                setSelected(new Set());
+                setManageMode(false);
+              }}
+              className="flex-1 rounded-full bg-red-500 py-2.5 text-[13px] font-extrabold text-white"
+            >
+              {t("common.delete")}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* work editor (LIB-010) */}
       <EditWorkDialog workId={work.id} open={editOpen} onOpenChange={setEditOpen} />
@@ -762,12 +912,18 @@ function ChapterRow({
   onRead,
   onDownload,
   onMarkRead,
+  manage = false,
+  selected = false,
+  onToggleSelect,
 }: {
   ch: Chapter;
   work: { title: string; cover: string; coverColor?: string };
   onRead: () => void;
   onDownload: () => void;
   onMarkRead: () => void;
+  manage?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const { t, lang } = useT();
   const dlState = ch.download;
@@ -775,20 +931,50 @@ function ChapterRow({
     <div
       className={cn(
         "flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.045] p-2.5 transition-colors",
-        !ch.isRead && "border-primary/20"
+        !ch.isRead && "border-primary/20",
+        manage && selected && "border-primary bg-primary/10"
       )}
     >
-      <button onClick={onRead}>
-        <WorkCover src={work.cover} color={work.coverColor} title={work.title} className="h-[52px] w-[76px] rounded-xl" sizes="76px" />
-      </button>
-      <button onClick={onRead} className="min-w-0 flex-1 text-start">
+      {manage ? (
+        <button
+          onClick={onToggleSelect}
+          aria-label={t("det.selectAll")}
+          className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors",
+            selected ? "border-transparent bg-coral-gradient text-white" : "border-white/20 text-white/60"
+          )}
+        >
+          {selected && <Check className="h-4 w-4" strokeWidth={3} />}
+        </button>
+      ) : (
+        <button onClick={onRead}>
+          <WorkCover src={work.cover} color={work.coverColor} title={work.title} className="h-[52px] w-[76px] rounded-xl" sizes="76px" />
+        </button>
+      )}
+      <button
+        onClick={manage ? onToggleSelect : onRead}
+        className="min-w-0 flex-1 text-start"
+      >
         <p className={cn("truncate text-[14px] font-extrabold", ch.isRead ? "text-white/60" : "text-white")}>
           {t("common.chapter")} {ch.number}
         </p>
         <p className="truncate text-[11px] font-semibold text-white/55">{ch.title}</p>
-        <p className="text-[10px] font-bold text-white/40">{timeAgo(ch.releaseDate, lang)}</p>
+        <p className="flex items-center gap-1.5 text-[10px] font-bold text-white/60">
+          {timeAgo(ch.releaseDate, lang)}
+          {/* v1.4.0: honest stream/download state for source chapters */}
+          {ch.download === "NONE" && ch.sourceChapterId && (
+            <span className="rounded-full bg-white/10 px-1.5 py-px text-[9px] font-black text-white/60">
+              {t("det.streaming")}
+            </span>
+          )}
+          {ch.download === "DONE" && ch.localPages?.length && (
+            <span className="rounded-full bg-primary/15 px-1.5 py-px text-[9px] font-black text-primary">
+              {ch.pages}p · {ch.sizeMb > 0 ? `${ch.sizeMb} MB` : t("det.downloadedBadge")}
+            </span>
+          )}
+        </p>
       </button>
-      {dlState === "DOWNLOADING" || dlState === "QUEUED" ? (
+      {manage ? null : dlState === "DOWNLOADING" || dlState === "QUEUED" ? (
         <Loader2 className="h-5 w-5 shrink-0 animate-spin text-primary" />
       ) : dlState === "DONE" ? (
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary" title={t("det.downloadedBadge")}>
@@ -803,18 +989,20 @@ function ChapterRow({
           <Download className="h-4 w-4" />
         </button>
       )}
-      <button
-        onClick={onMarkRead}
-        aria-label={t("upd.markRead")}
-        className={cn(
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors",
-          ch.isRead
-            ? "border-transparent bg-coral-gradient text-white shadow-[0_6px_14px_-6px_rgba(248,105,76,0.8)]"
-            : "border-white/15 text-white/50 hover:border-primary hover:text-primary"
-        )}
-      >
-        <CheckCircle2 className="h-4 w-4" />
-      </button>
+      {!manage && (
+        <button
+          onClick={onMarkRead}
+          aria-label={t("upd.markRead")}
+          className={cn(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-colors",
+            ch.isRead
+              ? "border-transparent bg-coral-gradient text-white shadow-[0_6px_14px_-6px_rgba(248,105,76,0.8)]"
+              : "border-white/15 text-white/50 hover:border-primary hover:text-primary"
+          )}
+        >
+          <CheckCircle2 className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1157,6 +1345,165 @@ function EditWorkDialogInner({
               {t("common.save")}
             </button>
           </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* chapter rename dialog (v1.4.0)                                      */
+/* ------------------------------------------------------------------ */
+
+function RenameChapterDialog({
+  workId,
+  chapterId,
+  open,
+  onOpenChange,
+}: {
+  workId: string;
+  chapterId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const { t } = useT();
+  const chapter = useApp((s) =>
+    s.works.find((w) => w.id === workId)?.chapters.find((c) => c.id === chapterId)
+  );
+  const [draft, setDraft] = useState("");
+
+  // seed the input each time the dialog opens with a different chapter
+  const [seededFor, setSeededFor] = useState("");
+  if (open && chapterId && seededFor !== chapterId) {
+    setSeededFor(chapterId);
+    setDraft(chapter?.title ?? "");
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="rounded-3xl bg-card p-5 max-w-[380px] mx-auto" style={{ maxWidth: 380 }}>
+        <DialogHeader>
+          <DialogTitle className="text-[16px] font-extrabold">{t("det.renameChapterTitle")}</DialogTitle>
+        </DialogHeader>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) {
+              useApp.getState().renameChapter(workId, chapterId, draft);
+              toast({ title: t("det.chapterRenamed") });
+              onOpenChange(false);
+            }
+          }}
+          dir="auto"
+          className="mt-2 h-11 w-full rounded-2xl border border-border bg-background px-4 text-[14px] font-semibold outline-none focus:ring-2 focus:ring-primary/40"
+        />
+        <div className="mt-3 flex gap-2.5">
+          <button
+            onClick={() => onOpenChange(false)}
+            className="flex-1 rounded-full border border-border bg-background py-2.5 text-[13px] font-extrabold transition-colors hover:bg-secondary"
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            onClick={() => {
+              if (!draft.trim()) return;
+              useApp.getState().renameChapter(workId, chapterId, draft);
+              toast({ title: t("det.chapterRenamed") });
+              onOpenChange(false);
+            }}
+            disabled={!draft.trim()}
+            className="flex-1 rounded-full bg-coral-gradient py-2.5 text-[13px] font-extrabold text-white disabled:opacity-50"
+          >
+            {t("common.save")}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* move-chapters dialog (v1.4.0) — searchable target work picker       */
+/* ------------------------------------------------------------------ */
+
+function MoveChaptersDialog({
+  fromId,
+  chapterIds,
+  open,
+  onOpenChange,
+}: {
+  fromId: string;
+  chapterIds: string[];
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const { t } = useT();
+  const works = useApp((s) => s.works);
+  const [query, setQuery] = useState("");
+  const [busyTo, setBusyTo] = useState<string | null>(null);
+
+  const targets = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return works
+      .filter((w) => w.id !== fromId)
+      .filter((w) => !q || w.title.toLowerCase().includes(q))
+      .slice(0, 30);
+  }, [works, fromId, query]);
+
+  const move = async (toId: string, toTitle: string) => {
+    if (busyTo || chapterIds.length === 0) return;
+    setBusyTo(toId);
+    const ok = await useApp.getState().moveChapters(fromId, chapterIds, toId);
+    setBusyTo(null);
+    if (ok) {
+      toast({ title: t("det.chaptersMoved", { n: chapterIds.length }), description: toTitle });
+      onOpenChange(false);
+      setQuery("");
+    } else {
+      toast({ title: t("det.moveFailed"), variant: "destructive" });
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="rounded-3xl bg-card p-5 max-w-[400px] mx-auto" style={{ maxWidth: 400 }}>
+        <DialogHeader>
+          <DialogTitle className="text-[16px] font-extrabold">
+            {t("det.moveToWork", { n: chapterIds.length })}
+          </DialogTitle>
+        </DialogHeader>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t("common.search")}
+          className="mt-2 h-10 w-full rounded-2xl border border-border bg-background px-4 text-[13.5px] font-semibold outline-none focus:ring-2 focus:ring-primary/40"
+        />
+        <div className="mt-2 max-h-72 space-y-1.5 overflow-y-auto thin-scrollbar">
+          {targets.map((w) => (
+            <button
+              key={w.id}
+              onClick={() => void move(w.id, w.title)}
+              disabled={!!busyTo}
+              className="flex w-full items-center gap-3 rounded-2xl border border-border/60 p-2 text-start transition-colors hover:bg-secondary/60 disabled:opacity-50"
+            >
+              <WorkCover src={w.cover} color={w.coverColor} title={w.title} className="h-[44px] w-[64px] rounded-xl" sizes="64px" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-extrabold">{w.title}</span>
+                <span className="block text-[10.5px] font-semibold text-muted-foreground">
+                  {t("common.chapters")} {w.chapters.length}
+                </span>
+              </span>
+              {busyTo === w.id ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground rtl:rotate-180" />
+              )}
+            </button>
+          ))}
+          {targets.length === 0 && (
+            <p className="py-4 text-center text-[12px] font-bold text-muted-foreground">{t("md.noResults")}</p>
+          )}
         </div>
       </DialogContent>
     </Dialog>

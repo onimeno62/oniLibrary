@@ -124,6 +124,17 @@ interface AppState {
   deleteWorks: (ids: string[]) => void;
   addWork: (w: Work) => void;
 
+  /* ---- work / chapter management (v1.4.0) ---- */
+  renameWork: (id: string, title: string) => void;
+  renameChapter: (workId: string, chapterId: string, title: string) => void;
+  /** remove chapters (and their IndexedDB pages, download rows, notes) */
+  deleteChapters: (workId: string, chapterIds: string[]) => void;
+  /** move chapters to another work — re-keys IndexedDB page blobs, regenerates
+      ids/keys in the target; resolves after file moves settle (async) */
+  moveChapters: (fromId: string, chapterIds: string[], toId: string) => Promise<boolean>;
+  /** append upstream (not-downloaded) chapters, deduped by sourceChapterId */
+  appendSourceChapters: (workId: string, chapters: Chapter[]) => number;
+
   markChapterRead: (workId: string, chapterId: string, read: boolean, upTo?: boolean) => void;
   setChapterProgress: (workId: string, chapterId: string, page: number) => void;
 
@@ -133,7 +144,10 @@ interface AppState {
   cancelDownload: (id: string) => void;
   retryDownload: (id: string) => void;
   removeDownload: (id: string) => void;
-  tickDownloads: () => void;
+
+  /** real background download queue (v1.4.0) — upsert one row per chapter */
+  upsertDownload: (item: DownloadItem) => void;
+  patchDownload: (id: string, patch: Partial<DownloadItem>) => void;
 
   pushNotification: (n: Omit<Notification, "id" | "createdAt" | "read">) => void;
   markNotificationRead: (id: string) => void;
@@ -385,6 +399,153 @@ export const useApp = create<AppState>()(
         })),
       addWork: (w) => set((s) => ({ works: [w, ...s.works] })),
 
+      /* ---- work / chapter management (v1.4.0) ---- */
+
+      renameWork: (id, title) =>
+        set((s) => ({
+          works: s.works.map((w) =>
+            w.id === id ? { ...w, title: title.trim().slice(0, 160) || w.title } : w
+          ),
+        })),
+
+      renameChapter: (workId, chapterId, title) =>
+        set((s) => ({
+          works: s.works.map((w) =>
+            w.id !== workId
+              ? w
+              : {
+                  ...w,
+                  chapters: w.chapters.map((c) =>
+                    c.id === chapterId
+                      ? { ...c, title: title.trim().slice(0, 160) || c.title }
+                      : c
+                  ),
+                }
+          ),
+        })),
+
+      deleteChapters: (workId, chapterIds) => {
+        const st = get();
+        const work = st.works.find((w) => w.id === workId);
+        if (!work) return;
+        const ids = new Set(chapterIds);
+        const removed = work.chapters.filter((c) => ids.has(c.id));
+        // purge stored page blobs (per-chapter keys + self-contained docs) —
+        // best-effort: the store update must never depend on storage luck
+        void (async () => {
+          try {
+            const { deleteFile } = await import("./local-files");
+            for (const c of removed) {
+              for (const k of c.localPages ?? []) await deleteFile(k).catch(() => undefined);
+              if (c.localDoc) await deleteFile(`${workId}::${c.id}::${c.localDoc}`).catch(() => undefined);
+            }
+          } catch {
+            /* module unavailable (tests) — nothing to purge */
+          }
+        })();
+        set((s) => ({
+          works: s.works.map((w) =>
+            w.id !== workId ? w : { ...w, chapters: w.chapters.filter((c) => !ids.has(c.id)) }
+          ),
+          downloads: s.downloads.filter((d) => !(d.workId === workId && ids.has(d.chapterId))),
+          bookmarks: s.bookmarks.filter((b) => !(b.workId === workId && ids.has(b.chapterId))),
+          highlights: s.highlights.filter((h) => !(h.workId === workId && ids.has(h.chapterId))),
+          history: s.history.filter((h) => !(h.workId === workId && ids.has(h.chapterId))),
+        }));
+      },
+
+      moveChapters: async (fromId, chapterIds, toId) => {
+        const st = get();
+        const from = st.works.find((w) => w.id === fromId);
+        const to = st.works.find((w) => w.id === toId);
+        if (!from || !to || fromId === toId) return false;
+        // legacy works keep pages in the work-level flat list — those chapters
+        // cannot move (their keys are not per-chapter); say no instead of lying
+        if (from.chapters.some((c) => chapterIds.includes(c.id) && !c.localPages?.length && !c.localDoc && !c.sourceChapterId)) {
+          return false;
+        }
+        const moving = from.chapters.filter((c) => chapterIds.includes(c.id));
+        if (moving.length === 0) return false;
+
+        // 1) move the stored page blobs under the target namespace, renaming
+        //    the per-chapter ordinal so the target never reuses a key
+        const moved: Chapter[] = [];
+        let n = to.chapters.length;
+        const keyRemap: Record<string, string> = {}; // old chapter id → new chapter id
+        try {
+          const { rekeyFile } = await import("./local-files");
+          for (const c of moving) {
+            n += 1;
+            const newId = `${toId}-c${n}`;
+            keyRemap[c.id] = newId;
+            const newKeys: string[] = [];
+            if (c.localPages?.length) {
+              for (const k of c.localPages) {
+                const m = k.match(/^([^:]+)::c\d+::(p\d+)$/);
+                const newKey = m ? `${toId}::c${n}::${m[2]}` : `${toId}::${newId}::${k.split("::").pop()}`;
+                await rekeyFile(k, newKey).catch(() => false);
+                newKeys.push(newKey);
+              }
+            }
+            if (c.localDoc) {
+              await rekeyFile(`${fromId}::${c.id}::${c.localDoc}`, `${toId}::${newId}::${c.localDoc}`).catch(() => false);
+            }
+            moved.push({ ...c, id: newId, localPages: c.localPages?.length ? newKeys : undefined });
+          }
+        } catch {
+          // storage layer unavailable (tests / private mode) — still move the
+          // metadata rows; page blobs keep their old keys in that case
+          for (const c of moving) {
+            n += 1;
+            keyRemap[c.id] = `${toId}-c${n}`;
+            moved.push({ ...c, id: `${toId}-c${n}` });
+          }
+        }
+
+        set((s) => {
+          const works = s.works.map((w) => {
+            if (w.id === fromId) {
+              return { ...w, chapters: w.chapters.filter((c) => !chapterIds.includes(c.id)) };
+            }
+            if (w.id === toId) {
+              return { ...w, chapters: [...w.chapters, ...moved].sort((a, b) => a.number - b.number) };
+            }
+            return w;
+          });
+          const movedOldIds = new Set(chapterIds);
+          return {
+            works,
+            // downloads follow their chapter to the new work/namespace
+            downloads: s.downloads.map((d) =>
+              d.workId === fromId && movedOldIds.has(d.chapterId)
+                ? { ...d, workId: toId, chapterId: keyRemap[d.chapterId] ?? d.chapterId }
+                : d
+            ),
+            // notes/history tied to the old chapter ids cannot follow — purge
+            // (same orphan-purge philosophy as deleteWorks)
+            bookmarks: s.bookmarks.filter((b) => !(b.workId === fromId && movedOldIds.has(b.chapterId))),
+            highlights: s.highlights.filter((h) => !(h.workId === fromId && movedOldIds.has(h.chapterId))),
+            history: s.history.filter((h) => !(h.workId === fromId && movedOldIds.has(h.chapterId))),
+          };
+        });
+        return true;
+      },
+
+      appendSourceChapters: (workId, chapters) => {
+        let added = 0;
+        set((s) => ({
+          works: s.works.map((w) => {
+            if (w.id !== workId) return w;
+            const known = new Set(w.chapters.map((c) => c.sourceChapterId ?? c.id));
+            const fresh = chapters.filter((c) => !known.has(c.sourceChapterId ?? c.id));
+            if (fresh.length === 0) return w;
+            added = fresh.length;
+            return { ...w, chapters: [...w.chapters, ...fresh].sort((a, b) => a.number - b.number) };
+          }),
+        }));
+        return added;
+      },
+
       markChapterRead: (workId, chapterId, read, upTo) => {
         set((s) => ({
           works: s.works.map((w) => {
@@ -492,109 +653,22 @@ export const useApp = create<AppState>()(
           downloads: s.downloads.filter((d) => d.id !== id),
           works: setChDl(s.works, s.downloads, id, "NONE"),
         })),
-      tickDownloads: () => {
-        const s = get();
-        // stall when the user toggled offline mode OR the device actually lost
-        // connectivity — progress resumes automatically on the next tick once
-        // the condition clears. (Network *type* — Wi-Fi vs mobile data —
-        // cannot be detected inside a WebView, so wifiOnly is only a hint.)
-        const offline =
-          typeof navigator !== "undefined" && typeof navigator.onLine === "boolean" && !navigator.onLine;
-        if (s.settings.offlineMode || offline) return; // stalled
-        let changed = false;
-        const newEvents: { n: Omit<Notification, "id" | "createdAt" | "read">; d: DownloadItem }[] = [];
-        let downloads = s.downloads.map((d) => {
-          if (d.status !== "ACTIVE") return d;
-          changed = true;
-          const step = d.speedMbps / 6; // MB per tick (sim)
-          let downloadedMb = d.downloadedMb + step;
-          let progress = Math.min(100, (downloadedMb / d.totalMb) * 100);
-          let status: DownloadItem["status"] = d.status;
-          // DWN-004: simulated network failure mid-transfer → ERROR + retry.
-          // Small per-tick chance once real bytes have flowed; deterministic
-          // ids keep the demo stable across reloads.
-          let error = d.error;
-          if (
-            progress > 20 &&
-            progress < 92 &&
-            Math.random() < 0.003
-          ) {
-            status = "ERROR";
-            error = "network";
-          }
-          if (progress >= 100) {
-            progress = 100;
-            downloadedMb = d.totalMb;
-            status = "DONE";
-          }
-          const nd = { ...d, downloadedMb, progress, status, error };
-          if (status === "DONE" && s.settings.ntfDownloads) {
-            newEvents.push({ d: nd, n: {
-              type: "DOWNLOAD" as const,
-              workId: d.workId,
-              chapterLabel: chapterLabelOf(s.works, d),
-              title: workTitleOf(s.works, d.workId),
-              body: translate(s.settings.lang, "ntf.dlDoneBody", { mb: d.totalMb.toFixed(1) }),
-            } });
-          }
-          if (status === "ERROR" && s.settings.ntfErrors) {
-            const vlt = s.works.find((w) => w.id === d.workId)?.inVault === true;
-            newEvents.push({ d: nd, n: {
-              type: "ERROR" as const,
-              workId: d.workId,
-              chapterLabel: chapterLabelOf(s.works, d),
-              title: workTitleOf(s.works, d.workId),
-              body: translate(s.settings.lang, "ntf.dlFailBody", { pct: String(Math.floor(progress)) }),
-              sensitive: vlt,
-            } });
-          }
-          return nd;
-        });
-        if (!changed) return;
-
-        // promote queued items when capacity frees
-        const activeNow = downloads.filter((d) => d.status === "ACTIVE").length;
-        if (activeNow < s.settings.maxConcurrent) {
-          let slots = s.settings.maxConcurrent - activeNow;
-          downloads = downloads.map((d) => {
-            if (d.status === "QUEUED" && slots > 0) {
-              slots--;
-              return { ...d, status: "ACTIVE" as const, speedMbps: 1.5 + Math.random() * 2 };
-            }
-            return d;
-          });
-        }
-
-        const works = s.works.map((w) => {
-          const dl = downloads.find((d) => d.workId === w.id);
-          if (!dl) return w;
-          const chapterAffected = downloads.some((d) => d.workId === w.id);
-          if (!chapterAffected) return w;
-          return {
-            ...w,
-            chapters: w.chapters.map((c) => {
-              const d = downloads.find((x) => x.chapterId === c.id);
-              if (!d) return c;
-              const mapped =
-                d.status === "ACTIVE"
-                  ? "DOWNLOADING"
-                  : d.status === "PAUSED"
-                    ? "PAUSED"
-                    : d.status === "DONE"
-                      ? "DONE"
-                      : d.status === "ERROR"
-                        ? "ERROR"
-                        : "QUEUED";
-              return { ...c, download: mapped as Chapter["download"] };
-            }),
-          };
-        });
-
-        set((st) => {
-          const notifications = [...newEvents.map((e) => ({ ...e.n, id: uid(), createdAt: new Date().toISOString(), read: false })), ...st.notifications];
-          return { downloads, works, notifications };
-        });
-      },
+      /* real background download queue (v1.4.0) — the MangaDex pipeline
+         reports per-chapter rows so the Downloads screen shows truth */
+      upsertDownload: (item) =>
+        set((s) => {
+          const existing = s.downloads.findIndex((d) => d.id === item.id);
+          if (existing === -1) return { downloads: [item, ...s.downloads] };
+          const downloads = [...s.downloads];
+          downloads[existing] = { ...downloads[existing], ...item };
+          return { downloads };
+        }),
+      patchDownload: (id, patch) =>
+        set((s) => ({
+          downloads: s.downloads.map((d) => (d.id === id ? { ...d, ...patch } : d)),
+        })),
+      /* tickDownloads (the old simulated queue ticker) was removed in v1.4.0 —
+         downloads are real background jobs now; see src/lib/bg-downloads.ts */
 
       pushNotification: (n) =>
         set((s) => ({
@@ -777,12 +851,52 @@ export const useApp = create<AppState>()(
       runUpdateCheck: async () => {
         const s = get();
         set({ updateCheck: { ...s.updateCheck, checking: true } });
-        await new Promise((r) => setTimeout(r, 1600));
-        // find unread latest chapters released within last 12h
+        // real upstream check for works that remember their source (v1.4.0):
+        // MangaDex works get actual new chapters APPENDED as streamable rows
         const fresh: Omit<Notification, "id" | "createdAt" | "read">[] = [];
+        let appendedTotal = 0;
+        try {
+          const { mdNewChapters, mdChapterToStored } = await import("./mangadex");
+          const online =
+            typeof navigator === "undefined" || navigator.onLine !== false;
+          if (online && !s.settings.offlineMode) {
+            for (const w of s.works) {
+              if (w.inVault) continue;
+              if (w.sourceRef?.sourceId !== "mangadex") continue;
+              try {
+                const knownIds = w.chapters
+                  .map((c) => c.sourceChapterId)
+                  .filter((x): x is string => typeof x === "string");
+                const upstream = await mdNewChapters(w.sourceRef.itemId, knownIds);
+                if (upstream.length === 0) continue;
+                const startIdx = w.chapters.length;
+                const rows = upstream.map((ch, i) =>
+                  mdChapterToStored(w.id, ch, startIdx + i, false)
+                );
+                appendedTotal += get().appendSourceChapters(w.id, rows);
+                if (s.settings.ntfChapters) {
+                  fresh.push({
+                    type: "CHAPTER",
+                    workId: w.id,
+                    chapterLabel: translate(s.settings.lang, "ntf.newChapterLabel", { n: upstream.length }),
+                    title: w.title,
+                    body: translate(s.settings.lang, "ntf.newChapterBody"),
+                  });
+                }
+              } catch {
+                /* per-work network failure — skip, next check retries */
+              }
+            }
+          }
+        } catch {
+          /* mangadex module unavailable (tests) — fall through to the local pass */
+        }
+        // local heuristic for works without an upstream source: unread latest
+        // chapter released within the last 10h
         if (s.settings.ntfChapters) {
           for (const w of s.works) {
             if (w.inVault) continue;
+            if (w.sourceRef?.sourceId === "mangadex") continue; // handled above
             const latest = w.chapters[0];
             if (!latest || latest.isRead) continue;
             const hours =
@@ -810,7 +924,7 @@ export const useApp = create<AppState>()(
             ...st.notifications,
           ],
         }));
-        return fresh.length;
+        return fresh.length + appendedTotal;
       },
 
       setLastBackup: (iso) => set({ lastBackup: iso }),

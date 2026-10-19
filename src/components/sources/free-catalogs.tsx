@@ -10,12 +10,14 @@
  *  - MangaDexCard — entry to the native MangaDex source screen.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Globe, BookOpen, Plus, ChevronRight, RefreshCw, Sparkles, KeyRound, Trash2 } from "lucide-react";
 import { useApp, useNav } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { testOpdsCatalog, pingServer } from "@/lib/opds";
+import { mdCoverObjectUrl } from "@/lib/mangadex";
 import {
   FREE_CATALOGS,
   MANGADEX_ID,
@@ -24,6 +26,83 @@ import {
   type BuiltinCatalog,
 } from "@/lib/builtin-sources";
 import type { TranslationKey } from "@/lib/i18n";
+
+/* ---------------- bridge-aware MangaDex cover (v1.4.0) ---------------- */
+
+/**
+ * uploads.mangadex.org can refuse the WebView's UA inside the APK (every
+ * tile then falls back to the same placeholder). Load the real cover
+ * directly first; on error re-fetch through the native bridge
+ * (fetchToCache — CORS-free, app UA) and render the cached blob.
+ */
+export function MdCover({
+  url,
+  title,
+  className,
+}: {
+  url: string;
+  title: string;
+  className?: string;
+}) {
+  // no url → static fallback without mounting the loader
+  if (!url) {
+    return (
+      <div className={cn("flex h-full w-full items-center justify-center bg-coral-soft text-primary", className)}>
+        <BookOpen className="h-5 w-5" />
+      </div>
+    );
+  }
+  // keyed inner component: a url change remounts with fresh state
+  // (no setState-in-effect resets)
+  return <MdCoverInner key={url} url={url} title={title} className={className} />;
+}
+
+function MdCoverInner({
+  url,
+  title,
+  className,
+}: {
+  url: string;
+  title: string;
+  className?: string;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const probe = new Image();
+    probe.onload = () => {
+      if (alive) setSrc(url); // direct load works (browser / friendly WebView)
+    };
+    probe.onerror = () => {
+      // fall back to the native bridge fetch (works in the APK)
+      mdCoverObjectUrl(url)
+        .then((obj) => {
+          if (!alive) return;
+          if (obj) setSrc(obj);
+          else setFailed(true);
+        })
+        .catch(() => alive && setFailed(true));
+    };
+    probe.src = url;
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+
+  if (src) {
+    return <img src={src} alt={title} loading="lazy" className={cn("h-full w-full object-cover", className)} />;
+  }
+  if (failed) {
+    return (
+      <div className={cn("flex h-full w-full items-center justify-center bg-coral-soft text-primary", className)}>
+        <BookOpen className="h-5 w-5" />
+      </div>
+    );
+  }
+  return <div className={cn("h-full w-full animate-pulse bg-secondary", className)} />;
+}
 
 /* ---------------- Standard Ebooks credentials dialog ---------------- */
 
@@ -117,11 +196,13 @@ export function FreeCatalogCard({ cat }: { cat: BuiltinCatalog }) {
     setBusy(true);
     const probe = builtinAsServerEntry(cat, auth ?? null);
     let ok = false;
+    let failReason = "";
     try {
       await testOpdsCatalog(probe);
       ok = true;
-    } catch {
+    } catch (e) {
       ok = false;
+      failReason = (e as Error).message ?? "";
     }
     setBusy(false);
     setAuthOpen(false);
@@ -129,7 +210,8 @@ export function FreeCatalogCard({ cat }: { cat: BuiltinCatalog }) {
       if (cat.needsAuth && !auth) {
         setAuthOpen(true); // 401 → ask for the free-account credentials
       } else {
-        toast({ title: t("srv.fail"), description: cat.name, variant: "destructive" });
+        // honest failure — surface the underlying TLS/DNS/HTTP reason
+        toast({ title: t("srv.fail"), description: failReason ? `${cat.name} — ${failReason}` : cat.name, variant: "destructive" });
       }
       return;
     }

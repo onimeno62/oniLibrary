@@ -247,7 +247,7 @@ export function SettingsScreen() {
   };
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       <OverlayHeader title={t("more.settings")} />
 
       {/* ---- Profile ---- */}

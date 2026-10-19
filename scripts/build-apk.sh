@@ -16,7 +16,7 @@ PROJ="$ROOT/android/app"
 OUT="$PROJ/build"
 WWW="$ROOT/out"
 ECJ_JAR="${ECJ_JAR:-/tmp/ecj.jar}"
-APK_VERSION="${ONI_APK_VERSION:-1.3.1}"
+APK_VERSION="${ONI_APK_VERSION:-1.4.0}"
 APK_OUT="$ROOT/download/oniLibrary-v${APK_VERSION}.apk"
 
 for tool in "$BT/aapt2" "$BT/d8" "$BT/zipalign" "$BT/apksigner" "$AJ"; do

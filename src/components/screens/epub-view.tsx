@@ -298,7 +298,7 @@ function SelectionPopup({
             maxLength={280}
             placeholder={t("hl.notePlaceholder")}
             aria-label={t("hl.note")}
-            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] font-semibold leading-snug text-foreground outline-none placeholder:text-white/35 focus:border-primary/50"
+            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] font-semibold leading-snug text-foreground outline-none placeholder:text-white/55 focus:border-primary/50"
           />
           <div className="mt-1.5 flex justify-end">
             <button

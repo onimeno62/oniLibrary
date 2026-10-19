@@ -346,7 +346,7 @@ export function VaultScreen() {
   const hasPin = Boolean(settings.vaultPinHash);
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       {/* header */}
       <header className="flex items-center justify-between pt-2">
         <div className="flex items-center gap-2.5">

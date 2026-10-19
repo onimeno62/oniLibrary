@@ -74,6 +74,30 @@ export async function deleteFile(key: string): Promise<void> {
   });
 }
 
+/** move a stored blob to a new key (get → put → delete) — used when chapters
+    move between works (v1.4.0). Returns false when the source key was
+    missing (nothing to move — callers treat that as success-for-empty). */
+export async function rekeyFile(oldKey: string, newKey: string): Promise<boolean> {
+  if (oldKey === newKey) return true;
+  const blob = await getFile(oldKey);
+  if (!blob) return false;
+  await putFile(newKey, blob);
+  await deleteFile(oldKey);
+  return true;
+}
+
+/** all stored keys beginning with `prefix` (e.g. "<workId>::") */
+export async function listKeys(prefix: string): Promise<string[]> {
+  if (typeof indexedDB === "undefined") return [];
+  const d = await openFilesDb();
+  const tx = d.transaction(STORE, "readonly");
+  const req = tx.objectStore(STORE).getAllKeys();
+  const all = await requestToPromise(req as IDBRequest<IDBValidKey[]>);
+  return all
+    .filter((k): k is string => typeof k === "string" && k.startsWith(prefix))
+    .sort();
+}
+
 /**
  * delete every blob belonging to a work (pages + pdf + epub).
  * Fire-and-forget friendly: works never throw into the UI path.

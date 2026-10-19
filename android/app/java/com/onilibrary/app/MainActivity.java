@@ -419,6 +419,18 @@ public class MainActivity extends Activity {
     }
 
     private class Bridge {
+
+        /* ------- last network failure reason (honest diagnostics) ------- */
+
+        private volatile String lastHttpError = null;
+
+        /** readable reason of the most recent failed bridge fetch (v1.4.0);
+            null when the last fetch succeeded — lets the UI say WHY a source
+            failed instead of a generic "connection failed" */
+        @JavascriptInterface
+        public String lastHttpError() {
+            return lastHttpError;
+        }
         @JavascriptInterface
         public void setOverlayDepth(int depth) {
             overlayDepth = depth;
@@ -543,6 +555,7 @@ public class MainActivity extends Activity {
 
         private HttpURLConnection openGet(String urlStr) throws IOException {
             // callers enforce https-only (cleartext is disabled manifest-wide)
+            lastHttpError = null;
             URL url = new URL(urlStr);
             HttpURLConnection c = (HttpURLConnection) url.openConnection();
             c.setConnectTimeout(8000);
@@ -570,7 +583,7 @@ public class MainActivity extends Activity {
                     c.connect();
                     code = c.getResponseCode();
                 }
-                if (code < 200 || code >= 300) { c.disconnect(); return null; }
+                if (code < 200 || code >= 300) { lastHttpError = "HTTP " + code; c.disconnect(); return null; }
                 InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
                 StringBuilder sb = new StringBuilder();
                 try (BufferedReader r = new BufferedReader(new InputStreamReader(in, "UTF-8"))) {
@@ -581,6 +594,7 @@ public class MainActivity extends Activity {
                 c.disconnect();
                 return sb.toString();
             } catch (Exception e) {
+                lastHttpError = String.valueOf(e.getMessage());
                 return null;
             }
         }
@@ -592,7 +606,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String fetchToCache(String url) {
             // https only — cleartext is disabled at the manifest level
-            if (url == null || !url.startsWith("https://")) return "null";
+            if (url == null || !url.startsWith("https://")) { lastHttpError = "insecure url"; return "null"; }
             InputStream in = null;
             try {
                 HttpURLConnection c = openGet(url);

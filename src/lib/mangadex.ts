@@ -250,6 +250,102 @@ function readerFor(type: WorkType): { mode: ReaderMode; dir: ReadingDirection } 
     : { mode: "PAGED", dir: "RTL" };
 }
 
+/** base Work fields shared by both import paths (download now / add only) */
+function baseWork(manga: MdManga, chapters: Chapter[], id: string, cover: string): Work {
+  const { mode, dir } = readerFor(manga.workType);
+  return {
+    id,
+    title: manga.title.slice(0, 120),
+    altTitle: manga.altTitle,
+    author: manga.author || "MangaDex",
+    cover,
+    type: manga.workType,
+    description: manga.description || `${manga.title} — from MangaDex.`,
+    workStatus: mapWorkStatus(manga.status),
+    readingStatus: "PLANNED",
+    isFavorite: false,
+    inVault: false,
+    tags: [...manga.tags.slice(0, 6), "MangaDex"],
+    rating: 0,
+    ratingCount: 0,
+    direction: dir,
+    readerMode: mode,
+    fitMode: "WIDTH",
+    chapters,
+    addedAt: new Date().toISOString(),
+    language: "en",
+    isLocal: true,
+    sourceRef: { sourceId: "mangadex", itemId: manga.id },
+    sourceUrl: `https://mangadex.org/title/${manga.id}`,
+  };
+}
+
+/** fetch the cover through the bridge-aware binary loader and return an
+    object URL — the uploads CDN may refuse the WebView's UA, and covers
+    fetched this way work identically in the APK and the browser */
+const coverObjectUrls = new Map<string, string>();
+export async function mdCoverObjectUrl(coverUrl: string): Promise<string | null> {
+  if (!coverUrl) return null;
+  const hit = coverObjectUrls.get(coverUrl);
+  if (hit) return hit;
+  try {
+    const f = await opdsFetchBinary(coverUrl, "cover");
+    if (!f) return null;
+    const url = URL.createObjectURL(f);
+    coverObjectUrls.set(coverUrl, url);
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+/** map an upstream chapter to a stored Chapter row. downloaded=false creates
+    a STREAMABLE row (no localPages, download:"NONE") that the reader serves
+    straight from the source; sourceChapterId keeps the upstream identity for
+    update checks and per-chapter downloads. */
+export function mdChapterToStored(
+  workId: string,
+  ch: MdChapter,
+  index: number,
+  downloaded: boolean,
+  localPages?: string[],
+  sizeMb?: number
+): Chapter {
+  return {
+    id: `${workId}-c${index + 1}`,
+    number: ch.number,
+    title: mdChapterLabel(ch),
+    pages: ch.pages || 0,
+    releaseDate: ch.publishedAt,
+    isRead: false,
+    download: downloaded ? "DONE" : "NONE",
+    sizeMb: sizeMb ?? 0,
+    localPages: downloaded ? localPages : undefined,
+    sourceChapterId: ch.id,
+  };
+}
+
+/** fetch + downscale a cover to a persisted data-url thumbnail (best-effort) */
+export async function mdCoverThumbDataUrl(coverUrl: string): Promise<string> {
+  if (!coverUrl) return "";
+  const f = await opdsFetchBinary(coverUrl, "cover").catch(() => null);
+  if (!f) return "";
+  return blobToThumbDataUrl(f).catch(() => "");
+}
+
+/** add a MangaDex work to the library WITHOUT downloading anything —
+    every chapter stays streamable (read online) and individually
+    downloadable from the details screen. Returns instantly: the cover
+    thumbnail is patched in afterwards by the caller (non-blocking). */
+export async function addMangaDexToLibrary(
+  manga: MdManga,
+  chapters: MdChapter[]
+): Promise<Work> {
+  const id = "w-md-" + Date.now().toString(36);
+  const rows = chapters.map((ch, i) => mdChapterToStored(id, ch, i, false));
+  return baseWork(manga, rows, id, "");
+}
+
 /** download the selected chapters' pages and build a complete Work */
 export async function importMangaDexWork(
   manga: MdManga,
@@ -270,32 +366,7 @@ export async function importMangaDexWork(
     if (b) cover = await blobToThumbDataUrl(b).catch(() => "");
   }
 
-  const { mode, dir } = readerFor(manga.workType);
-  return {
-    id,
-    title: manga.title.slice(0, 120),
-    altTitle: manga.altTitle,
-    author: manga.author || "MangaDex",
-    cover,
-    type: manga.workType,
-    description: manga.description || `${manga.title} — downloaded from MangaDex.`,
-    workStatus: mapWorkStatus(manga.status),
-    readingStatus: "PLANNED",
-    isFavorite: false,
-    inVault: false,
-    tags: [...manga.tags.slice(0, 6), "MangaDex"],
-    rating: 0,
-    ratingCount: 0,
-    direction: dir,
-    readerMode: mode,
-    fitMode: "WIDTH",
-    chapters: out,
-    addedAt: new Date().toISOString(),
-    language: "en",
-    isLocal: true,
-    sourceRef: { sourceId: "mangadex", itemId: manga.id },
-    sourceUrl: `https://mangadex.org/title/${manga.id}`,
-  };
+  return baseWork(manga, out, id, cover);
 }
 
 /** download additional chapters for an existing MangaDex work (update flow).
@@ -320,6 +391,44 @@ async function getFileSafe(key: string): Promise<Blob | null> {
   }
 }
 
+/** download ONE chapter's pages into IndexedDB under
+    `${workId}::c{keyIndex}::p{i}` — shared by the import pipeline and the
+    background download manager. Returns null when nothing was usable or the
+    job was cancelled. */
+export async function mdDownloadOneChapter(
+  ch: MdChapter,
+  workId: string,
+  keyIndex: number,
+  onPage?: (done: number, totalPages: number) => void,
+  isCancelled?: () => boolean
+): Promise<{ localPages: string[]; sizeMb: number } | null> {
+  let urls: string[] = [];
+  try {
+    urls = await mdPageUrls(ch.id);
+  } catch {
+    return null; // chapter un-fetchable → caller reports honestly
+  }
+  const keys: string[] = [];
+  let sizeMb = 0;
+  for (let p = 0; p < urls.length; p++) {
+    if (isCancelled?.()) return null;
+    onPage?.(p, urls.length);
+    const f = await opdsFetchBinary(urls[p], `p${p + 1}.jpg`).catch(() => null);
+    if (!f) continue;
+    const key = `${workId}::c${keyIndex}::p${p + 1}`;
+    try {
+      await putFile(key, f);
+    } catch {
+      continue;
+    }
+    keys.push(key);
+    sizeMb += f.size / 1_048_576;
+    await sleep(PAGE_DELAY_MS);
+  }
+  if (keys.length === 0) return null;
+  return { localPages: keys, sizeMb };
+}
+
 async function downloadChapters(
   workId: string,
   chapters: MdChapter[],
@@ -332,47 +441,28 @@ async function downloadChapters(
     const label = mdChapterLabel(ch);
     onProgress?.({ chapterDone: i, chapterTotal: chapters.length, chapterLabel: label, pageDone: 0, pageTotal: 0 });
 
-    let urls: string[] = [];
-    try {
-      urls = await mdPageUrls(ch.id);
-    } catch {
-      continue; // chapter un-fetchable → skip honestly
-    }
-
-    const keys: string[] = [];
-    let sizeMb = 0;
-    for (let p = 0; p < urls.length; p++) {
+    const res = await mdDownloadOneChapter(ch, workId, startIndex + i + 1, (p, t) => {
       onProgress?.({
         chapterDone: i,
         chapterTotal: chapters.length,
         chapterLabel: label,
         pageDone: p,
-        pageTotal: urls.length,
+        pageTotal: t,
       });
-      const f = await opdsFetchBinary(urls[p], `p${p + 1}.jpg`).catch(() => null);
-      if (!f) continue;
-      const key = `${workId}::c${startIndex + i + 1}::p${p + 1}`;
-      try {
-        await putFile(key, f);
-      } catch {
-        continue;
-      }
-      keys.push(key);
-      sizeMb += f.size / 1_048_576;
-      await sleep(PAGE_DELAY_MS);
-    }
+    });
+    if (!res) continue; // nothing usable → skip honestly
 
-    if (keys.length === 0) continue; // nothing usable → skip
     out.push({
       id: `${workId}-c${startIndex + i + 1}`,
       number: ch.number,
       title: label,
-      pages: keys.length,
+      pages: res.localPages.length,
       releaseDate: ch.publishedAt,
       isRead: false,
       download: "DONE",
-      sizeMb: Math.round(sizeMb * 10) / 10,
-      localPages: keys,
+      sizeMb: Math.round(res.sizeMb * 10) / 10,
+      localPages: res.localPages,
+      sourceChapterId: ch.id, // keep the upstream identity (update checks)
     });
   }
   return out;

@@ -40,6 +40,10 @@ export interface Chapter {
       `${workId}::${chapterId}::pdf` and rendered by the PDF engine — folder
       PDFs can merge as chapters of ONE work instead of separate works */
   localDoc?: "pdf";
+  /** upstream source chapter id (v1.4.0, e.g. the MangaDex chapter UUID) —
+      powers streaming reads of not-downloaded chapters and exact update
+      checks (which upstream chapters are already in the library) */
+  sourceChapterId?: string;
 }
 
 /** static import facts shown on the details page for local works (v1.2.1) */

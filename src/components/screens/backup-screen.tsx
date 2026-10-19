@@ -231,7 +231,7 @@ export function BackupScreen() {
   };
 
   return (
-    <div className="min-h-full px-5 pb-8">
+    <div className="h-full overflow-y-auto no-scrollbar px-5 pb-8">
       <OverlayHeader title={t("bkp.title")} />
 
       {/* create card */}

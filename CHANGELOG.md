@@ -3,6 +3,64 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.4.0] — 2026-10-19
+
+Sources & library round — every fix driven by the user's field reports.
+
+### Fixed
+- **MangaDex thumbnails showed the same placeholder for every work** (APK) —
+  the uploads CDN can refuse the WebView's UA. Covers now load directly and
+  fall back to the native bridge fetch (CORS-free, app UA) with a session
+  cache; added works patch their shelf thumbnail in without blocking.
+- **MangaDex screen couldn't scroll** — the overlay wrapper clips content and
+  the screen root had no scroll container. Same root cause fixed on every
+  overlay screen (catalog, settings, statistics, formats, servers,
+  highlights, backup, extensions, vault).
+- **Download modal blocked the app** — downloads now run as real background
+  jobs (one queue row per chapter, cancellable, offline-stall aware). The
+  sheet closes immediately; progress lives on the Downloads screen; a
+  notification fires on completion.
+- **Downloads screen showed made-up data** — the 1-second simulated progress
+  ticker is gone; the queue shows only real jobs with true byte progress.
+- **Project Gutenberg "connection failed"** — gutenberg.org now chains to the
+  SSL.com TLS RSA Root CA 2022, which is missing from many Android trust
+  stores. The app bundles that root (plus the current ISRG roots) via
+  `network_security_config`, and failed source probes now report the real
+  reason (TLS / DNS / HTTP) in the toast instead of a bare "connection failed".
+- **Reader highlights** — verified working end-to-end in the browser
+  (select → popup → color → `<mark>` → survives reload). Contrast of the
+  surrounding reader chrome was raised (white/35-40 → /55-60) as part of the
+  readability pass.
+- **Some pages couldn't scroll down** — see the overlay-scroll fix above.
+
+### Added
+- **Add to library** — MangaDex works land in the library instantly with all
+  their chapters listed (upstream chapter ids stored); no download required.
+- **Streaming reads** — not-downloaded chapters stream directly from the
+  source in the reader (at-home URLs resolved per chapter), with a live
+  "Streaming" badge and honest offline/failed states.
+- **Per-chapter downloads** — every chapter row on a source work gets a real
+  download button wired to the background pipeline.
+- **Check for updates** — per-work check (and the global 15-minute auto
+  check) now diff against real MangaDex chapter ids, append new chapters as
+  streamable rows, and download them in the background.
+- **Chapter & work management** — manage-chapters mode on the details screen:
+  multi-select, rename chapter, move chapters to another work (page blobs
+  re-keyed in IndexedDB, notes/history for moved chapters purged honestly),
+  delete chapters (files + notes + queue rows purged).
+- **Reader swipe gestures** — drag horizontally to flip pages (LTR: left =
+  next; RTL manga: right = next); vertical drift still scrolls, taps still
+  toggle chrome, zoom-pan unaffected.
+- **Discover: "Latest on MangaDex"** — the old "Recently added" shelf now
+  shows the real MangaDex latest-uploads feed and degrades to the local
+  shelf offline.
+- All new strings in Persian and English (runtime en/fa parity test enforces
+  it). Regression suite extended to 57 tests.
+
+### Notes
+- Version → 1.4.0 (versionCode 12). Same signing key — installs over the top
+  and keeps all data.
+
 ## [1.3.1] — 2026-10-19
 
 Security & remediation round. Baseline was 1.3.0; everything below is verified

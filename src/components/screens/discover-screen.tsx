@@ -4,10 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe } from "lucide-react";
 import { SectionHeader, WorkCover } from "@/components/shared";
-import { MangaDexCard, FreeCatalogList } from "@/components/sources/free-catalogs";
+import { MangaDexCard, FreeCatalogList, MdCover } from "@/components/sources/free-catalogs";
 import { useApp, useNav, continueReading, chapterProgressFraction } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
+import { mdLatest, type MdManga } from "@/lib/mangadex";
+import { MANGADEX_ID } from "@/lib/builtin-sources";
 import type { Chapter, Work } from "@/lib/types";
 
 type Cat = "ALL" | "MANGA" | "COMICS" | "BOOKS";
@@ -102,6 +104,27 @@ export function DiscoverScreen() {
     () => [...visibleWorks].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).slice(0, 10),
     [visibleWorks]
   );
+
+  /* v1.4.0: the shelf previously labeled "Recently added" now shows the real
+     MangaDex latest-uploads feed (user request); it degrades gracefully to
+     the local recently-added shelf when offline/disabled/failed */
+  const [mdLatestItems, setMdLatestItems] = useState<MdManga[] | null>(null);
+  const mdDisabled = useApp((s) => s.builtinDisabled.includes(MANGADEX_ID));
+  const mdOffline = useApp((s) => s.settings.offlineMode);
+  useEffect(() => {
+    let alive = true;
+    const online = typeof navigator === "undefined" || navigator.onLine !== false;
+    if (mdDisabled || mdOffline || !online) {
+      setMdLatestItems(null);
+      return;
+    }
+    mdLatest(0)
+      .then((list) => alive && setMdLatestItems(list.slice(0, 12)))
+      .catch(() => alive && setMdLatestItems(null));
+    return () => {
+      alive = false;
+    };
+  }, [mdDisabled, mdOffline]);
 
   return (
     <div className="min-h-full px-5 pb-8">
@@ -229,8 +252,27 @@ export function DiscoverScreen() {
         </section>
       )}
 
-      {/* ====== from your library: recently added ====== */}
-      {recentShelf.length > 0 && (
+      {/* ====== MangaDex latest uploads (v1.4.0) — falls back to local recents offline ====== */}
+      {mdLatestItems !== null && mdLatestItems.length > 0 ? (
+        <section className="mt-6">
+          <SectionHeader title={t("disc.mdLatest")} />
+          <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar">
+            {mdLatestItems.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => push({ kind: "source", sourceId: MANGADEX_ID, focusMangaId: m.id })}
+                className="w-[96px] shrink-0 text-start"
+              >
+                <span className="block aspect-[3/4] w-full overflow-hidden rounded-2xl bg-secondary shadow-[0_10px_22px_-12px_rgba(43,36,29,0.5)]">
+                  <MdCover url={m.coverUrl} title={m.title} />
+                </span>
+                <p className="mt-1.5 truncate text-[12px] font-extrabold">{m.title}</p>
+                <p className="truncate text-[10px] font-semibold text-muted-foreground">{m.author || "MangaDex"}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : recentShelf.length > 0 ? (
         <section className="mt-6">
           <SectionHeader title={t("disc.recentShelf")} onSeeAll={() => setTab("library")} />
           <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar">
@@ -251,7 +293,7 @@ export function DiscoverScreen() {
             ))}
           </div>
         </section>
-      )}
+      ) : null}
 
       {/* ====== catalogs (real OPDS / Komga servers) ====== */}
       <section className="mt-6">
