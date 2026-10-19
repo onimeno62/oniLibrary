@@ -131,7 +131,7 @@ Use this checklist before merging high-risk changes and before distributing a re
 - [ ] The packaged APK launches on a target Android device. *(pending — needs SDK machine + device)*
 - [x] App version, manifest version, package metadata, APK filename, README, and release notes agree. *(1.3.1 / versionCode 11 across manifest, build script, CHANGELOG)*
 - [ ] Production signing uses protected release secrets, not a committed debug key or hardcoded password. **OPEN P0 — debug keystore committed; env-based override shipped; release secret provisioning pending (REL-02)**
-- [ ] APK SHA-256 is recorded and matches the distributed artifact. *(pending APK build)*
+- [x] APK SHA-256 is recorded and matches the distributed artifact. *(v1.3.1: `6fa77687ccc57b983955af511d3502511ccf0a8db7c262f4622a6a3366ffe2ad` — signer cert SHA-256 `85a71e32…5f0c1b5`, same key as 1.3.0)*
 - [ ] CI failure stops release; skipped checks are recorded as NOT RUN. *(ci.yml gate added Round 2 — enforcement-on-release still manual)*
 - [x] README and download links point to the correct repository and release artifact. *(repo link fixed after the `oniLibrary_zai_2` → `oniLibrary` rename)*
 
