@@ -2,6 +2,19 @@ name: Build APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, fix/security-remediation]
+    paths:
+      - "android/**"
+      - "src/**"
+      - "scripts/**"
+      - "package.json"
+      - "bun.lock*"
+      - "next.config.ts"
+      - ".github/workflows/apk.yml"
+
+permissions:
+  contents: read
 
 jobs:
   apk:
@@ -16,19 +29,33 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
       - name: Install web dependencies
         run: bun install --frozen-lockfile
 
       - name: Fetch ECJ compiler
-        run: curl -sSL -o /tmp/ecj.jar https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.33.0/ecj-3.33.0.jar
+        run: curl --fail --show-error --silent --location --retry 3 --output /tmp/ecj.jar https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.33.0/ecj-3.33.0.jar
+
+      - name: Run regression tests
+        run: bun test tests/
+
+      - name: Type-check
+        run: bunx tsc --noEmit
 
       - name: Build APK (static export → aapt2 → ecj → d8 → sign)
         env:
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
         run: bash scripts/build-apk.sh --fresh
 
       - name: Verify bundled assets resolve
-        run: node scripts/verify-apk-assets.cjs
+        env:
+          ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
+        run: node scripts/verify-apk-assets.cjs download/oniLibrary-v1.3.1.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
