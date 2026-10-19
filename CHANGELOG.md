@@ -88,6 +88,17 @@ Regression suite: `bun run test` — 48 tests, all passing.
 - **CI quality gate added** (`.github/workflows/ci.yml`): eslint +
   `tsc --noEmit` + `bun test` on every push/PR — the follow-up the QA
   checklist asked for; APK builds stay in the manual `apk.yml`.
+- **Merged the build/CI round from `fix/security-remediation`**
+  (owner-authored, restored during branch cleanup): `build-apk.sh` is now
+  fail-fast (`set -Eeuo pipefail`), portable (derives the repo root from
+  the script location), validates the SDK/ECJ prerequisites up front,
+  restores displaced API routes via a trap, and names the output via
+  `ONI_APK_VERSION`; `apk.yml` additionally builds the APK on every push
+  to main after running the regression suite and typecheck.
+- Fixed in that merge: the script's API-route backup previously sat inside
+  `src/app/`, which Next.js treats as a route segment (build fails on
+  "collect page data for /.api-build-backup-*"); the backup now lives at
+  the repo root.
 
 ### Notes
 - Version → 1.3.1 (versionCode 11). Same signing key as 1.3.0 — installs

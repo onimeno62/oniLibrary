@@ -30,7 +30,10 @@ done
 echo "[0/7] Static export..."
 if [[ ! -f "$WWW/index.html" || "${1:-}" == "--fresh" ]]; then
   API_DIR="$ROOT/src/app/api"
-  API_BACKUP="$ROOT/src/app/.api-build-backup-$$"
+  # NOTE: the backup must live OUTSIDE src/app — Next.js's file router
+  # treats any directory under app/ (even dot-prefixed) as a route segment
+  # and the build fails collecting page data for it. Repo root is safe.
+  API_BACKUP="$ROOT/.api-build-backup-$$"
   restore_api() {
     if [[ -d "$API_BACKUP" && ! -e "$API_DIR" ]]; then
       mv "$API_BACKUP" "$API_DIR"
