@@ -157,6 +157,20 @@ async function listMangas(path: string): Promise<MdManga[]> {
   return (res.data ?? []).map(mapManga);
 }
 
+/** feed result with the server-side total, so pagers can offer "load more"
+ *  honestly instead of guessing from `items.length % 24` (Phase 1 finding T7) */
+export interface MdFeed {
+  list: MdManga[];
+  /** total matches reported by the API (falls back to the page length) */
+  total: number;
+}
+
+async function listMangasWithTotal(path: string): Promise<MdFeed> {
+  const res = await mdGet<{ data?: MdMangaRaw[]; total?: number }>(path);
+  const list = (res.data ?? []).map(mapManga);
+  return { list, total: typeof res.total === "number" ? res.total : list.length };
+}
+
 export function mdPopular(page: number): Promise<MdManga[]> {
   return listMangas(listQuery("followedCount", page));
 }
@@ -167,6 +181,19 @@ export function mdLatest(page: number): Promise<MdManga[]> {
 
 export function mdSearch(query: string, page: number): Promise<MdManga[]> {
   return listMangas(listQuery("relevance", page, query.trim()));
+}
+
+/** total-aware variants used by paged browsers (source screen) */
+export function mdPopularFeed(page: number): Promise<MdFeed> {
+  return listMangasWithTotal(listQuery("followedCount", page));
+}
+
+export function mdLatestFeed(page: number): Promise<MdFeed> {
+  return listMangasWithTotal(listQuery("latestUploadedChapter", page));
+}
+
+export function mdSearchFeed(query: string, page: number): Promise<MdFeed> {
+  return listMangasWithTotal(listQuery("relevance", page, query.trim()));
 }
 
 export async function mdManga(id: string): Promise<MdManga | null> {

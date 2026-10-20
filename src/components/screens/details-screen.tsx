@@ -113,7 +113,13 @@ export function DetailsScreen({ workId }: { workId: string }) {
     if (!work?.sourceRef || updChecking || updBusy) return;
     setUpdChecking(true);
     try {
-      const all = await mdNewChapters(work.sourceRef.itemId, []);
+      // diff by upstream chapter UUIDs (same key the store-wide check uses),
+      // so a chapter appended by the global check is never re-reported here
+      // (Phase 1 finding M3 — the two paths previously used different keys)
+      const knownIds = work.chapters
+        .map((c) => c.sourceChapterId)
+        .filter((x): x is string => typeof x === "string" && x.length > 0);
+      const all = await mdNewChapters(work.sourceRef.itemId, knownIds);
       const knownNums = new Set(work.chapters.map((c) => c.number));
       const fresh = all.filter((c) => !knownNums.has(c.number));
       useApp.getState().updateWork(work.id, { lastSourceCheck: new Date().toISOString() });

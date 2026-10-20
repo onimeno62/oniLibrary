@@ -24,9 +24,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  mdPopular,
-  mdLatest,
-  mdSearch,
+  mdPopularFeed,
+  mdLatestFeed,
+  mdSearchFeed,
   mdManga,
   mdChapters,
   mdChapterLabel,
@@ -37,6 +37,7 @@ import {
 } from "@/lib/mangadex";
 import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
 import { MANGADEX_ID } from "@/lib/builtin-sources";
+import { dedupeBy, resolveAddTarget } from "@/lib/search-contract";
 import type { Work } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
 
@@ -99,22 +100,49 @@ function MdSheet({
     if (downloadToo && selected.length === 0) return;
     setBusy(true);
     try {
-      // fast path: metadata + streamable chapter rows (no pages fetched);
-      // the cover thumbnail is patched in afterwards (never blocks the add)
-      const work = await addMangaDexToLibrary(manga, chapters);
-      addWork(work);
-      void mdCoverThumbDataUrl(manga.coverUrl).then((cover) => {
-        if (cover) useApp.getState().updateWork(work.id, { cover });
+      // plan §8: repeated adds are idempotent — if this manga is already in
+      // the library, reuse that work instead of minting a duplicate (T6).
+      // When chapters were picked, the downloads attach to the existing work.
+      const existing = resolveAddTarget(useApp.getState().works, {
+        sourceId: "mangadex",
+        itemId: manga.id,
       });
+      let work: Work;
+      if (existing) {
+        work = existing;
+        if (!downloadToo) {
+          toast({ title: t("md.alreadyInLibrary"), description: work.title });
+          setBusy(false);
+          onAdded(work);
+          onClose();
+          return;
+        }
+      } else {
+        // fast path: metadata + streamable chapter rows (no pages fetched);
+        // the cover thumbnail is patched in afterwards (never blocks the add)
+        work = await addMangaDexToLibrary(manga, chapters);
+        addWork(work);
+        void mdCoverThumbDataUrl(manga.coverUrl).then((cover) => {
+          if (cover) useApp.getState().updateWork(work.id, { cover });
+        });
+      }
       if (downloadToo) {
         // pages flow in the background — the Downloads screen shows the
-        // real per-chapter progress; nothing blocks this dialog
-        const byId = new Map(chapters.map((c, i) => [c.id, i]));
+        // real per-chapter progress; nothing blocks this dialog. Jobs are
+        // resolved through sourceChapterId (stable upstream identity), not
+        // positional indexes, so they survive chapter-list mutation.
+        const target = useApp.getState().works.find((x) => x.id === work.id) ?? work;
+        const bySource = new Map(target.chapters.map((c, i) => [c.sourceChapterId, i]));
         const jobs = selected
-          .map((c) => ({ chapterIndex: byId.get(c.id) ?? 0, md: c }))
-          .filter((j) => work.chapters[j.chapterIndex]);
-        enqueueMangaDexChapterDownloads(work, jobs);
-        toast({ title: t("md.bgDownloading", { n: selected.length }), description: work.title });
+          .map((c) => ({ chapterIndex: bySource.get(c.id) ?? -1, md: c }))
+          .filter((j) => j.chapterIndex >= 0)
+          .filter((j) => target.chapters[j.chapterIndex].download !== "DONE");
+        if (jobs.length > 0) {
+          enqueueMangaDexChapterDownloads(target, jobs);
+          toast({ title: t("md.bgDownloading", { n: jobs.length }), description: work.title });
+        } else {
+          toast({ title: t("md.alreadyInLibrary"), description: work.title });
+        }
       } else {
         toast({ title: t("md.added"), description: work.title });
       }
@@ -290,32 +318,57 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
   const [ranQuery, setRanQuery] = useState("");
   const [items, setItems] = useState<MdManga[]>([]);
   const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [pageError, setPageError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [more, setMore] = useState(false);
   const [error, setError] = useState(false);
   const [sheetFor, setSheetFor] = useState<MdManga | null>(null);
   const focusDone = useRef(false);
+  /* latest-wins: a slow response from an older tab/page/query must never
+     commit into a newer view (plan §7; Phase 1 finding T1) */
+  const runSeq = useRef(0);
 
   const runLoad = useCallback(
     async (which: "popular" | "latest" | "search", p: number, q: string) => {
+      const seq = ++runSeq.current;
+      const current = () => seq === runSeq.current;
       if (p === 0) setLoading(true);
       else setMore(true);
       setError(false);
+      setPageError(false);
       try {
-        const list =
+        // total-aware feed variants — "load more" is driven by the server's
+        // total instead of the `items.length % 24` guess (Phase 1 finding T7)
+        const feed =
           which === "search"
-            ? await mdSearch(q, p)
+            ? await mdSearchFeed(q, p)
             : which === "latest"
-              ? await mdLatest(p)
-              : await mdPopular(p);
-        setItems((prev) => (p === 0 ? list : [...prev, ...list]));
+              ? await mdLatestFeed(p)
+              : await mdPopularFeed(p);
+        if (!current()) return; // stale response — drop it
+        setTotal(feed.total);
+        setItems((prev) => {
+          const merged = p === 0 ? feed.list : [...prev, ...feed.list];
+          // dedup across pages: provider feeds shift between requests, so
+          // the same title can land twice (plan §7; Phase 1 finding T2)
+          return dedupeBy(merged, (m) => m.id);
+        });
         setPage(p);
       } catch {
+        if (!current()) return;
         setError(true);
-        if (p === 0) setItems([]);
+        if (p === 0) {
+          setItems([]);
+        } else {
+          // failed "load more" must be visible and retryable (Phase 1 T3)
+          setPageError(true);
+        }
       } finally {
-        setLoading(false);
-        setMore(false);
+        if (current()) {
+          setLoading(false);
+          setMore(false);
+        }
       }
     },
     []
@@ -468,10 +521,25 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
             ))}
           </div>
 
-          {/* load more (24/page) */}
-          {!ranQuery && items.length > 0 && items.length % 24 === 0 && (
+          {/* inline retry for a failed "load more" — invisible errors are
+              a contract violation (Phase 1 finding T3) */}
+          {pageError && items.length > 0 && (
+            <div className="mt-3 flex items-center justify-center gap-2 rounded-2xl border border-red-500/25 bg-red-500/5 px-3 py-2">
+              <p className="text-[12px] font-bold text-red-500">{t("md.error")}</p>
+              <button
+                onClick={() => void runLoad(ranQuery ? "search" : tab, page + 1, ranQuery)}
+                className="flex h-8 items-center gap-1 rounded-full bg-coral-soft px-3 text-[11px] font-extrabold text-primary"
+              >
+                <RefreshCw className="h-3 w-3" />
+                {t("common.retry")}
+              </button>
+            </div>
+          )}
+
+          {/* load more — offered while the server still has matches (total) */}
+          {items.length > 0 && !pageError && total > items.length && (
             <button
-              onClick={() => void runLoad(tab, page + 1, "")}
+              onClick={() => void runLoad(ranQuery ? "search" : tab, page + 1, ranQuery)}
               disabled={more}
               className="mx-auto mt-5 flex items-center gap-2 rounded-full border border-border px-5 py-2 text-[12.5px] font-extrabold transition-colors hover:bg-secondary disabled:opacity-60"
             >
