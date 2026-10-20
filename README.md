@@ -93,6 +93,7 @@ A **GitHub Actions workflow** (`.github/workflows/apk.yml`, manual trigger) buil
 
 - [Product Requirements (PRD v2)](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Discover technical implementation plan](docs/DISCOVER_TECHNICAL_IMPLEMENTATION_PLAN.md) — approved scope, source policy, phases, and acceptance criteria
 - [Building & signing](docs/BUILDING.md)
 - [Engineering remediation plan](docs/ENGINEERING_REMEDIATION_PLAN.md)
 - [Security & QA checklist](docs/SECURITY_AND_QA_CHECKLIST.md)

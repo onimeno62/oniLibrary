@@ -32,6 +32,23 @@ oniLibrary is **one reader UI, two shells**:
 **Data stays on-device**: localStorage (state) + IndexedDB (blobs). The optional
 search/source features that need network degrade gracefully offline.
 
+## Online discovery and source integrations
+
+The Discover screen's approved target behavior and implementation sequence are specified in
+[Discover Technical Implementation Plan](DISCOVER_TECHNICAL_IMPLEMENTATION_PLAN.md).
+That plan is authoritative for Discover-specific scope, acceptance criteria, and rollout.
+
+Key constraints:
+
+- Keep online catalog results distinct from the local library and Continue Reading shelves.
+- Put provider-specific behavior behind a capability-aware source adapter contract.
+- Use source-scoped remote identities (`sourceId + remoteId`) and conservative cross-source linking.
+- Handle partial source failures without discarding successful results.
+- Android is the first-class target for durable selected-chapter downloads; preserve PWA compatibility where practical and document platform limitations.
+- Recommendations are local-first and explainable; do not upload reading history for personalization.
+- OPDS and Komga are deferred optional integrations. Existing code must be audited before removal; retain them only if safe, disabled and hidden by default. They may later appear as separate Discover tabs/sections when explicitly enabled and configured.
+- Do not add arbitrary executable third-party extensions in the initial implementation. Design for a future adapter/extension contract without implementing an unsafe runtime.
+
 ## Android shell (android/app/)
 
 `MainActivity.java` — no Gradle, no Cordova:
