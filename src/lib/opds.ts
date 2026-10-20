@@ -14,6 +14,62 @@
 
 import type { ServerEntry } from "./types";
 
+/* ---------------- typed transport errors (plan §5 SourceResult) ---------------- */
+
+export type SourceErrorKind = "timeout" | "http" | "network" | "parse";
+
+/** Typed failure for every remote read — screens can branch on `kind`
+ *  (offline vs server error vs timeout) instead of string matching. */
+export class SourceError extends Error {
+  readonly kind: SourceErrorKind;
+  readonly status?: number;
+  constructor(kind: SourceErrorKind, message: string, status?: number) {
+    super(message);
+    this.name = "SourceError";
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+/** Default deadline for every remote read (plan §7: "Apply request timeouts"). */
+export const REMOTE_TIMEOUT_MS = 15_000;
+
+/** Race any promise against a deadline; rejects with a SourceError("timeout").
+ *  (The browser fetch path aborts the socket for real via AbortSignal; the
+ *  native bridge call is synchronous, so there the deadline only releases
+ *  the *caller* — see opdsFetchText.) */
+export function withDeadline<T>(
+  p: PromiseLike<T>,
+  ms: number = REMOTE_TIMEOUT_MS,
+  label = "request"
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new SourceError("timeout", `${label} timed out after ${ms}ms`)),
+      ms
+    );
+    Promise.resolve(p).then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
+function classifyFetchError(e: unknown, nativeReason: string | null): Error {
+  if (e instanceof SourceError) return e;
+  const reason = nativeReason || (e instanceof Error ? e.message : String(e));
+  const m = /^HTTP (\d{3})$/.exec(reason || "");
+  if (m) return new SourceError("http", reason, Number(m[1]));
+  if (/timed out|timeout/i.test(reason || "")) return new SourceError("timeout", reason);
+  return new SourceError("network", reason || "network error");
+}
+
 /* ---------------- bridge transport ---------------- */
 
 interface OniHttpBridge {
@@ -28,6 +84,7 @@ interface OniHttpBridge {
 }
 
 function bridge(): OniHttpBridge | undefined {
+  if (typeof window === "undefined") return undefined; // SSR / tests
   return (window as unknown as { OniAndroid?: OniHttpBridge }).OniAndroid;
 }
 
@@ -42,27 +99,41 @@ export function authHeaders(auth?: { user: string; pass: string } | null): Recor
   return { Authorization: `Basic ${btoa(bin)}` };
 }
 
-export async function opdsFetchText(url: string, headers: Record<string, string> = {}): Promise<string> {
+export async function opdsFetchText(
+  url: string,
+  headers: Record<string, string> = {},
+  timeoutMs: number = REMOTE_TIMEOUT_MS
+): Promise<string> {
   const b = bridge();
   if (b?.httpGetString) {
+    // bridge present: it is the authoritative transport inside the APK.
+    // A null/throwing return is a REAL failure (TLS/DNS/HTTP) — do NOT
+    // fall through to window.fetch here, that call always CORS-fails in
+    // the WebView and only doubles the latency (Phase 1 finding O4).
     try {
       const s = b.httpGetString(url, JSON.stringify(headers));
       if (s !== null && s !== undefined) return s;
     } catch {
-      /* fall through to fetch */
+      /* handled below via lastHttpError */
     }
+    const native = b.lastHttpError?.() ?? null;
+    throw classifyFetchError(new Error(native || "bridge fetch failed"), native);
   }
+  // plain browser (PWA/dev): real deadline via AbortSignal when available
   try {
-    const r = await fetch(url, { headers: { Accept: "application/atom+xml", ...headers } });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.text();
+    const signal =
+      typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(timeoutMs)
+        : undefined;
+    const r = await fetch(url, { headers: { Accept: "application/atom+xml", ...headers }, signal });
+    if (!r.ok) throw new SourceError("http", `HTTP ${r.status}`, r.status);
+    return await withDeadline(r.text(), timeoutMs, "read");
   } catch (e) {
-    // honest failure: prefer the native bridge's reason (TLS trust, DNS,
-    // HTTP status) over a bare TypeError, so "connection failed" toasts
-    // finally say WHY
-    const native = b?.lastHttpError?.();
-    const reason = native || (e instanceof Error ? e.message : String(e));
-    throw new Error(reason ? `${reason}` : "network error");
+    if (e instanceof SourceError) throw e;
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new SourceError("timeout", `request timed out after ${timeoutMs}ms`);
+    }
+    throw classifyFetchError(e, null);
   }
 }
 
@@ -85,18 +156,27 @@ export async function opdsFetchBinary(
         const info = JSON.parse(manifest) as { name: string; mime: string; size: number };
         const CHUNK = 96 * 1024;
         const chunks: Uint8Array[] = [];
+        let truncated = false;
         for (let off = 0; off < info.size; off += CHUNK) {
           const b64 = b.readImportChunk?.(off, CHUNK) ?? "";
-          if (!b64) break;
+          if (!b64) {
+            truncated = true; // short read — the staged file is incomplete
+            break;
+          }
           const bin = atob(b64);
           const arr = new Uint8Array(bin.length);
           for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
           chunks.push(arr);
-          if (chunks.reduce((a, c) => a + c.length, 0) > 1024 * 1024 * 1024) break;
+          if (chunks.reduce((a, c) => a + c.length, 0) > 1024 * 1024 * 1024) {
+            truncated = true; // over the hard cap — refuse, never lie
+            break;
+          }
         }
         b.clearPendingImport?.();
         const total = chunks.reduce((a, c) => a + c.length, 0);
-        if (total > 0) {
+        // verify-before-complete (plan §8): a short/interrupted transfer
+        // must never come back dressed as a valid File (Phase 1 finding O3)
+        if (total > 0 && total === info.size && !truncated) {
           return new File(chunks as unknown as BlobPart[], info.name || fallbackName, {
             type: info.mime || "application/octet-stream",
           });

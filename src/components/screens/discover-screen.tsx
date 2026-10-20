@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe, RefreshCw } from "lucide-react";
 import { SectionHeader, WorkCover } from "@/components/shared";
 import { MangaDexCard, FreeCatalogList, MdCover } from "@/components/sources/free-catalogs";
 import { useApp, useNav, continueReading, chapterProgressFraction } from "@/lib/store";
@@ -107,24 +107,54 @@ export function DiscoverScreen() {
 
   /* v1.4.0: the shelf previously labeled "Recently added" now shows the real
      MangaDex latest-uploads feed (user request); it degrades gracefully to
-     the local recently-added shelf when offline/disabled/failed */
+     the local recently-added shelf when offline/disabled. Failures get a
+     distinct retryable card instead of silently pretending to be offline
+     (plan §6 intentional states; Phase 1 findings D3/D7). */
   const [mdLatestItems, setMdLatestItems] = useState<MdManga[] | null>(null);
+  const [mdLatestLoading, setMdLatestLoading] = useState(false);
+  const [mdLatestFailed, setMdLatestFailed] = useState(false);
+  const [netTick, setNetTick] = useState(0); // bumped by online/offline events
+  const [retryTick, setRetryTick] = useState(0);
   const mdDisabled = useApp((s) => s.builtinDisabled.includes(MANGADEX_ID));
   const mdOffline = useApp((s) => s.settings.offlineMode);
+
+  useEffect(() => {
+    const sync = () => setNetTick((n) => n + 1); // connectivity changes refetch
+    window.addEventListener("online", sync);
+    window.addEventListener("offline", sync);
+    return () => {
+      window.removeEventListener("online", sync);
+      window.removeEventListener("offline", sync);
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
     const online = typeof navigator === "undefined" || navigator.onLine !== false;
     if (mdDisabled || mdOffline || !online) {
       setMdLatestItems(null);
+      setMdLatestLoading(false);
+      setMdLatestFailed(false);
       return;
     }
+    setMdLatestLoading(true);
+    setMdLatestFailed(false);
     mdLatest(0)
-      .then((list) => alive && setMdLatestItems(list.slice(0, 12)))
-      .catch(() => alive && setMdLatestItems(null));
+      .then((list) => {
+        if (!alive) return;
+        setMdLatestItems(list.slice(0, 12));
+        setMdLatestLoading(false);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setMdLatestItems(null);
+        setMdLatestFailed(true); // distinguishable from disabled/offline
+        setMdLatestLoading(false);
+      });
     return () => {
       alive = false;
     };
-  }, [mdDisabled, mdOffline]);
+  }, [mdDisabled, mdOffline, netTick, retryTick]);
 
   return (
     <div className="min-h-full px-5 pb-8">
@@ -269,6 +299,35 @@ export function DiscoverScreen() {
                 <p className="mt-1.5 truncate text-[12px] font-extrabold">{m.title}</p>
                 <p className="truncate text-[10px] font-semibold text-muted-foreground">{m.author || "MangaDex"}</p>
               </button>
+            ))}
+          </div>
+        </section>
+      ) : mdLatestFailed ? (
+        /* failed ≠ offline: show a retryable error card (plan §6) */
+        <section className="mt-6">
+          <SectionHeader title={t("disc.mdLatest")} />
+          <div className="flex flex-col items-center gap-2 rounded-3xl border border-red-500/25 bg-red-500/5 p-5 text-center">
+            <span className="text-[13px] font-extrabold text-red-500">{t("md.error")}</span>
+            <button
+              onClick={() => setRetryTick((n) => n + 1)}
+              className="flex h-9 items-center gap-1.5 rounded-full bg-coral-soft px-4 text-[12px] font-extrabold text-primary"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              {t("srch.retry")}
+            </button>
+          </div>
+        </section>
+      ) : mdLatestLoading && recentShelf.length === 0 ? (
+        /* skeleton while the remote shelf is in flight and there is nothing
+           local to show (Phase 1 finding D4) */
+        <section className="mt-6">
+          <SectionHeader title={t("disc.mdLatest")} />
+          <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="w-[96px] shrink-0">
+                <div className="aspect-[3/4] w-full animate-pulse rounded-2xl bg-secondary/70" />
+                <div className="mt-1.5 h-3 w-3/4 animate-pulse rounded bg-secondary/70" />
+              </div>
             ))}
           </div>
         </section>
