@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, Search, X, Download, Check, Globe, BookOpen, LibraryBig } from "lucide-react";
+import { RefreshCw, Search, X, Download, Check, Globe, BookOpen, LibraryBig, SlidersHorizontal } from "lucide-react";
 import { OverlayHeader, EmptyState, Chip } from "@/components/shared";
 import { MdCover } from "@/components/sources/free-catalogs";
 import { useApp, useNav } from "@/lib/store";
@@ -38,7 +38,8 @@ import {
 import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
 import { MANGADEX_ID } from "@/lib/builtin-sources";
 import { dedupeBy, resolveAddTarget } from "@/lib/search-contract";
-import type { Work } from "@/lib/types";
+import { MdFilterSheet, activeFilterCount } from "@/components/sources/md-filter-sheet";
+import type { Work, MdFeedFilters } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n";
 
 /* ---------------- detail / add sheet ---------------- */
@@ -308,7 +309,15 @@ function MdSheet({
 
 /* ---------------- browse grid ---------------- */
 
-export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; focusMangaId?: string }) {
+export function SourceScreen({
+  sourceId,
+  focusMangaId,
+  initialFilters,
+}: {
+  sourceId: string;
+  focusMangaId?: string;
+  initialFilters?: MdFeedFilters;
+}) {
   const { t } = useT();
   const disabled = useApp((s) => s.builtinDisabled.includes(MANGADEX_ID));
   const push = useNav((s) => s.push);
@@ -324,6 +333,9 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
   const [more, setMore] = useState(false);
   const [error, setError] = useState(false);
   const [sheetFor, setSheetFor] = useState<MdManga | null>(null);
+  /* plan §6: a real filter panel — server-side MangaDex filters (type/status/genre) */
+  const [filters, setFilters] = useState<MdFeedFilters>(initialFilters ?? {});
+  const [filterOpen, setFilterOpen] = useState(false);
   const focusDone = useRef(false);
   /* latest-wins: a slow response from an older tab/page/query must never
      commit into a newer view (plan §7; Phase 1 finding T1) */
@@ -342,10 +354,10 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
         // total instead of the `items.length % 24` guess (Phase 1 finding T7)
         const feed =
           which === "search"
-            ? await mdSearchFeed(q, p)
+            ? await mdSearchFeed(q, p, filters)
             : which === "latest"
-              ? await mdLatestFeed(p)
-              : await mdPopularFeed(p);
+              ? await mdLatestFeed(p, filters)
+              : await mdPopularFeed(p, filters);
         if (!current()) return; // stale response — drop it
         setTotal(feed.total);
         setItems((prev) => {
@@ -371,7 +383,7 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
         }
       }
     },
-    []
+    [filters]
   );
 
   useEffect(() => {
@@ -456,7 +468,36 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
         >
           <Search className="h-4.5 w-4.5" />
         </button>
+        {/* plan §6: the filter button opens an actual filter UI */}
+        <button
+          onClick={() => setFilterOpen(true)}
+          aria-label={t("flt.title")}
+          className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-secondary"
+        >
+          <SlidersHorizontal className="h-4.5 w-4.5" />
+          {activeFilterCount(filters) > 0 && (
+            <span
+              aria-hidden
+              className="absolute -end-0.5 -top-0.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-primary px-1 text-[9.5px] font-black text-primary-foreground"
+            >
+              {activeFilterCount(filters)}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* active filters — visible and removable, never silent (§6) */}
+      {activeFilterCount(filters) > 0 && (
+        <div className="mt-2 flex items-center gap-2">
+          <Chip
+            active
+            onClick={() => setFilters({})}
+          >
+            {t("flt.active", { n: activeFilterCount(filters) })}
+            <X className="ms-1 inline h-3 w-3" />
+          </Chip>
+        </div>
+      )}
 
       {/* tabs / search state */}
       <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto px-5 no-scrollbar">
@@ -558,6 +599,17 @@ export function SourceScreen({ sourceId, focusMangaId }: { sourceId: string; foc
           onAdded={(w) => push({ kind: "details", workId: w.id })}
         />
       )}
+
+      {/* plan §6: real filter sheet (server-side MangaDex filters) */}
+      <MdFilterSheet
+        open={filterOpen}
+        onOpenChange={setFilterOpen}
+        value={filters}
+        onApply={(f) => {
+          setFilters(f);
+          setFilterOpen(false);
+        }}
+      />
     </div>
   );
 }

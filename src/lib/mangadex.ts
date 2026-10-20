@@ -14,7 +14,7 @@
  *   downloads screen and progress tracking all work unchanged.
  */
 
-import type { Chapter, Work, WorkStatus, WorkType, ReaderMode, ReadingDirection } from "./types";
+import type { Chapter, Work, WorkStatus, WorkType, ReaderMode, ReadingDirection, MdFeedFilters } from "./types";
 import { opdsFetchText, opdsFetchBinary } from "./opds";
 import { putFile, blobToThumbDataUrl } from "./local-files";
 
@@ -138,18 +138,41 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /* ---------------- browse / search ([SRC-002]) ---------------- */
 
-function listQuery(order: string, offset: number, title?: string): string {
+/** sort orders the source honestly supports for browse/search feeds
+ *  (plan §5: capabilities are declared, never fabricated) */
+export type MdSortOrder = "followedCount" | "latestUploadedChapter" | "createdAt" | "title" | "relevance";
+
+/** Pure query builder — filter → API-param mapping lives here so it is
+ *  unit-testable (plan §13: filters have defined source semantics).
+ *  MangaDex semantics: status[]/originalLanguage[] are OR-joined server
+ *  side; includedTags[] (genres) are AND-joined server side. */
+export function buildListQuery(opts: {
+  order: MdSortOrder;
+  offset: number;
+  title?: string;
+  filters?: MdFeedFilters;
+}): string {
   const p = new URLSearchParams();
   p.set("limit", "24");
-  p.set("offset", String(offset * 24));
+  p.set("offset", String(opts.offset * 24));
   for (const r of RATINGS) p.append("contentRating[]", r);
   p.append("includes[]", "cover_art");
   p.append("includes[]", "author");
   p.append("includes[]", "artist");
   p.set("hasAvailableChapters", "true");
-  p.set(`order[${order}]`, "desc");
-  if (title) p.set("title", title);
+  p.set(`order[${opts.order}]`, "desc");
+  const f = opts.filters;
+  if (f) {
+    for (const s of f.status ?? []) p.append("status[]", s);
+    for (const l of f.originalLanguage ?? []) p.append("originalLanguage[]", l);
+    for (const t of f.includedTags ?? []) p.append("includedTags[]", t);
+  }
+  if (opts.title) p.set("title", opts.title);
   return `/manga?${p.toString()}`;
+}
+
+function listQuery(order: MdSortOrder, offset: number, title?: string): string {
+  return buildListQuery({ order, offset, title });
 }
 
 async function listMangas(path: string): Promise<MdManga[]> {
@@ -183,17 +206,43 @@ export function mdSearch(query: string, page: number): Promise<MdManga[]> {
   return listMangas(listQuery("relevance", page, query.trim()));
 }
 
-/** total-aware variants used by paged browsers (source screen) */
-export function mdPopularFeed(page: number): Promise<MdFeed> {
-  return listMangasWithTotal(listQuery("followedCount", page));
+/** total-aware variants used by paged browsers (source screen);
+ *  filters are applied server-side when the source supports them (§6) */
+export function mdPopularFeed(page: number, filters?: MdFeedFilters): Promise<MdFeed> {
+  return listMangasWithTotal(buildListQuery({ order: "followedCount", offset: page, filters }));
 }
 
-export function mdLatestFeed(page: number): Promise<MdFeed> {
-  return listMangasWithTotal(listQuery("latestUploadedChapter", page));
+export function mdLatestFeed(page: number, filters?: MdFeedFilters): Promise<MdFeed> {
+  return listMangasWithTotal(buildListQuery({ order: "latestUploadedChapter", offset: page, filters }));
 }
 
-export function mdSearchFeed(query: string, page: number): Promise<MdFeed> {
-  return listMangasWithTotal(listQuery("relevance", page, query.trim()));
+export function mdSearchFeed(query: string, page: number, filters?: MdFeedFilters): Promise<MdFeed> {
+  return listMangasWithTotal(
+    buildListQuery({ order: "relevance", offset: page, title: query.trim(), filters })
+  );
+}
+
+/* ---------------- genres/tags (filter panel data, §6) ---------------- */
+
+export interface MdTag {
+  id: string;
+  name: string;
+}
+
+let tagCache: MdTag[] | null = null;
+
+/** genre/tag list for the filter panel (GET /manga/tag). Cached per session. */
+export async function mdTagList(): Promise<MdTag[]> {
+  if (tagCache) return tagCache;
+  const res = await mdGet<{ data?: Array<{ id: string; attributes?: { name?: TextMap } }> }>(
+    "/manga/tag?limit=100"
+  );
+  const tags = (res.data ?? [])
+    .map((t) => ({ id: t.id, name: pickText(t.attributes?.name) }))
+    .filter((t) => t.name.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  tagCache = tags;
+  return tags;
 }
 
 export async function mdManga(id: string): Promise<MdManga | null> {
