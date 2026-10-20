@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe, RefreshCw } from "lucide-react";
 import { SectionHeader, WorkCover } from "@/components/shared";
 import { MangaDexCard, FreeCatalogList, MdCover } from "@/components/sources/free-catalogs";
+import { MdFilterSheet } from "@/components/sources/md-filter-sheet";
 import { useApp, useNav, continueReading, chapterProgressFraction } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
@@ -117,6 +118,9 @@ export function DiscoverScreen() {
   const [retryTick, setRetryTick] = useState(0);
   const mdDisabled = useApp((s) => s.builtinDisabled.includes(MANGADEX_ID));
   const mdOffline = useApp((s) => s.settings.offlineMode);
+  /* plan §6 (D2): the filter button opens the real MangaDex filter sheet;
+     applying jumps into the source browser with the filters applied */
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   useEffect(() => {
     const sync = () => setNetTick((n) => n + 1); // connectivity changes refetch
@@ -206,7 +210,8 @@ export function DiscoverScreen() {
         <p className="text-[14px] font-semibold text-muted-foreground">{t("disc.subtitle")}</p>
       </div>
 
-      {/* search */}
+      {/* search + real filter UI (plan §6: the filter button must open an
+          actual filter panel — D2; extensions stay reachable from More) */}
       <div className="mt-4 flex items-center gap-2">
         <button
           onClick={() => push({ kind: "search" })}
@@ -216,9 +221,9 @@ export function DiscoverScreen() {
           <span className="w-full truncate text-[14px] font-semibold text-muted-foreground">{t("disc.searchPlaceholder")}</span>
         </button>
         <button
-          onClick={() => push({ kind: "extensions" })}
-          aria-label={t("ext.title")}
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-card shadow-[0_6px_18px_-12px_rgba(43,36,29,0.35)] transition-colors hover:bg-secondary"
+          onClick={() => setFilterSheetOpen(true)}
+          aria-label={t("flt.title")}
+          className="relative flex h-11 w-11 items-center justify-center rounded-full bg-card shadow-[0_6px_18px_-12px_rgba(43,36,29,0.35)] transition-colors hover:bg-secondary"
         >
           <SlidersHorizontal className="h-4.5 w-4.5" />
         </button>
@@ -477,6 +482,15 @@ export function DiscoverScreen() {
           </div>
         </div>
       </section>
+      {/* plan §6: real filter sheet (server-side MangaDex filters) */}
+      <MdFilterSheet
+        open={filterSheetOpen}
+        onOpenChange={setFilterSheetOpen}
+        onApply={(filters) => {
+          setFilterSheetOpen(false);
+          push({ kind: "source", sourceId: MANGADEX_ID, filters });
+        }}
+      />
     </div>
   );
 }

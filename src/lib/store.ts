@@ -30,6 +30,7 @@ import type {
   SavedFilter,
   LibraryFilterSnapshot,
   SmartRule,
+  MdFeedFilters,
 } from "./types";
 
 /* ============================================================
@@ -44,7 +45,7 @@ export type Overlay =
   | { kind: "highlights"; workId?: string }
   | { kind: "search" }
   | { kind: "catalog"; serverId: string }
-  | { kind: "source"; sourceId: string; focusMangaId?: string }
+  | { kind: "source"; sourceId: string; focusMangaId?: string; filters?: MdFeedFilters }
   | { kind: "vault" }
   | { kind: "extensions" }
   | { kind: "statistics" }
@@ -79,6 +80,11 @@ export const useNav = create<NavState>((set) => ({
   openReader: (workId, chapterId, page) =>
     set((s) => ({ stack: [...s.stack, { kind: "reader", workId, chapterId, page }] })),
 }));
+
+/* dev-only QA hook: lets browser probes read the overlay stack */
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  (window as unknown as { __oninav?: unknown }).__oninav = useNav;
+}
 
 /* ============================================================
    App store (persisted)

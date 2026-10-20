@@ -124,7 +124,7 @@ function OverlayRenderer({ overlay }: { overlay: Overlay }) {
     case "catalog":
       return <CatalogScreen serverId={overlay.serverId} />;
     case "source":
-      return <SourceScreen sourceId={overlay.sourceId} focusMangaId={overlay.focusMangaId} />;
+      return <SourceScreen sourceId={overlay.sourceId} focusMangaId={overlay.focusMangaId} initialFilters={overlay.filters} />;
     case "vault":
       return <VaultScreen />;
     case "extensions":

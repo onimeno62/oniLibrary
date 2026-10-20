@@ -54,6 +54,16 @@ export interface WorkSourceMeta {
   formats: string[]; // e.g. ["CBZ", "RAR", "PDF", "Images"]
 }
 
+/** Remote catalog filters a source can honestly apply server-side
+ *  (plan §5 capabilities / §6 filters). MangaDex mapping:
+ *  status → `status[]`, originalLanguage → `originalLanguage[]`,
+ *  includedTags → `includedTags[]` (genre/tag UUIDs, AND-joined). */
+export interface MdFeedFilters {
+  status?: string[]; // "ongoing" | "completed" | "hiatus" | "cancelled"
+  originalLanguage?: string[]; // "ja" (Manga) | "ko" (Manhwa) | "zh" | "zh-hk" (Manhua)
+  includedTags?: string[]; // MangaDex tag UUIDs
+}
+
 export interface Work {
   id: string;
   title: string;
