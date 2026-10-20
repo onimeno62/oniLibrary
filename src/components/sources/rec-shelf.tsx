@@ -19,7 +19,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, SlidersHorizontal, Sparkles, X } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { SectionHeader } from "@/components/shared";
 import { MdCover } from "@/components/sources/free-catalogs";
@@ -304,6 +304,7 @@ function RecPrefsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             <Sparkles className="h-4.5 w-4.5 text-primary" />
             {t("rec.sheetTitle")}
           </DialogTitle>
+          <DialogDescription className="sr-only">{t("rec.sheetPrivacy")}</DialogDescription>
         </DialogHeader>
 
         {/* master switch */}
