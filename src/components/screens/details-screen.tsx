@@ -60,7 +60,6 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const pop = useNav((s) => s.pop);
   const openReader = useNav((s) => s.openReader);
   const push = useNav((s) => s.push);
-  const startDownload = useApp((s) => s.startDownload);
   const markChapterRead = useApp((s) => s.markChapterRead);
   const [sortNewest, setSortNewest] = useState(true);
   const [expanded, setExpanded] = useState(false);
@@ -571,9 +570,12 @@ export function DetailsScreen({ workId }: { workId: string }) {
                       ]);
                       toast({ title: t("dl.queued"), description: `${t("common.chapter")} ${ch.number}` });
                     } else {
-                      // seeded demo library — keep the legacy simulated queue
-                      startDownload(work.id, ch.id);
-                      toast({ title: `${t("det.download")} — ${t("common.chapter")} ${ch.number}` });
+                      // Phase 4 (X1): no simulated queue — local/OPDS works
+                      // have no per-chapter source to download from
+                      toast({
+                        title: t("dl.unsupportedToast"),
+                        description: `${t("common.chapter")} ${ch.number}`,
+                      });
                     }
                   }}
                   onMarkRead={() => markChapterRead(work.id, ch.id, !ch.isRead, true)}

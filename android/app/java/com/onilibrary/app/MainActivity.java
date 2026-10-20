@@ -99,6 +99,23 @@ public class MainActivity extends Activity {
     private String pendingImportName = null;
     private String pendingImportMime = "application/octet-stream";
 
+    // Phase 4 (finding A2): fetchToCache stages into its OWN token-addressed
+    // slot instead of stealing the single import slot — a background cover
+    // fetch can no longer destroy an in-flight user import
+    private static final class StagedFile {
+        final File file;
+        final String name;
+        final String mime;
+        final long createdAt;
+        StagedFile(File f, String n, String m, long ts) { file = f; name = n; mime = m; createdAt = ts; }
+    }
+    private final Object stagedLock = new Object();
+    private final java.util.LinkedHashMap<String, StagedFile> stagedFiles = new java.util.LinkedHashMap<>();
+
+    // Phase 4 (finding A1): real app version in the HTTP UA (was hardcoded 1.3,
+    // a value uploads.mangadex.org is known to refuse in some WebView flows)
+    private String httpUserAgent = null;
+
     // in-flight <input type=file> callback (must be answered exactly once)
     private ValueCallback<Uri[]> pendingFileChooser = null;
 
@@ -561,8 +578,24 @@ public class MainActivity extends Activity {
             c.setConnectTimeout(8000);
             c.setReadTimeout(20000);
             c.setInstanceFollowRedirects(true);
-            c.setRequestProperty("User-Agent", "oniLibrary/1.3 (Android)");
+            c.setRequestProperty("User-Agent", httpUa());
             return c;
+        }
+
+        /** "oniLibrary/<versionName> (Android)" — computed once from the
+            package info so the UA can never drift from the manifest again */
+        private String httpUa() {
+            String ua = httpUserAgent;
+            if (ua == null) {
+                String v = "1.4";
+                try {
+                    v = MainActivity.this.getPackageManager()
+                            .getPackageInfo(MainActivity.this.getPackageName(), 0).versionName;
+                } catch (Exception ignored) { /* keep the safe fallback */ }
+                ua = "oniLibrary/" + v + " (Android)";
+                httpUserAgent = ua;
+            }
+            return ua;
         }
 
         /** CORS-free GET of a text document (OPDS feeds); null on failure */
@@ -600,56 +633,14 @@ public class MainActivity extends Activity {
         }
 
         /** CORS-free download of a binary (cover / acquisition file): stages it
-            into the SAME pending-import slot the Share-in flow uses, so the JS
-            side pulls it with readImportChunk and clears with clearPendingImport.
-            Returns the JSON manifest, or "null" on failure. */
+            into its own token-addressed slot (Phase 4 finding A2 — this used
+            to steal the shared import slot, destroying in-flight imports) so
+            the JS side pulls it with readStagedChunk and clears it with
+            clearStagedFile. Returns the JSON manifest {name,mime,size,token},
+            or "null" on failure. */
         @JavascriptInterface
         public String fetchToCache(String url) {
-            // https only — cleartext is disabled at the manifest level
-            if (url == null || !url.startsWith("https://")) { lastHttpError = "insecure url"; return "null"; }
-            InputStream in = null;
-            try {
-                HttpURLConnection c = openGet(url);
-                c.connect();
-                int code = c.getResponseCode();
-                if (code < 200 || code >= 300) { c.disconnect(); return "null"; }
-                in = c.getInputStream();
-                String mime = c.getContentType();
-                if (mime != null) { int i = mime.indexOf(';'); if (i > 0) mime = mime.substring(0, i).trim(); }
-
-                String rawName = url.substring(url.lastIndexOf('/') + 1);
-                int q = rawName.indexOf('?');
-                if (q >= 0) rawName = rawName.substring(0, q);
-                if (rawName.isEmpty()) rawName = "opds-download";
-                rawName = rawName.replaceAll("[\\\\/:*?\"<>|]", "_");
-
-                synchronized (importLock) {
-                    if (pendingImportFile != null) pendingImportFile.delete();
-                    File dir = new File(getCacheDir(), "oniImport");
-                    if (!dir.exists()) dir.mkdirs();
-                    File out = new File(dir, "fetch-" + System.currentTimeMillis() + "-" + rawName);
-                    long total = 0;
-                    try (OutputStream os = new FileOutputStream(out)) {
-                        byte[] buf = new byte[64 * 1024];
-                        int n;
-                        while ((n = in.read(buf)) > 0) {
-                            os.write(buf, 0, n);
-                            total += n;
-                            if (total > 1024L * 1024L * 1024L) throw new IOException("too large");
-                        }
-                    }
-                    pendingImportFile = out;
-                    pendingImportName = rawName;
-                    pendingImportMime = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
-                    return "{\"name\":" + jsonStr(rawName)
-                            + ",\"mime\":" + jsonStr(pendingImportMime)
-                            + ",\"size\":" + total + "}";
-                }
-            } catch (Exception e) {
-                return "null";
-            } finally {
-                if (in != null) { try { in.close(); } catch (IOException ignored) { } }
-            }
+            return stageDownload(url, null);
         }
 
         /** fetchToCache with extra request headers (v1.3.0) — Standard Ebooks
@@ -657,8 +648,12 @@ public class MainActivity extends Activity {
             calls this 2-arg overload, older call sites keep the 1-arg one. */
         @JavascriptInterface
         public String fetchToCache(String url, String headersJson) {
+            return stageDownload(url, headersJson);
+        }
+
+        private String stageDownload(String url, String headersJson) {
             // https only — cleartext is disabled at the manifest level
-            if (url == null || !url.startsWith("https://")) return "null";
+            if (url == null || !url.startsWith("https://")) { lastHttpError = "insecure url"; return "null"; }
             InputStream in = null;
             try {
                 HttpURLConnection c = openGet(url);
@@ -685,32 +680,100 @@ public class MainActivity extends Activity {
                 if (rawName.isEmpty()) rawName = "opds-download";
                 rawName = rawName.replaceAll("[\\\\/:*?\"<>|]", "_");
 
-                synchronized (importLock) {
-                    if (pendingImportFile != null) pendingImportFile.delete();
-                    File dir = new File(getCacheDir(), "oniImport");
-                    if (!dir.exists()) dir.mkdirs();
-                    File out = new File(dir, "fetch-" + System.currentTimeMillis() + "-" + rawName);
-                    long total = 0;
-                    try (OutputStream os = new FileOutputStream(out)) {
-                        byte[] buf = new byte[64 * 1024];
-                        int n;
-                        while ((n = in.read(buf)) > 0) {
-                            os.write(buf, 0, n);
-                            total += n;
-                            if (total > 1024L * 1024L * 1024L) throw new IOException("too large");
-                        }
+                File dir = new File(getCacheDir(), "oniImport");
+                if (!dir.exists()) dir.mkdirs();
+                final String token = java.util.UUID.randomUUID().toString().replace("-", "");
+                File out = new File(dir, "fetch-" + token + "-" + rawName);
+                long total = 0;
+                try (OutputStream os = new FileOutputStream(out)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        os.write(buf, 0, n);
+                        total += n;
+                        if (total > 1024L * 1024L * 1024L) throw new IOException("too large");
                     }
-                    pendingImportFile = out;
-                    pendingImportName = rawName;
-                    pendingImportMime = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
-                    return "{\"name\":" + jsonStr(rawName)
-                            + ",\"mime\":" + jsonStr(pendingImportMime)
-                            + ",\"size\":" + total + "}";
                 }
+                String mimeOut = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+                synchronized (stagedLock) {
+                    long now = System.currentTimeMillis();
+                    stagedFiles.put(token, new StagedFile(out, rawName, mimeOut, now));
+                    // evict slots nobody consumed (10 min) and keep the map small
+                    java.util.Iterator<java.util.Map.Entry<String, StagedFile>> it = stagedFiles.entrySet().iterator();
+                    while (it.hasNext()) {
+                        StagedFile sf = it.next().getValue();
+                        if (now - sf.createdAt > 10 * 60 * 1000L) { sf.file.delete(); it.remove(); }
+                    }
+                    while (stagedFiles.size() > 8) {
+                        String oldestKey = null;
+                        long oldest = Long.MAX_VALUE;
+                        for (java.util.Map.Entry<String, StagedFile> e : stagedFiles.entrySet()) {
+                            if (e.getValue().createdAt < oldest) { oldest = e.getValue().createdAt; oldestKey = e.getKey(); }
+                        }
+                        if (oldestKey == null) break;
+                        StagedFile sf = stagedFiles.remove(oldestKey);
+                        if (sf != null) sf.file.delete();
+                    }
+                }
+                return "{\"name\":" + jsonStr(rawName)
+                        + ",\"mime\":" + jsonStr(mimeOut)
+                        + ",\"size\":" + total
+                        + ",\"token\":" + jsonStr(token) + "}";
             } catch (Exception e) {
                 return "null";
             } finally {
                 if (in != null) { try { in.close(); } catch (IOException ignored) { } }
+            }
+        }
+
+        /** base64 chunk of a token-addressed staged download (Phase 4 A2);
+            "" when the slot is gone (consumed/evicted) or out of range */
+        @JavascriptInterface
+        public String readStagedChunk(String token, int offset, int length) {
+            if (token == null) return "";
+            synchronized (stagedLock) {
+                StagedFile sf = stagedFiles.get(token);
+                if (sf == null || !sf.file.exists()) return "";
+                try (RandomAccessFile raf = new RandomAccessFile(sf.file, "r")) {
+                    int len = Math.max(0, Math.min(length, IMPORT_CHUNK));
+                    if (offset < 0 || offset >= raf.length()) return "";
+                    len = (int) Math.min(len, raf.length() - offset);
+                    byte[] buf = new byte[len];
+                    raf.seek(offset);
+                    raf.readFully(buf);
+                    return Base64.encodeToString(buf, Base64.NO_WRAP);
+                } catch (Exception e) {
+                    return "";
+                }
+            }
+        }
+
+        /** delete the staged download that belongs to this token */
+        @JavascriptInterface
+        public void clearStagedFile(String token) {
+            if (token == null) return;
+            synchronized (stagedLock) {
+                StagedFile sf = stagedFiles.remove(token);
+                if (sf != null) sf.file.delete();
+            }
+        }
+
+        /** Phase 4 (finding B6): true when the active network is metered —
+            lets the Wi-Fi-only download policy work without guessing from
+            the web Network Information API. Unknown → false (never block). */
+        @JavascriptInterface
+        public boolean isMetered() {
+            try {
+                android.net.ConnectivityManager cm =
+                        (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+                if (cm == null) return false;
+                android.net.Network n = cm.getActiveNetwork();
+                if (n == null) return false;
+                android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                if (caps == null) return false;
+                return !caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
+            } catch (Exception e) {
+                return false;
             }
         }
 

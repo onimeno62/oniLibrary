@@ -22,7 +22,7 @@ import { STORAGE } from "@/lib/seed";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { cancelBgDownload, enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
+import { cancelBgDownload, enqueueMangaDexChapterDownloads, pumpBgDownloads } from "@/lib/bg-downloads";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -295,22 +295,36 @@ function ActiveRow({
   meta?: { title: string; cover: string; color?: string; num: number; workId: string; streamable: boolean; pages: number; publishedAt: string; sourceChapterId?: string };
   onOpen: () => void;
 }) {
-  const { t, lang } = useT();
+  const { t } = useT();
   const pause = useApp((s) => s.pauseDownload);
   const resume = useApp((s) => s.resumeDownload);
   const cancel = useApp((s) => s.cancelDownload);
   if (!meta) return null;
   const paused = d.status === "PAUSED" || d.status === "QUEUED";
-  // v1.4.0: real background rows cannot be paused mid-page — cancelling
-  // signals the pipeline through the bg registry and removes the row
+  // Phase 4: the durable pump drives every real row; pause aborts any
+  // in-flight pipeline (the registry signals it) and resume re-queues it
   const isBgRow = d.id.startsWith("dlbg-");
   const stop = () => {
     if (isBgRow) cancelBgDownload(d.id);
     cancel(d.id);
   };
+  const hold = () => {
+    if (isBgRow) cancelBgDownload(d.id);
+    pause(d.id);
+  };
+  const unpause = () => {
+    resume(d.id);
+    pumpBgDownloads(); // wake the pump — it will honestly resolve non-source rows too
+  };
+  // honest state line: paused rows show why they are not moving
+  const stateLine = paused
+    ? d.status === "PAUSED"
+      ? t("dl.pausedState")
+      : t("dl.queue")
+    : `${d.downloadedMb.toFixed(1)} MB / ${d.totalMb.toFixed(1)} MB${d.speedMbps > 0 ? ` · ${d.speedMbps.toFixed(1)} MB/s` : ""}`;
   return (
     <div className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-2.5 shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)]">
-      <button onClick={onOpen}>
+      <button onClick={onOpen} aria-label={meta.title}>
         <WorkCover src={meta.cover} color={meta.color} title={meta.title} className="h-[64px] w-[52px] rounded-2xl" sizes="52px" />
       </button>
       <div className="min-w-0 flex-1">
@@ -322,31 +336,17 @@ function ActiveRow({
           <ProgressBar value={d.progress} className="h-[4px] flex-1" />
           <span className="shrink-0 text-[10px] font-black text-muted-foreground">{Math.round(d.progress)}%</span>
         </div>
-        <p className="mt-1 text-[10px] font-bold text-muted-foreground">
-          {paused ? (
-            <span className="text-primary">{d.status === "PAUSED" ? t("dl.pausedState") : t("dl.queue")}</span>
-          ) : (
-            `${d.downloadedMb.toFixed(1)} MB / ${d.totalMb.toFixed(1)} MB · ${d.speedMbps.toFixed(1)} MB/s`
-          )}
+        <p className="mt-1 text-[10px] font-bold text-muted-foreground" dir="ltr">
+          {paused ? <span className="text-primary">{stateLine}</span> : stateLine}
         </p>
       </div>
-      {isBgRow ? (
-        <button
-          onClick={stop}
-          aria-label={t("dl.cancelDl")}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      ) : (
-        <button
-          onClick={() => (paused ? resume(d.id) : pause(d.id))}
-          aria-label={paused ? t("dl.resume") : t("dl.pause")}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-primary"
-        >
-          {paused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
-        </button>
-      )}
+      <button
+        onClick={paused ? unpause : hold}
+        aria-label={paused ? t("dl.resume") : t("dl.pause")}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-primary"
+      >
+        {paused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
+      </button>
       <button
         onClick={stop}
         aria-label={t("dl.cancelDl")}
@@ -369,15 +369,14 @@ function DoneRow({
 }) {
   const { t } = useT();
   const remove = useApp((s) => s.removeDownload);
-  const retry = useApp((s) => s.retryDownload);
   const works = useApp((s) => s.works);
   const failed = d.status === "ERROR";
   if (!meta) return null;
   // failed downloads must not "open" into the reader — the tap retries instead
   const primary = () => {
     if (!failed) return onRead();
-    // v1.4.0: source chapters retry through the REAL background pipeline;
-    // legacy demo rows keep the legacy queue
+    // Phase 4: source chapters retry through the REAL background pump;
+    // rows without a source adapter say so instead of faking a retry
     const w = works.find((x) => x.id === meta.workId);
     if (meta.streamable && w) {
       const idx = w.chapters.findIndex((c) => c.id === d.chapterId);
@@ -385,14 +384,23 @@ function DoneRow({
       if (idx >= 0 && ch?.sourceChapterId) {
         remove(d.id);
         enqueueMangaDexChapterDownloads(w, [
-          { chapterIndex: idx, md: { id: ch.sourceChapterId, number: ch.number, title: "", pages: ch.pages, publishedAt: ch.releaseDate } },
+          { chapterIndex: idx, md: { id: ch.sourceChapterId, number: ch.number, title: ch.title, pages: ch.pages, publishedAt: ch.releaseDate } },
         ]);
         toast({ title: t("dl.queued"), description: meta.title });
         return;
       }
     }
-    retry(d.id);
+    toast({ title: t("dl.errUnsupported"), description: meta.title });
   };
+  const retryLabel = d.error === "network"
+    ? t("dl.errNetwork")
+    : d.error === "incomplete"
+      ? t("dl.errIncomplete")
+      : d.error === "unsupported"
+        ? t("dl.errUnsupported")
+        : d.error === "missing"
+          ? t("dl.errMissing")
+          : (d.error ?? t("dl.failedState"));
   return (
     <div className="flex items-center gap-3 rounded-3xl border border-border/60 bg-card p-2.5 shadow-[0_8px_20px_-16px_rgba(43,36,29,0.4)]">
       <button onClick={primary}>
@@ -405,9 +413,7 @@ function DoneRow({
         </p>
         <p className="mt-0.5 text-[11px] font-bold text-muted-foreground">
           {failed ? (
-            <span className="text-destructive">
-              {d.error === "network" ? t("dl.errNetwork") : d.error ?? t("dl.failedState")}
-            </span>
+            <span className="text-destructive">{retryLabel}</span>
           ) : (
             `${d.downloadedMb.toFixed(1)} MB • ${t("dl.completeState")}`
           )}
@@ -415,7 +421,7 @@ function DoneRow({
       </button>
       {failed ? (
         <button
-          onClick={() => retry(d.id)}
+          onClick={primary}
           aria-label={t("dl.retry")}
           className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-foreground hover:bg-accent"
         >
@@ -443,7 +449,7 @@ function DoneRow({
             </DropdownMenuItem>
           )}
           {failed && (
-            <DropdownMenuItem onClick={() => retry(d.id)} className="gap-2.5 rounded-xl text-[13px] font-semibold">
+            <DropdownMenuItem onClick={primary} className="gap-2.5 rounded-xl text-[13px] font-semibold">
               <RotateCcw className="h-4 w-4 text-primary" /> {t("dl.retry")}
             </DropdownMenuItem>
           )}
