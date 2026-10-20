@@ -879,6 +879,7 @@ const en = {
   "ntf.bgFailedBody": "Download failed — check your connection",
   "dl.queued": "Download queued",
   "disc.mdLatest": "Latest on MangaDex",
+  "disc.slide": "Go to slide {n}",
   /* plan §9 (Phase 5): on-device recommendations */
   "rec.title": "Picked for you",
   "rec.titleNeutral": "Popular on MangaDex",
@@ -1789,6 +1790,7 @@ const fa: Record<TranslationKey, string> = {
   "ntf.bgFailedBody": "دانلود ناموفق بود — اتصال را بررسی کنید",
   "dl.queued": "دانلود در صف قرار گرفت",
   "disc.mdLatest": "تازه‌ترین‌های MangaDex",
+  "disc.slide": "رفتن به اسلاید {n}",
   /* توصیه‌های روی دستگاه (فاز ۵) */
   "rec.title": "برگزیده برای شما",
   "rec.titleNeutral": "محبوب در MangaDex",

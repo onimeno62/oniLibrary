@@ -245,7 +245,7 @@ export function SearchScreen() {
         <button
           onClick={pop}
           aria-label={t("common.back")}
-          className="flex h-10 w-10 items-center justify-center rounded-full text-foreground hover:bg-secondary"
+          className="flex h-11 w-11 items-center justify-center rounded-full text-foreground hover:bg-secondary"
         >
           <X className="h-5 w-5" />
         </button>
@@ -266,7 +266,7 @@ export function SearchScreen() {
             <button
               onClick={() => onQueryChange("")}
               aria-label={t("srch.clear")}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary"
+              className="-me-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary"
             >
               <X className="h-4 w-4" />
             </button>

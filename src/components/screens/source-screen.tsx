@@ -227,13 +227,13 @@ function MdSheet({
                   <div className="mt-2 flex items-center gap-2">
                     <button
                       onClick={() => setPicked(new Set(chapters.slice(0, 10).map((c) => c.id)))}
-                      className="rounded-full bg-secondary px-3 py-1 text-[11px] font-bold text-secondary-foreground transition-colors hover:bg-accent"
+                      className="flex min-h-11 items-center rounded-full bg-secondary px-4 text-[11.5px] font-bold text-secondary-foreground transition-colors hover:bg-accent"
                     >
                       {t("md.latest10")}
                     </button>
                     <button
                       onClick={() => setPicked(new Set(chapters.map((c) => c.id)))}
-                      className="rounded-full bg-secondary px-3 py-1 text-[11px] font-bold text-secondary-foreground transition-colors hover:bg-accent"
+                      className="flex min-h-11 items-center rounded-full bg-secondary px-4 text-[11.5px] font-bold text-secondary-foreground transition-colors hover:bg-accent"
                     >
                       {t("md.all")} ({chapters.length})
                     </button>
@@ -452,11 +452,16 @@ export function SourceScreen({
               if (e.key === "Enter") runSearch();
             }}
             placeholder={t("md.searchHint")}
+            aria-label={t("md.searchHint")}
             className="w-full bg-transparent text-[14px] font-semibold outline-none placeholder:text-muted-foreground"
           />
           {query && (
-            <button onClick={clearSearch} aria-label={t("srch.clear")}>
-              <X className="h-4 w-4 text-muted-foreground" />
+            <button
+              onClick={clearSearch}
+              aria-label={t("srch.clear")}
+              className="-me-1.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary"
+            >
+              <X className="h-4 w-4" />
             </button>
           )}
         </div>

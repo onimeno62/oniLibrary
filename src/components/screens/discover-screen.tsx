@@ -194,14 +194,14 @@ export function DiscoverScreen() {
           <button
             onClick={() => push({ kind: "search" })}
             aria-label={t("common.search")}
-            className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-secondary"
+            className="flex h-11 w-11 items-center justify-center rounded-full transition-colors hover:bg-secondary"
           >
             <Search className="h-[21px] w-[21px]" />
           </button>
           <button
             onClick={() => push({ kind: "extensions" })}
             aria-label={t("ext.title")}
-            className="flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-secondary"
+            className="flex h-11 w-11 items-center justify-center rounded-full transition-colors hover:bg-secondary"
           >
             <Settings2 className="h-[21px] w-[21px]" />
           </button>
@@ -250,7 +250,7 @@ export function DiscoverScreen() {
               key={id}
               onClick={() => (isMore ? push({ kind: "extensions" }) : setCat(id))}
               className={cn(
-                "shrink-0 rounded-full px-4 py-1.5 text-[13px] font-bold transition-all",
+                "flex h-11 shrink-0 items-center rounded-full px-4 text-[13px] font-bold transition-all",
                 !isMore && cat === id
                   ? "bg-coral-gradient text-white shadow-[0_6px_16px_-6px_rgba(248,105,76,0.55)]"
                   : "bg-card text-secondary-foreground shadow-[0_4px_12px_-8px_rgba(43,36,29,0.3)] hover:bg-secondary"
@@ -474,17 +474,23 @@ export function DiscoverScreen() {
               </button>
             ))}
           </div>
-          <div className="absolute bottom-3 right-4 z-10 flex gap-1">
+          <div className="absolute bottom-2 right-3 z-10 flex items-center">
             {bannerSlides.map((_, i) => (
+              /* full 44px hit area around a small visual dot (audit D6) */
               <button
                 key={i}
                 onClick={() => goBanner(i)}
-                aria-label={`Slide ${i + 1}`}
-                className={cn(
-                  "h-1.5 rounded-full transition-all",
-                  i === bannerIdx ? "w-4 bg-white" : "w-1.5 bg-white/50 hover:bg-white/80"
-                )}
-              />
+                aria-label={t("disc.slide", { n: i + 1 })}
+                aria-current={i === bannerIdx}
+                className="flex h-11 w-11 items-center justify-center"
+              >
+                <span
+                  className={cn(
+                    "rounded-full transition-all",
+                    i === bannerIdx ? "h-1.5 w-4 bg-white" : "h-1.5 w-1.5 bg-white/50"
+                  )}
+                />
+              </button>
             ))}
           </div>
         </div>
