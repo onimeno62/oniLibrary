@@ -81,6 +81,12 @@ interface OniHttpBridge {
   pendingImportInfo?: () => string | null;
   readImportChunk?: (offset: number, length: number) => string;
   clearPendingImport?: () => void;
+  /** Phase 4 (A2) — token-addressed staged downloads: a cover fetch can no
+      longer steal the single import slot from an in-flight user import */
+  readStagedChunk?: (token: string, offset: number, length: number) => string;
+  clearStagedFile?: (token: string) => void;
+  /** Phase 4 (B6) — ConnectivityManager verdict for the Wi-Fi-only policy */
+  isMetered?: () => boolean;
 }
 
 function bridge(): OniHttpBridge | undefined {
@@ -153,12 +159,27 @@ export async function opdsFetchBinary(
           ? (b.fetchToCache as (u: string, h?: string) => string | null)(url, JSON.stringify(headers))
           : b.fetchToCache(url);
       if (manifest && manifest !== "null") {
-        const info = JSON.parse(manifest) as { name: string; mime: string; size: number };
+        const info = JSON.parse(manifest) as { name: string; mime: string; size: number; token?: string };
         const CHUNK = 96 * 1024;
         const chunks: Uint8Array[] = [];
         let truncated = false;
+        // Phase 4 (A2): staged files are addressed by a token — a cover
+        // fetch can no longer steal the slot of an in-flight user import.
+        // Falls back to the legacy single-slot calls on older bridges.
+        const readChunk = (off: number, len: number): string =>
+          info.token && typeof b.readStagedChunk === "function"
+            ? b.readStagedChunk(info.token, off, len)
+            : (b.readImportChunk?.(off, len) ?? "");
+        const clearStaged = () => {
+          try {
+            if (info.token && typeof b.clearStagedFile === "function") b.clearStagedFile(info.token);
+            else b.clearPendingImport?.();
+          } catch {
+            /* best-effort */
+          }
+        };
         for (let off = 0; off < info.size; off += CHUNK) {
-          const b64 = b.readImportChunk?.(off, CHUNK) ?? "";
+          const b64 = readChunk(off, CHUNK) ?? "";
           if (!b64) {
             truncated = true; // short read — the staged file is incomplete
             break;
@@ -172,7 +193,7 @@ export async function opdsFetchBinary(
             break;
           }
         }
-        b.clearPendingImport?.();
+        clearStaged();
         const total = chunks.reduce((a, c) => a + c.length, 0);
         // verify-before-complete (plan §8): a short/interrupted transfer
         // must never come back dressed as a valid File (Phase 1 finding O3)

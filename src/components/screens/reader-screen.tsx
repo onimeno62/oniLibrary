@@ -52,6 +52,7 @@ import {
 import { MangaPage, hashStr } from "@/lib/manga-page";
 import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav, toFa } from "@/lib/store";
+import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
 import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSetEndListener, ttsSupported, useTts } from "@/lib/tts";
 import type { PdfSearchHit, PdfTocItem } from "@/lib/pdf-engine";
 import type { EpubSearchHit } from "@/lib/importer";
@@ -559,7 +560,6 @@ export function ReaderScreen({
   const markChapterRead = useApp((s) => s.markChapterRead);
   const addBookmark = useApp((s) => s.addBookmark);
   const removeBookmark = useApp((s) => s.removeBookmark);
-  const startDownload = useApp((s) => s.startDownload);
 
   /** restored page index for the initially opened chapter (RDR-006) */
   const initial = useMemo(() => {
@@ -1916,8 +1916,28 @@ export function ReaderScreen({
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
-                  startDownload(workId, chapterId);
-                  toast({ title: `${t("det.download")} · ${t("common.chapter")} ${chapter.number}` });
+                  // Phase 4 (X1): real pipeline for source chapters, honest
+                  // refusal for local/OPDS works — no simulated queue
+                  const w = useApp.getState().works.find((x) => x.id === workId);
+                  const ch = w?.chapters.find((c) => c.id === chapterId);
+                  const idx = w?.chapters.findIndex((c) => c.id === chapterId) ?? -1;
+                  if (w?.sourceRef?.sourceId === "mangadex" && ch?.sourceChapterId && idx >= 0) {
+                    enqueueMangaDexChapterDownloads(w, [
+                      {
+                        chapterIndex: idx,
+                        md: {
+                          id: ch.sourceChapterId,
+                          number: ch.number,
+                          title: ch.title,
+                          pages: ch.pages,
+                          publishedAt: ch.releaseDate,
+                        },
+                      },
+                    ]);
+                    toast({ title: t("dl.queued"), description: `${t("common.chapter")} ${chapter.number}` });
+                  } else {
+                    toast({ title: t("dl.unsupportedToast"), description: `${t("common.chapter")} ${chapter.number}` });
+                  }
                 }}
                 className="gap-2.5 rounded-xl text-[13px] font-semibold"
               >

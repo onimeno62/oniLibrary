@@ -412,12 +412,16 @@ export async function mdCoverThumbDataUrl(coverUrl: string): Promise<string> {
 /** add a MangaDex work to the library WITHOUT downloading anything —
     every chapter stays streamable (read online) and individually
     downloadable from the details screen. Returns instantly: the cover
-    thumbnail is patched in afterwards by the caller (non-blocking). */
+    thumbnail is patched in afterwards by the caller (non-blocking).
+
+    The local id is DETERMINISTIC (`w-md-<upstream uuid>`, Phase 1
+    finding M1): a second add path can never mint a collidable
+    Date.now() id, and chapter/page keys stay stable across sessions. */
 export async function addMangaDexToLibrary(
   manga: MdManga,
   chapters: MdChapter[]
 ): Promise<Work> {
-  const id = "w-md-" + Date.now().toString(36);
+  const id = "w-md-" + manga.id;
   const rows = chapters.map((ch, i) => mdChapterToStored(id, ch, i, false));
   return baseWork(manga, rows, id, "");
 }
@@ -467,42 +471,86 @@ async function getFileSafe(key: string): Promise<Blob | null> {
   }
 }
 
+export type MdChapterDownloadResult =
+  | { ok: true; localPages: string[]; sizeMb: number }
+  | {
+      ok: false;
+      reason: "cancelled" | "network" | "incomplete";
+      fetched: number;
+      expected: number;
+    };
+
 /** download ONE chapter's pages into IndexedDB under
     `${workId}::c{keyIndex}::p{i}` — shared by the import pipeline and the
-    background download manager. Returns null when nothing was usable or the
-    job was cancelled. */
+    background download manager.
+
+    Verify-before-complete (plan §8; Phase 1 findings M2/B5): a chapter is
+    only reported downloaded when EVERY page of the upstream list was
+    stored — skipped pages (CDN hiccup, storage error) delete the partial
+    blobs and report `incomplete`, so nothing broken is ever dressed up
+    as DONE. Cancellation cleans up after itself too. `onPage` receives
+    the real byte count so the UI can show honest progress. */
 export async function mdDownloadOneChapter(
   ch: MdChapter,
   workId: string,
   keyIndex: number,
-  onPage?: (done: number, totalPages: number) => void,
+  onPage?: (done: number, totalPages: number, bytesSoFar: number) => void,
   isCancelled?: () => boolean
-): Promise<{ localPages: string[]; sizeMb: number } | null> {
+): Promise<MdChapterDownloadResult> {
   let urls: string[] = [];
   try {
     urls = await mdPageUrls(ch.id);
   } catch {
-    return null; // chapter un-fetchable → caller reports honestly
+    return { ok: false, reason: "network", fetched: 0, expected: ch.pages || 0 };
   }
   const keys: string[] = [];
   let sizeMb = 0;
+  let bytesSoFar = 0;
+  const purge = async () => {
+    for (const k of keys) {
+      try {
+        await deleteFileSafe(k);
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
+  };
   for (let p = 0; p < urls.length; p++) {
-    if (isCancelled?.()) return null;
-    onPage?.(p, urls.length);
+    if (isCancelled?.()) {
+      await purge();
+      return { ok: false, reason: "cancelled", fetched: keys.length, expected: urls.length };
+    }
+    onPage?.(p, urls.length, bytesSoFar);
     const f = await opdsFetchBinary(urls[p], `p${p + 1}.jpg`).catch(() => null);
-    if (!f) continue;
+    if (!f) continue; // page failed — the completeness check below decides
     const key = `${workId}::c${keyIndex}::p${p + 1}`;
     try {
       await putFile(key, f);
     } catch {
-      continue;
+      continue; // storage failure — same honesty gate
     }
     keys.push(key);
     sizeMb += f.size / 1_048_576;
+    bytesSoFar += f.size;
     await sleep(PAGE_DELAY_MS);
   }
-  if (keys.length === 0) return null;
-  return { localPages: keys, sizeMb };
+  if (keys.length === 0) {
+    return { ok: false, reason: "network", fetched: 0, expected: urls.length };
+  }
+  if (keys.length < urls.length) {
+    await purge(); // never leave partial chapters behind (orphaned blobs)
+    return { ok: false, reason: "incomplete", fetched: keys.length, expected: urls.length };
+  }
+  return { ok: true, localPages: keys, sizeMb };
+}
+
+async function deleteFileSafe(key: string): Promise<void> {
+  try {
+    const { deleteFile } = await import("./local-files");
+    await deleteFile(key);
+  } catch {
+    /* module unavailable (tests) — nothing to purge */
+  }
 }
 
 async function downloadChapters(
@@ -526,7 +574,7 @@ async function downloadChapters(
         pageTotal: t,
       });
     });
-    if (!res) continue; // nothing usable → skip honestly
+    if (!res.ok) continue; // cancelled / network / incomplete → skip honestly
 
     out.push({
       id: `${workId}-c${startIndex + i + 1}`,

@@ -837,6 +837,11 @@ const en = {
 
   /* v1.1.0 — PRD gap round (sources, downloads, bulk, settings, about) */
   "dl.errNetwork": "Network error — tap retry to resume",
+  /* Phase 4 — typed download errors + honest refusals */
+  "dl.errIncomplete": "Some pages didn't download — tap retry to try again",
+  "dl.errUnsupported": "This source doesn't support chapter downloads",
+  "dl.errMissing": "This chapter is no longer in your library",
+  "dl.unsupportedToast": "Downloads need an online source — import the file to read it offline",
   "src.pin": "Pin source",
   "src.unpin": "Unpin source",
   "src.enable": "Enable source",
@@ -1718,6 +1723,11 @@ const fa: Record<TranslationKey, string> = {
 
   /* v1.1.0 — PRD gap round (sources, downloads, bulk, settings, about) */
   "dl.errNetwork": "خطای شبکه — برای تلاش مجدد بزنید",
+  /* Phase 4 — typed download errors + honest refusals */
+  "dl.errIncomplete": "بعضی صفحه‌ها دانلود نشدند — برای تلاش مجدد بزنید",
+  "dl.errUnsupported": "این منبع دانلود فصل را پشتیبانی نمی‌کند",
+  "dl.errMissing": "این فصل دیگر در کتابخانهٔ شما نیست",
+  "dl.unsupportedToast": "دانلود به منبع آنلاین نیاز دارد — برای مطالعهٔ آفلاین فایل را وارد کنید",
   "src.pin": "سنجاق منبع",
   "src.unpin": "برداشتن سنجاق",
   "src.enable": "فعال‌سازی منبع",

@@ -144,11 +144,13 @@ interface AppState {
   markChapterRead: (workId: string, chapterId: string, read: boolean, upTo?: boolean) => void;
   setChapterProgress: (workId: string, chapterId: string, page: number) => void;
 
-  startDownload: (workId: string, chapterId: string) => void;
+  /* startDownload/retryDownload (the old simulated queue) were removed in
+     the Phase 4 round — chapter downloads run exclusively through the
+     durable background pump (src/lib/bg-downloads.ts); non-source rows
+     never fake progress again (Phase 1 finding X1) */
   pauseDownload: (id: string) => void;
   resumeDownload: (id: string) => void;
   cancelDownload: (id: string) => void;
-  retryDownload: (id: string) => void;
   removeDownload: (id: string) => void;
 
   /** real background download queue (v1.4.0) — upsert one row per chapter */
@@ -590,69 +592,26 @@ export const useApp = create<AppState>()(
           }),
         })),
 
-      startDownload: (workId, chapterId) => {
-        const s = get();
-        const w = s.works.find((x) => x.id === workId);
-        const c = w?.chapters.find((x) => x.id === chapterId);
-        if (!w || !c) return;
-        if (s.downloads.some((d) => d.chapterId === chapterId && d.status !== "ERROR")) return;
-        const activeCount = s.downloads.filter((d) => d.status === "ACTIVE").length;
-        const item: DownloadItem = {
-          id: "dl-" + uid(),
-          workId,
-          chapterId,
-          status: activeCount < s.settings.maxConcurrent ? "ACTIVE" : "QUEUED",
-          progress: 0,
-          downloadedMb: 0,
-          totalMb: c.sizeMb,
-          speedMbps: 1.5 + Math.random() * 2,
-          startedAt: new Date().toISOString(),
-        };
-        set((st) => ({
-          downloads: [item, ...st.downloads],
-          works: st.works.map((x) =>
-            x.id === workId
-              ? {
-                  ...x,
-                  chapters: x.chapters.map((ch) =>
-                    ch.id === chapterId ? { ...ch, download: "DOWNLOADING" as const } : ch
-                  ),
-                }
-              : x
-          ),
-        }));
-      },
       pauseDownload: (id) =>
         set((s) => ({
           downloads: s.downloads.map((d) => (d.id === id ? { ...d, status: "PAUSED", speedMbps: 0 } : d)),
           works: setChDl(s.works, s.downloads, id, "PAUSED"),
         })),
       resumeDownload: (id) =>
-        set((s) => {
-          const activeCount = s.downloads.filter((d) => d.status === "ACTIVE").length;
-          const st = activeCount < s.settings.maxConcurrent ? "ACTIVE" : "QUEUED";
-          return {
-            downloads: s.downloads.map((d) =>
-              d.id === id
-                ? { ...d, status: st, speedMbps: 1.5 + Math.random() * 2, error: undefined }
-                : d
-            ),
-            works: setChDl(s.works, s.downloads, id, "DOWNLOADING"),
-          };
-        }),
+        set((s) => ({
+          // Phase 4: resumed rows go back to QUEUED — the durable pump owns
+          // the ACTIVE state, so nothing can fake "running" without a driver
+          downloads: s.downloads.map((d) =>
+            d.id === id
+              ? { ...d, status: "QUEUED" as const, speedMbps: 0, error: undefined }
+              : d
+          ),
+          works: setChDl(s.works, s.downloads, id, "DOWNLOADING"),
+        })),
       cancelDownload: (id) =>
         set((s) => ({
           downloads: s.downloads.filter((d) => d.id !== id),
           works: setChDl(s.works, s.downloads, id, "NONE"),
-        })),
-      retryDownload: (id) =>
-        set((s) => ({
-          downloads: s.downloads.map((d) =>
-            d.id === id
-              ? { ...d, status: "ACTIVE", progress: 0, downloadedMb: 0, speedMbps: 2, error: undefined }
-              : d
-          ),
-          works: setChDl(s.works, s.downloads, id, "DOWNLOADING"),
         })),
       removeDownload: (id) =>
         set((s) => ({

@@ -203,6 +203,12 @@ export function AppShell() {
     }
   }, [lang, stack.length]);
 
+  // Phase 4 (B1): durable download queue — re-queue rows whose worker died
+  // with the previous page load and start the fresh pump exactly once
+  useEffect(() => {
+    void import("@/lib/bg-downloads").then(({ initBgDownloads }) => initBgDownloads());
+  }, []);
+
   // PWA service worker — web only (never inside the APK WebView wrapper),
   // production only so dev HMR stays untouched
   useEffect(() => {
