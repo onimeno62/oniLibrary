@@ -3,7 +3,7 @@ name: Build APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, fix/security-remediation]
+    branches: [main]
     paths:
       - "android/**"
       - "src/**"
@@ -32,11 +32,34 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android build tools
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+      # sdkmanager downloads from Google's CDN and has failed transiently in
+      # CI (run 39335847626); retry before giving up.
+      - name: Install Android build tools (with retry)
+        run: |
+          ok=0
+          for i in 1 2 3; do
+            if sdkmanager "platforms;android-34" "build-tools;34.0.0"; then
+              ok=1
+              break
+            fi
+            echo "::warning::sdkmanager attempt $i failed; retrying in 15s"
+            sleep 15
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::sdkmanager failed after 3 attempts"
+            exit 1
+          fi
 
       - name: Install web dependencies
         run: bun install --frozen-lockfile
+
+      # bun does not run @prisma/client's postinstall hook; without this
+      # `tsc --noEmit` fails with TS2305 (src/lib/db.ts imports PrismaClient).
+      - name: Generate Prisma client
+        run: bunx prisma generate
 
       - name: Fetch ECJ compiler
         run: curl --fail --show-error --silent --location --retry 3 --output /tmp/ecj.jar https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.33.0/ecj-3.33.0.jar
@@ -55,7 +78,16 @@ jobs:
       - name: Verify bundled assets resolve
         env:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_HOME }}
-        run: node scripts/verify-apk-assets.cjs download/oniLibrary-v1.3.1.apk
+        run: |
+          # newest by mtime — the APK the build step just wrote (tracked
+          # historical APKs also live in download/, so name-sorting is fragile)
+          APK=$(ls -t download/*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::no APK found in download/ after build"
+            exit 1
+          fi
+          echo "Verifying $APK"
+          node scripts/verify-apk-assets.cjs "$APK"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

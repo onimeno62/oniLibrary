@@ -21,6 +21,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # bun does not run @prisma/client's postinstall hook, so the generated
+      # client is missing on a fresh checkout and `tsc --noEmit` fails with
+      # TS2305 (src/lib/db.ts imports PrismaClient). Generate it explicitly.
+      - name: Generate Prisma client
+        run: bunx prisma generate
+
       - name: Lint (eslint)
         run: bun run lint
 
