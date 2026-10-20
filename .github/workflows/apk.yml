@@ -29,11 +29,20 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # GitHub ubuntu runners ship a preinstalled Android SDK at $ANDROID_HOME
+      # (cmdline-tools, platform-tools). android-actions/setup-android@v3 is NOT
+      # used: it hardcodes `sdkmanager tools`, a package Google retired from the
+      # repository ("Failed to find package 'tools'"), which fails every run.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKM" ] || SDKM="$(command -v sdkmanager)"
+          echo "SDKMANAGER=$SDKM" >> "$GITHUB_ENV"
+          "$SDKM" --version
 
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
+        run: yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
       # sdkmanager downloads from Google's CDN and has failed transiently in
       # CI (run 39335847626); retry before giving up.
@@ -41,7 +50,7 @@ jobs:
         run: |
           ok=0
           for i in 1 2 3; do
-            if sdkmanager "platforms;android-34" "build-tools;34.0.0"; then
+            if "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"; then
               ok=1
               break
             fi
