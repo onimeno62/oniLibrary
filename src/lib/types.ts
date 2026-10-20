@@ -227,6 +227,10 @@ export interface ServerEntry {
   url: string;
   kind: "KOMGA" | "OPDS";
   status: "UNKNOWN" | "OK" | "FAIL";
+  /** plan §10 (Phase 5): disabled sources stay configured but hidden —
+   *  toggled off without deleting the entry, its auth, or library items.
+   *  undefined/absent ⇒ enabled (older persisted entries migrate safely). */
+  enabled?: boolean;
   /** optional HTTP Basic credentials (Standard Ebooks OPDS asks for a
       free-account email; v1.3.0) */
   auth?: { user: string; pass: string } | null;
@@ -276,6 +280,15 @@ export interface Settings {
   };
   /** UX-003: library grid density — compact(4) / cozy(3) / large(2) columns */
   libraryDensity: "compact" | "cozy" | "large";
+  /** plan §9 (Phase 5): on-device personalization — all inputs stay local,
+   *  nothing is ever uploaded; enabled=false ⇒ neutral provider feed only */
+  recommendations: {
+    enabled: boolean;
+    /** user-selected interests (tag names) */
+    interests: string[];
+    /** genres the user never wants recommended (tag names) */
+    excluded: string[];
+  };
   readerDefaults: {
     mode: ReaderMode;
     direction: ReadingDirection;

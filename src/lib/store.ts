@@ -103,6 +103,8 @@ interface AppState {
   extensions: Extension[];
   sessions: ReadingSession[];
   history: HistoryEntry[];
+  /** dismissed recommendation candidate ids, capped (plan §9 Phase 5) */
+  dismissedRecs: string[];
   bookmarks: Bookmark[];
   highlights: Highlight[];
   servers: ServerEntry[];
@@ -177,6 +179,12 @@ interface AppState {
   refreshHistoryPage: (workId: string, chapterId: string, page: number) => void;
   clearHistory: () => void;
 
+  /* ---- on-device recommendations (plan §9, Phase 5) ---- */
+  /** persistently hide one candidate (capped at 300 ids) */
+  dismissRecommendation: (id: string) => void;
+  /** clear dismissed ids + interests + exclusions (never touches history) */
+  clearRecSignals: () => void;
+
   addBookmark: (workId: string, chapterId: string, page: number, note?: string) => void;
   removeBookmark: (id: string) => void;
 
@@ -189,6 +197,8 @@ interface AppState {
   setServerStatus: (id: string, status: ServerEntry["status"]) => void;
   /** attach/update HTTP Basic credentials on a catalog (Standard Ebooks) */
   setServerAuth: (id: string, auth: { user: string; pass: string } | null) => void;
+  /** plan §10 (Phase 5): disable a catalog without deleting its entry/auth */
+  setServerEnabled: (id: string, enabled: boolean) => void;
   /** toggle a built-in source on/off [SRC-004] */
   toggleBuiltin: (id: string) => void;
 
@@ -232,6 +242,7 @@ export const useApp = create<AppState>()(
       extensions: [], // v1.3.0: the fake extension list is gone — see ExtensionsScreen
       sessions: [],
       history: [],
+      dismissedRecs: [] as string[],
       bookmarks: [],
       highlights: [],
       servers: SEED_SERVERS,
@@ -743,6 +754,22 @@ export const useApp = create<AppState>()(
         })),
       clearHistory: () => set({ history: [] }),
 
+      /* ---- on-device recommendations (plan §9, Phase 5) ---- */
+      /** hide one candidate; the id list is capped so it can't grow forever */
+      dismissRecommendation: (id) =>
+        set((s) => ({
+          dismissedRecs: s.dismissedRecs.includes(id)
+            ? s.dismissedRecs
+            : [...s.dismissedRecs, id].slice(-300),
+        })),
+      /** "reset picks data": clears dismissed ids + interests + exclusions.
+          Reading history is intentionally untouched (has its own control). */
+      clearRecSignals: () =>
+        set((s) => ({
+          dismissedRecs: [],
+          settings: { ...s.settings, recommendations: { ...s.settings.recommendations, interests: [], excluded: [] } },
+        })),
+
       refreshHistoryPage: (workId, chapterId, page) =>
         set((s) => ({
           history: s.history.map((h) =>
@@ -781,6 +808,10 @@ export const useApp = create<AppState>()(
         set((s) => ({ servers: s.servers.map((x) => (x.id === id ? { ...x, status } : x)) })),
       setServerAuth: (id, auth) =>
         set((s) => ({ servers: s.servers.map((x) => (x.id === id ? { ...x, auth } : x)) })),
+      /** plan §10 (Phase 5): disable a catalog without deleting its config,
+          auth, or any library items that came from it */
+      setServerEnabled: (id, enabled) =>
+        set((s) => ({ servers: s.servers.map((x) => (x.id === id ? { ...x, enabled } : x)) })),
       toggleBuiltin: (id) =>
         set((s) => ({
           builtinDisabled: s.builtinDisabled.includes(id)
@@ -1022,6 +1053,7 @@ export const useApp = create<AppState>()(
         extensions: s.extensions,
         sessions: s.sessions,
         history: s.history,
+        dismissedRecs: s.dismissedRecs,
         bookmarks: s.bookmarks,
         highlights: s.highlights,
         servers: s.servers,

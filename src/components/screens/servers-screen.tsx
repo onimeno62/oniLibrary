@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Server, MoreVertical, Trash2, RefreshCw, PlugZap, BookOpen, ChevronLeft, Globe } from "lucide-react";
+import { Server, MoreVertical, Trash2, RefreshCw, PlugZap, BookOpen, ChevronLeft, Globe, EyeOff } from "lucide-react";
 import { OverlayHeader, EmptyState } from "@/components/shared";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +50,7 @@ export function ServersScreen() {
   const addServer = useApp((s) => s.addServer);
   const removeServer = useApp((s) => s.removeServer);
   const setServerStatus = useApp((s) => s.setServerStatus);
+  const setServerEnabled = useApp((s) => s.setServerEnabled);
 
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -260,23 +262,47 @@ export function ServersScreen() {
           />
         ) : (
           <div className="space-y-2.5">
-            {servers.map((srv) => (
-              <article key={srv.id} className="flex items-center gap-3 rounded-3xl border border-border bg-card p-4">
+            {servers.map((srv) => {
+              const enabled = srv.enabled !== false;
+              return (
+              <article
+                key={srv.id}
+                className={cn(
+                  "flex items-center gap-3 rounded-3xl border border-border bg-card p-4 transition-opacity",
+                  !enabled && "opacity-60"
+                )}
+              >
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-secondary-foreground">
-                  <Server className="h-5 w-5" />
+                  {enabled ? <Server className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-2 text-[14px] font-extrabold">
                     <span className="truncate">{srv.name}</span>
-                    <StatusDot status={srv.status} />
+                    {enabled && <StatusDot status={srv.status} />}
                   </p>
                   <p className="truncate text-[11px] font-semibold text-muted-foreground" dir="ltr">
                     {srv.url}
                   </p>
+                  {!enabled && (
+                    <p className="mt-0.5 text-[10.5px] font-bold text-muted-foreground">{t("srv.disabledHint")}</p>
+                  )}
                 </div>
                 <span className="shrink-0 rounded-full bg-coral-soft px-2.5 py-1 text-[10px] font-black text-primary">
                   {srv.kind}
                 </span>
+                {/* plan §10: disable without deleting — config, auth and any
+                    library items from this source are all preserved */}
+                <Switch
+                  checked={enabled}
+                  onCheckedChange={(v) => {
+                    setServerEnabled(srv.id, v);
+                    toast({
+                      title: t(v ? "srv.enabled" : "srv.disabled"),
+                      description: srv.name,
+                    });
+                  }}
+                  aria-label={`${srv.name}: ${t(enabled ? "srv.enabled" : "srv.disabled")}`}
+                />
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
@@ -315,7 +341,7 @@ export function ServersScreen() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                {srv.kind === "OPDS" && (
+                {srv.kind === "OPDS" && enabled && (
                   <button
                     onClick={() => openBrowser(srv)}
                     aria-label={t("srv.browse")}
@@ -326,7 +352,8 @@ export function ServersScreen() {
                   </button>
                 )}
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

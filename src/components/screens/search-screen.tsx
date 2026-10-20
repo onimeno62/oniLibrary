@@ -32,6 +32,9 @@ export function SearchScreen() {
   const { t } = useT();
   const works = useApp((s) => s.works);
   const servers = useApp((s) => s.servers);
+  /* plan §10 (Phase 5): disabled catalogs are skipped entirely — their
+     config is preserved but they contribute no search work */
+  const activeServers = useMemo(() => servers.filter((s) => s.enabled !== false), [servers]);
   const addWork = useApp((s) => s.addWork);
   const offlineMode = useApp((s) => s.settings.offlineMode);
   const pop = useNav((s) => s.pop);
@@ -132,7 +135,7 @@ export function SearchScreen() {
       setSearchingCats(false);
       setResultsFor("");
     };
-    if (!term || (servers.length === 0 && !mdEnabled)) {
+    if (!term || (activeServers.length === 0 && !mdEnabled)) {
       resetAll();
       return;
     }
@@ -158,7 +161,7 @@ export function SearchScreen() {
       setMdHits([]);
       setMdFailed(false); // a fresh run clears stale failures (Phase 1 S2)
     }
-    let pending = (mdEnabled ? 1 : 0) + servers.length;
+    let pending = (mdEnabled ? 1 : 0) + activeServers.length;
     const settle = () => {
       pending -= 1;
       if (pending <= 0 && current()) setSearchingCats(false);
@@ -175,7 +178,7 @@ export function SearchScreen() {
         })
         .finally(settle);
     }
-    for (const srv of servers) {
+    for (const srv of activeServers) {
       void (async () => {
         try {
           const template = await opdsSearchTemplate(srv);
@@ -206,7 +209,7 @@ export function SearchScreen() {
     return () => {
       alive = false;
     };
-  }, [committedQ, servers, mdEnabled, offline, retryTick]);
+  }, [committedQ, activeServers, mdEnabled, offline, retryTick]);
 
   const addEntry = async (srv: ServerEntry, entry: OpdsEntry) => {
     const key = `${srv.id}::${entry.id}`; // entry ids are only unique per catalog
@@ -327,7 +330,7 @@ export function SearchScreen() {
                     {t("srch.retry")}
                   </button>
                 </div>
-              ) : servers.length === 0 && !mdEnabled ? (
+              ) : activeServers.length === 0 && !mdEnabled ? (
                 <button
                   onClick={() => push({ kind: "servers" })}
                   className="flex w-full flex-col items-center gap-2 rounded-3xl border border-dashed border-border bg-card/50 p-5 text-center transition-colors hover:bg-card"

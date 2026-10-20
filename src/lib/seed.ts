@@ -898,6 +898,8 @@ export const DEFAULT_SETTINGS: Settings = {
   volumeKeyPaging: true,
   tracker: { provider: "none", token: "", autoSync: true, lastSyncAt: null },
   libraryDensity: "cozy",
+  /* plan §9 (Phase 5): on-device personalization defaults — on, empty signals */
+  recommendations: { enabled: true, interests: [], excluded: [] },
   readerDefaults: {
     mode: "PAGED",
     direction: "RTL",

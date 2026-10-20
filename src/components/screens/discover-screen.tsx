@@ -6,6 +6,7 @@ import { Search, SlidersHorizontal, ChevronRight, Plus, Settings2, Globe, Refres
 import { SectionHeader, WorkCover } from "@/components/shared";
 import { MangaDexCard, FreeCatalogList, MdCover } from "@/components/sources/free-catalogs";
 import { MdFilterSheet } from "@/components/sources/md-filter-sheet";
+import { RecShelf } from "@/components/sources/rec-shelf";
 import { useApp, useNav, continueReading, chapterProgressFraction } from "@/lib/store";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
@@ -84,6 +85,9 @@ export function DiscoverScreen() {
 
   /* ----- real library shelves (v1.2.2 — no more fake catalogs) ----- */
   const visibleWorks = useMemo(() => works.filter((w) => !w.inVault).filter((w) => matchesCat(w, cat)), [works, cat]);
+
+  /* plan §10 (Phase 5): disabled catalogs stay configured but hidden */
+  const activeServers = useMemo(() => servers.filter((s) => s.enabled !== false), [servers]);
 
   const continueShelf = useMemo(() => {
     return visibleWorks
@@ -287,6 +291,9 @@ export function DiscoverScreen() {
         </section>
       )}
 
+      {/* ====== on-device picks (plan §9, Phase 5) — explainable + controllable ====== */}
+      <RecShelf />
+
       {/* ====== MangaDex latest uploads (v1.4.0) — falls back to local recents offline ====== */}
       {mdLatestItems !== null && mdLatestItems.length > 0 ? (
         <section className="mt-6">
@@ -362,7 +369,7 @@ export function DiscoverScreen() {
       {/* ====== catalogs (real OPDS / Komga servers) ====== */}
       <section className="mt-6">
         <SectionHeader title={t("disc.catalogs")} onSeeAll={() => push({ kind: "servers" })} />
-        {servers.length === 0 ? (
+        {activeServers.length === 0 ? (
           <button
             onClick={() => push({ kind: "servers" })}
             className="flex w-full flex-col items-center gap-2 rounded-3xl border border-dashed border-border bg-card/50 p-6 text-center transition-colors hover:bg-card"
@@ -376,7 +383,7 @@ export function DiscoverScreen() {
         ) : (
           <>
             <div className="space-y-2.5">
-              {servers.map((s) => {
+              {activeServers.map((s) => {
                 const statusColor =
                   s.status === "OK" ? "bg-emerald-500" : s.status === "FAIL" ? "bg-red-500" : "bg-zinc-400";
                 return (

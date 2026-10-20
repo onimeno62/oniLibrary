@@ -16,7 +16,11 @@ PROJ="$ROOT/android/app"
 OUT="$PROJ/build"
 WWW="$ROOT/out"
 ECJ_JAR="${ECJ_JAR:-/tmp/ecj.jar}"
-APK_VERSION="${ONI_APK_VERSION:-1.4.0}"
+# Default to the manifest versionName so the artifact filename always
+# matches the app version actually baked into the APK (CI used to overwrite
+# the historical v1.4.0 file with a fresh differently-versioned build).
+APK_VERSION="${ONI_APK_VERSION:-$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$PROJ/AndroidManifest.xml" | head -1)}"
+APK_VERSION="${APK_VERSION:-unknown}"
 APK_OUT="$ROOT/download/oniLibrary-v${APK_VERSION}.apk"
 
 for tool in "$BT/aapt2" "$BT/d8" "$BT/zipalign" "$BT/apksigner" "$AJ"; do
