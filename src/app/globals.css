@@ -575,4 +575,70 @@ mark.oni-hl-fresh {
   }
 }
 
+/* ============================================================
+   round 12 — PDF text layer (PDF-002: selection/copy)
+   Hand-rolled subset of pdf.js viewer's .textLayer CSS, matched to
+   the TextLayer class shipped in pdfjs-dist v6: the helper positions
+   each span with left/top percentages of the page box, sets
+   --font-height/--scale-x/--rotate custom properties per span, sizes
+   the container via --total-scale-factor (set from pdf-view.tsx) and
+   tags it with data-main-rotation. Spans stay transparent; selection
+   gets the app's coral wash.
+   ============================================================ */
+.oni-textlayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: clip;
+  text-align: initial;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  /* --min-font-size is set inline by the TextLayer helper */
+  --text-scale-factor: calc(var(--total-scale-factor, 1) * var(--min-font-size, 1));
+  --min-font-size-inv: calc(1 / var(--min-font-size, 1));
+}
+/* the helper sets data-main-rotation; the unrotated page box is rotated over
+   the already-rotated canvas box (same mapping as the official viewer CSS) */
+.oni-textlayer[data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+.oni-textlayer[data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+.oni-textlayer[data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+.oni-textlayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.oni-textlayer > :not(.markedContent),
+.oni-textlayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.oni-textlayer .markedContent {
+  display: contents;
+}
+.oni-textlayer :is(span, br)::selection {
+  background: rgba(248, 105, 76, 0.38);
+  color: transparent;
+}
+
 /* round-11 rebuild marker */

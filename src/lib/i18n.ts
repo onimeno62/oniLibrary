@@ -336,6 +336,7 @@ const en = {
   "rdr.preset.comics": "Comics",
   "rdr.preset.webtoon": "Webtoon",
   "rdr.preset.oneHand": "One-handed",
+  "rdr.preset.pdf": "PDF",
   "rdr.zoomHint": "Pinch or double-tap to zoom",
 
   // vault
@@ -1235,6 +1236,7 @@ const fa: Record<TranslationKey, string> = {
   "rdr.preset.comics": "کمیک",
   "rdr.preset.webtoon": "وبتون",
   "rdr.preset.oneHand": "یک‌دستی",
+  "rdr.preset.pdf": "PDF",
   "rdr.zoomHint": "برای بزرگ‌نمایی، دو انگشتی یا دو ضربه بزنید",
 
   // vault

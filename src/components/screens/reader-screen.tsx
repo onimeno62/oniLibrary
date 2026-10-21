@@ -53,6 +53,14 @@ import { MangaPage, hashStr } from "@/lib/manga-page";
 import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav, toFa } from "@/lib/store";
 import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
+import {
+  chapterEndAction,
+  isScrolledToEnd,
+  startPinch,
+  zoomForPinch,
+  commitPinch,
+  type PinchGesture,
+} from "@/lib/reader-contract";
 import { ttsStart, ttsPause, ttsResume, ttsStop, ttsSetRate, ttsSetEndListener, ttsSupported, useTts } from "@/lib/tts";
 import type { PdfSearchHit, PdfTocItem } from "@/lib/pdf-engine";
 import type { EpubSearchHit } from "@/lib/importer";
@@ -93,12 +101,14 @@ const BG_HEX: Record<BgName, string> = {
   sepia: "#f4ead3",
 };
 
-/** how the page element sizes itself inside a slide (RDR-003) */
+/** how the page element sizes itself inside a slide (RDR-003).
+ *  Audit D9: ORIGINAL is the image's NATURAL size (no forced box) —
+ *  non-2:3 art must not be stretched; the pannable container scrolls. */
 const FIT_CLASS: Record<FitMode, string> = {
   WIDTH: "block w-full h-auto",
   HEIGHT: "block h-full w-auto",
   SCREEN: "block h-full w-full object-contain",
-  ORIGINAL: "block h-[1200px] w-[800px] max-w-none",
+  ORIGINAL: "block max-w-none",
 };
 
 interface ChapterLite {
@@ -584,7 +594,12 @@ export function ReaderScreen({
   );
   const [controlsVisible, setControlsVisible] = useState(true);
   const [endCard, setEndCard] = useState(false);
-  const [zoom, setZoom] = useState(1); // 1 → 1.5 → 2 (RDR-004)
+  const [zoom, setZoom] = useState(1); // 1 → 1.5 → 2 (RDR-004); pinch scales continuously
+  // pinch gestures read the zoom at gesture start without re-binding handlers
+  const zoomRef = useRef(1);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
   const [rotate, setRotate] = useState(0); // 0/90/180/270
   const [autoPlay, setAutoPlay] = useState(false);
   const [chapterSheet, setChapterSheet] = useState(false);
@@ -1156,7 +1171,19 @@ export function ReaderScreen({
   const next = (forced = false) => {
     if (total <= 0) return;
     if (scrollable) {
-      const p = Math.min(total - 1, page + 1);
+      // audit D8: scroll modes honor the same end-of-chapter contract as
+      // paged modes — no more clamped dead-end at the last page
+      if (page >= total - 1) {
+        const action = chapterEndAction({
+          hasNextChapter: !!nextChapter,
+          autoNext: readerDefaults.autoNext,
+          forced,
+        });
+        if (action === "advance" && nextChapter) openChapter(nextChapter.id);
+        else setEndCard(true);
+        return;
+      }
+      const p = page + 1;
       goToPage(p);
       setScrollCmd({ page: p });
       return;
@@ -1367,6 +1394,22 @@ export function ReaderScreen({
         }
       });
       setPage((cur) => (cur === best ? cur : best));
+      // audit D8: reaching the bottom of a scrollable chapter triggers the
+      // same end-of-chapter contract as paged modes (end card / autoNext),
+      // guarded to fire once per bottom visit
+      if (isScrolledToEnd(sc.scrollTop, sc.clientHeight, sc.scrollHeight)) {
+        if (!scrollEndRef.current) {
+          scrollEndRef.current = true;
+          const action = chapterEndAction({
+            hasNextChapter: !!nextChapter,
+            autoNext: readerDefaults.autoNext,
+          });
+          if (action === "advance" && nextChapter) openChapter(nextChapter.id);
+          else setEndCard(true);
+        }
+      } else {
+        scrollEndRef.current = false;
+      }
     });
   };
   useEffect(
@@ -1425,12 +1468,37 @@ export function ReaderScreen({
      RTL (manga) swipes right→next. Vertical drift cancels (scroll intent). */
   const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const swipeSuppressRef = useRef(false);
+  // audit D8: one-shot latch for the scroll-to-bottom end-of-chapter trigger
+  const scrollEndRef = useRef(false);
+  /* ----- pinch zoom (RDR-004, audit Phase B): two-finger scale on the
+     paged track. Pure state machine lives in lib/reader-contract.ts. */
+  const pinchRef = useRef<PinchGesture | null>(null);
 
   const onReaderTouchStart = (e: React.TouchEvent) => {
+    // pinch takes priority: two fingers never start a swipe
+    if (e.touches.length === 2) {
+      const [a, b] = [e.touches[0], e.touches[1]];
+      pinchRef.current = startPinch(
+        Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+        zoomRef.current
+      );
+      swipeStartRef.current = null;
+      return;
+    }
     const t0 = e.touches[0];
     swipeStartRef.current = { x: t0.clientX, y: t0.clientY, t: Date.now() };
   };
   const onReaderTouchMove = (e: React.TouchEvent) => {
+    const pinch = pinchRef.current;
+    if (pinch) {
+      if (e.touches.length === 2) {
+        const [a, b] = [e.touches[0], e.touches[1]];
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        setZoom(zoomForPinch(pinch, dist));
+        setControlsVisible(true);
+      }
+      return;
+    }
     const s = swipeStartRef.current;
     if (!s) return;
     const t0 = e.touches[0];
@@ -1440,6 +1508,14 @@ export function ReaderScreen({
     }
   };
   const onReaderTouchEnd = (e: React.TouchEvent) => {
+    const pinch = pinchRef.current;
+    if (pinch) {
+      if (e.touches.length < 2) {
+        setZoom((z) => commitPinch(z));
+        pinchRef.current = null;
+      }
+      return;
+    }
     const s = swipeStartRef.current;
     swipeStartRef.current = null;
     if (!s || panBlock || vertical || scrollable) return;
@@ -1517,6 +1593,14 @@ export function ReaderScreen({
         setReaderDefaults({ bg: "gray", brightness: 85, autoNext: true, cropBorders: true });
       },
     },
+    {
+      // PDF (RDR-014 5/5): LTR paged, width-fit, paper background
+      key: "rdr.preset.pdf",
+      apply: () => {
+        updateWork(workId, { readerMode: "PAGED", direction: "LTR", fitMode: "WIDTH" });
+        setReaderDefaults({ bg: "sepia", brightness: 100, autoNext: false, cropBorders: false });
+      },
+    },
   ];
 
   /* ------------------------------------------------------------------ */
@@ -1554,6 +1638,10 @@ export function ReaderScreen({
           chapterId={chapterId}
           page={i + 1}
           className={cls}
+          // B-2/D9: let the canvas honor the fit mode (ORIGINAL renders at
+          // natural scale, HEIGHT is height-driven); scroll-view overrides
+          // are width-fit by contract so the anchor layout stays intact
+          fit={fitOverride ? "WIDTH" : fit}
           highlight={pdfHighlightFor(i + 1)}
           highlights={pdfHighlights.filter((h) => h.page === i + 1)}
           highlightMode={pdfHlMode}
@@ -1681,6 +1769,7 @@ export function ReaderScreen({
         ref={contentRef}
         className="relative flex-1 overflow-hidden"
         style={{ backgroundColor: BG_HEX[readerDefaults.bg] }}
+        onMouseMove={isPdf ? () => setControlsVisible(true) : undefined}
       >
         {/* ============ content ============ */}
         {isEpub ? (
@@ -1741,10 +1830,16 @@ export function ReaderScreen({
             onClick={() => setControlsVisible((v) => !v)}
           />
         )}
-        {/* tap zones (none in webtoon; sides disabled while panning) + swipe gestures */}
+        {/* tap zones (none in webtoon; sides disabled while panning).
+            Desktop PDFs (fine pointers): zones yield to the B-2 text layer
+            so mouse selection/copy works; chrome reveals on mouse move. */}
         {!vertical && !scrollable && (
           <div
-            className="absolute inset-0 z-10 flex"
+            className={cn(
+              "absolute inset-0 z-10 flex",
+              isPdf && "[@media(pointer:fine)]:pointer-events-none"
+            )}
+            style={{ touchAction: "none" }}
             onTouchStart={onReaderTouchStart}
             onTouchMove={onReaderTouchMove}
             onTouchEnd={onReaderTouchEnd}

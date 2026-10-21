@@ -577,6 +577,10 @@ export function MangaPage({
   return (
     <svg
       viewBox="0 0 800 1200"
+      // intrinsic size: the generated page's "natural" dimensions — needed
+      // so fit=ORIGINAL (audit D9: no forced box) has a real 1x size
+      width={800}
+      height={1200}
       role="img"
       aria-label={`${chapterTitle} — page ${pageNumber} of ${totalPages}`}
       className={className}

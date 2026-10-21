@@ -7,7 +7,7 @@
    The raw .pdf blob lives in IndexedDB (`{workId}::pdf`).
    ============================================================ */
 
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 
 type PdfJs = typeof import("pdfjs-dist");
 type DocTask = ReturnType<PdfJs["getDocument"]>;
@@ -161,6 +161,65 @@ export async function getPdfToc(workId: string): Promise<PdfTocItem[]> {
   } catch {
     return [];
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* text layer (PDF-002 — selectable/copyable text on text-based PDFs)  */
+/* ------------------------------------------------------------------ */
+
+/** pdf.js TextLayer class — v6 ships the class API (renderTextLayer was removed in v5) */
+export type PdfTextLayerClass = PdfJs["TextLayer"];
+
+/**
+ * Resolve the pdf.js TextLayer helper through the SAME lazy module load used
+ * for canvas rendering (worker URL setup + WebView support gate), so the text
+ * layer can never load on a WebView the engine already rejected.
+ */
+export async function loadPdfTextLayer(): Promise<PdfTextLayerClass> {
+  const lib = await getLib();
+  return lib.TextLayer;
+}
+
+type PdfTextContent = Awaited<ReturnType<PDFPageProxy["getTextContent"]>>;
+
+/** per-(work,page) text-content cache: workId → page(1-based) → content */
+const layerTextCache = new Map<string, Map<number, Promise<PdfTextContent>>>();
+/** per-work page cap — recent pages win (zoom/rotate re-layouts reuse them) */
+const LAYER_TEXT_PAGES_MAX = 32;
+
+/** drop cached text-layer content (call when a work is removed/re-imported) */
+export function dropPdfLayerText(workId: string): void {
+  layerTextCache.delete(workId);
+}
+
+/**
+ * Text content of one page for the pdf.js TextLayer. Cached per (work, page)
+ * so zoom/rotation re-layouts don't re-walk the worker for the same content;
+ * mirrors the per-work cache lifecycle of the search/rect caches above.
+ */
+export function getPdfTextContent(workId: string, page: number): Promise<PdfTextContent> {
+  let pageMap = layerTextCache.get(workId);
+  if (!pageMap) {
+    pageMap = new Map();
+    layerTextCache.set(workId, pageMap);
+  }
+  const cached = pageMap.get(page);
+  if (cached) return cached;
+
+  const p = (async () => {
+    const doc = await loadPdfDoc(workId);
+    const pdfPage = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
+    return pdfPage.getTextContent();
+  })().catch((err) => {
+    if (pageMap?.get(page) === p) pageMap.delete(page);
+    throw err;
+  });
+  pageMap.set(page, p);
+  if (pageMap.size > LAYER_TEXT_PAGES_MAX) {
+    const oldest = pageMap.keys().next().value;
+    if (oldest !== undefined && oldest !== page) pageMap.delete(oldest);
+  }
+  return p;
 }
 
 /* ------------------------------------------------------------------ */

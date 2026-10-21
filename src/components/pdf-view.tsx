@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, FileText, Loader2, PenLine, Trash2, X } from "lucide-react";
-import { getPdfPageMatches, getPdfTextInRect, loadPdfDoc } from "@/lib/pdf-engine";
+import {
+  getPdfPageMatches,
+  getPdfTextContent,
+  getPdfTextInRect,
+  loadPdfDoc,
+  loadPdfTextLayer,
+} from "@/lib/pdf-engine";
 import type { PdfMatchRect } from "@/lib/pdf-engine";
 import { useApp } from "@/lib/store";
-import type { Highlight, HighlightColor } from "@/lib/types";
+import type { FitMode, Highlight, HighlightColor } from "@/lib/types";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -25,6 +31,15 @@ import { HL_COLORS } from "@/components/screens/epub-view";
      marks render from the store (user-space rects), highlight mode
      turns the page into a lasso surface, tapping a saved mark opens
      the color/note editor — same 4-color language as book highlights.
+   - text layer (PDF-002): when the page has extractable text, a pdf.js
+     TextLayer renders transparent, selectable text over the canvas
+     (PDF-002 selection/copy); image-only pages keep honest canvas-only
+     presentation. The layer shares the canvas viewport math (zoom +
+     rotation), yields pointer events to the lasso in highlight mode,
+     and is re-keyed per (work, page, zoom/rotation) to avoid staleness.
+   - fit parity (D9): fit=WIDTH/SCREEN fill the container width (unchanged),
+     fit=HEIGHT fills the container height, fit=ORIGINAL renders at natural
+     72dpi scale (scale 1) and pans inside the reader's overflow container.
    ============================================================ */
 
 export interface PdfHighlight {
@@ -235,6 +250,105 @@ function PdfHlPopup({
 }
 
 /* ------------------------------------------------------------------ */
+/* PdfTextLayer (PDF-002) — selectable/copyable text over the canvas   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Renders a pdf.js TextLayer into an absolutely-positioned div covering the
+ * page. Spans are positioned by pdf.js itself (percentages of the unrotated
+ * page box + --total-scale-factor sizing + data-main-rotation CSS in
+ * globals.css), so the layer stays glued to the canvas viewport (zoom,
+ * rotation, device pixels) without hand-computed geometry.
+ *
+ * Honest absence: pages whose text content has no non-whitespace items
+ * (image-only scans) render nothing — the canvas keeps its role="img"
+ * semantics and select-none behavior.
+ *
+ * Pointer contract: the layer only accepts pointer events once built AND
+ * while highlight/lasso mode is off; the lasso surface (z-10) and the
+ * pointer-events-none find/saved-mark overlays keep their existing behavior.
+ */
+function PdfTextLayer({
+  docKey,
+  page,
+  rotation,
+  cssWidth,
+  interactive,
+  onHasText,
+}: {
+  docKey: string;
+  page: number; // 1-based
+  rotation: number;
+  /** live CSS width of the rendered canvas (px) — same viewport math as the marks */
+  cssWidth: number;
+  /** false while lasso/highlight mode owns the pointer surface */
+  interactive: boolean;
+  onHasText: (has: boolean) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [built, setBuilt] = useState(false);
+  /* keep the latest callback in a ref (synced in an effect) so geometry
+     changes alone re-run the build, never the callback identity */
+  const onHasTextRef = useRef(onHasText);
+  useEffect(() => {
+    onHasTextRef.current = onHasText;
+  }, [onHasText]);
+
+  useEffect(() => {
+    let alive = true;
+    let layer: { render: () => Promise<void>; cancel: () => void } | null = null;
+    (async () => {
+      try {
+        /* engine lib + page text content, both cached/lazy (PDF-002 perf) */
+        const [TextLayer, content] = await Promise.all([
+          loadPdfTextLayer(),
+          getPdfTextContent(docKey, page),
+        ]);
+        if (!alive) return;
+        const hasText = content.items.some((it) => "str" in it && it.str.trim().length > 0);
+        onHasTextRef.current(hasText);
+        if (!hasText) return; // image-only page → no layer, canvas stays as-is
+        const doc = await loadPdfDoc(docKey);
+        const p = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
+        const container = containerRef.current;
+        if (!alive || !container) return;
+        /* same viewport math as the canvas/marks: CSS px per PDF unit */
+        const base = p.getViewport({ scale: 1, rotation });
+        const cssScale = cssWidth > 0 ? cssWidth / base.width : 1;
+        const vp = p.getViewport({ scale: cssScale, rotation });
+        container.style.setProperty("--total-scale-factor", cssScale.toFixed(4));
+        container.style.setProperty("--scale-round-x", "1px");
+        container.style.setProperty("--scale-round-y", "1px");
+        layer = new TextLayer({ textContentSource: content, container, viewport: vp });
+        await layer.render();
+        if (alive) setBuilt(true);
+      } catch {
+        /* cancelled re-layout or engine failure → canvas-only presentation */
+        if (alive) setBuilt(false);
+      }
+    })();
+    return () => {
+      alive = false;
+      try {
+        layer?.cancel();
+      } catch {
+        /* already settled */
+      }
+      containerRef.current?.replaceChildren(); // drop spans → no text-content leak
+    };
+  }, [docKey, page, rotation, cssWidth]);
+
+  return (
+    <div
+      ref={containerRef}
+      data-oni-pdf-textlayer=""
+      className="oni-textlayer"
+      style={{ pointerEvents: built && interactive ? "auto" : "none" }}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* PdfCanvas                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -245,6 +359,7 @@ export function PdfCanvas({
   page, // 1-based
   className,
   rotation = 0,
+  fit = "WIDTH",
   highlight,
   highlights = [],
   highlightMode = false,
@@ -256,6 +371,8 @@ export function PdfCanvas({
   page: number;
   className?: string;
   rotation?: number;
+  /** sizing mode (RDR-003/D9) — WIDTH/SCREEN fit width, HEIGHT fits height, ORIGINAL = natural 72dpi */
+  fit?: FitMode;
   highlight?: PdfHighlight | null;
   /** saved rect highlights for THIS page (round 11) */
   highlights?: Highlight[];
@@ -270,7 +387,11 @@ export function PdfCanvas({
   const taskRef = useRef<{ cancel: () => void } | null>(null);
   const [visible, setVisible] = useState(true); // paged slides are always mounted visible-ish; IO refines for scroll modes
   const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "error" | "webview">("loading");
+  /* text layer presence for THIS page (PDF-002) — flips canvas semantics */
+  const [pageHasText, setPageHasText] = useState(false);
+  const handleHasText = useCallback((has: boolean) => setPageHasText(has), []);
   const [marks, setMarks] = useState<PdfMatchRect[]>([]);
   /* saved-highlight marks (CSS px, same space as the find marks) */
   const [hlMarks, setHlMarks] = useState<Array<{ rect: PdfMatchRect; color: HighlightColor; id: string; noted: boolean }>>([]);
@@ -298,7 +419,10 @@ export function PdfCanvas({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const update = () => setWidth(Math.floor(el.clientWidth));
+    const update = () => {
+      setWidth(Math.floor(el.clientWidth));
+      setHeight(Math.floor(el.clientHeight));
+    };
     update();
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", update);
@@ -323,9 +447,15 @@ export function PdfCanvas({
     return () => io.disconnect();
   }, []);
 
-  /* render */
+  /* render — cssScale is fit-aware (D9): WIDTH/SCREEN fill the container
+     width (unchanged), HEIGHT fills the container height, ORIGINAL renders
+     the natural 72dpi size (scale 1) and pans in the reader's scroller.
+     Every overlay below converts through the CANVAS's own CSS width (ground
+     truth), so marks/lasso/text layer stay glued to the page in every fit —
+     even if the wrapper box ends up wider/narrower than the canvas. */
   useEffect(() => {
-    if (!visible || width <= 0) return;
+    const sized = fit === "ORIGINAL" ? true : fit === "HEIGHT" ? height > 0 : width > 0;
+    if (!visible || !sized) return;
     let alive = true;
     setState("loading");
     (async () => {
@@ -337,7 +467,8 @@ export function PdfCanvas({
         if (!alive) return;
         const base = p.getViewport({ scale: 1, rotation });
         const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-        const cssScale = width / base.width;
+        const cssScale =
+          fit === "ORIGINAL" ? 1 : fit === "HEIGHT" ? height / base.height : width / base.width;
         const vp = p.getViewport({ scale: cssScale * dpr, rotation });
         canvas.width = Math.max(1, Math.floor(vp.width));
         canvas.height = Math.max(1, Math.floor(vp.height));
@@ -364,7 +495,16 @@ export function PdfCanvas({
       }
       taskRef.current = null;
     };
-  }, [docKey, page, width, rotation, visible]);
+  }, [docKey, page, width, height, rotation, fit, visible]);
+
+  /* layout (transform-independent) CSS width of the rendered canvas — ground
+     truth for EVERY overlay conversion (find marks, saved marks, lasso, text
+     layer). clientWidth, unlike getBoundingClientRect, ignores ancestor CSS
+     rotations the reader may apply to the slide, and it re-syncs the overlays
+     whenever the canvas is re-laid-out (zoom / fit change / rotation), because
+     every render pass ends in a state flip that re-renders with the new size. */
+  const canvasRectW = canvasRef.current?.clientWidth ?? 0;
+  const layerCssWidth = canvasRectW > 0 ? canvasRectW : width;
 
   /* find-in-page marks (round 9): recompute when the highlight changes.
      Rects arrive in unrotated scale-1 user space → convert with the same
@@ -384,7 +524,7 @@ export function PdfCanvas({
           if (alive) setMarks([]);
           return;
         }
-        const cssRects = await userRectsToCss(docKey, page, width, rotation, rects);
+        const cssRects = await userRectsToCss(docKey, page, layerCssWidth, rotation, rects);
         if (alive) setMarks(cssRects);
       } catch {
         if (alive) setMarks([]);
@@ -393,7 +533,7 @@ export function PdfCanvas({
     return () => {
       alive = false;
     };
-  }, [docKey, page, width, rotation, visible, query, activeIdx]);
+  }, [docKey, page, width, layerCssWidth, rotation, visible, query, activeIdx]);
 
   /* saved-highlight marks (round 11): user-space rects → CSS px, re-run on
      every geometry change so rotation/zoom stay in sync like the find marks */
@@ -409,7 +549,7 @@ export function PdfCanvas({
         const css = await userRectsToCss(
           docKey,
           page,
-          width,
+          layerCssWidth,
           rotation,
           highlights.map((h) => h.rect!).filter(Boolean)
         );
@@ -426,8 +566,7 @@ export function PdfCanvas({
     return () => {
       alive = false;
     };
-     
-  }, [docKey, page, width, rotation, visible, hlKey]);
+  }, [docKey, page, width, layerCssWidth, rotation, visible, hlKey]);
 
   /* manager jump: flash the focused highlight once it has a rendered mark */
   useEffect(() => {
@@ -481,7 +620,10 @@ export function PdfCanvas({
       const doc = await loadPdfDoc(docKey);
       const p = await doc.getPage(Math.max(1, Math.min(doc.numPages, page)));
       const base = p.getViewport({ scale: 1, rotation });
-      const cssScale = width / base.width;
+      /* canvas ground-truth scale (D9): the lasso surface spans the wrapper,
+         but the canvas sits at the wrapper origin, so wrapper-relative pointer
+         coords map through the canvas's own scale in every fit mode */
+      const cssScale = layerCssWidth / base.width;
       const vp = p.getViewport({ scale: cssScale, rotation });
       const [ax, ay] = vp.convertToPdfPoint(Math.min(cur.x1, cur.x2), Math.min(cur.y1, cur.y2));
       const [bx, by] = vp.convertToPdfPoint(Math.max(cur.x1, cur.x2), Math.max(cur.y1, cur.y2));
@@ -504,7 +646,7 @@ export function PdfCanvas({
     } catch {
       /* page gone — ignore */
     }
-  }, [docKey, page, width, rotation, chapterId, putSel]);
+  }, [docKey, page, layerCssWidth, rotation, chapterId, putSel]);
 
   /* tap a saved mark → edit popup */
   const onSavedMarkTap = (e: React.MouseEvent, hl: Highlight) => {
@@ -518,18 +660,40 @@ export function PdfCanvas({
     <div ref={wrapRef} className={cn("relative", className)}>
       <canvas
         ref={canvasRef}
-        role="img"
-        aria-label={`PDF page ${page}`}
-        className="block h-auto w-full select-none"
+        /* PDF-002: when the page has selectable text the canvas becomes an
+           aria-hidden presentation layer and the text layer carries the
+           semantics; image-only pages keep the honest role="img" canvas. */
+        role={pageHasText ? undefined : "img"}
+        aria-label={pageHasText ? undefined : `PDF page ${page}`}
+        aria-hidden={pageHasText || undefined}
+        className={cn("block h-auto w-full", !pageHasText && "select-none")}
         style={{
           opacity: state === "ready" ? 1 : 0,
           transition: "opacity 200ms ease",
         }}
       />
 
-      {/* saved highlights (round 11) — tappable colored marks */}
+      {/* PDF-002 text layer — selection/copy on text-based pages; only over a
+          rendered canvas, pointer-events yield to the lasso in highlight mode.
+          Re-keyed per (work, page, rotation, canvas-scale signature) so a stale
+          layer can never survive a re-layout. */}
+      {state === "ready" && (
+        <PdfTextLayer
+          key={`${docKey}|${page}|${rotation}|${layerCssWidth}`}
+          docKey={docKey}
+          page={page}
+          rotation={rotation}
+          cssWidth={layerCssWidth}
+          interactive={!highlightMode}
+          onHasText={handleHasText}
+        />
+      )}
+
+      {/* saved highlights (round 11) — tappable colored marks. The plate is
+          pointer-events-none so it can never eat text selection on the layer
+          beneath; only the mark spans themselves stay tappable (PDF-002). */}
       {hlMarks.length > 0 && (
-        <div className={cn("absolute inset-0", highlightMode ? "pointer-events-none" : "")} aria-hidden={highlightMode}>
+        <div className="pointer-events-none absolute inset-0" aria-hidden={highlightMode}>
           {hlMarks.map((m) => (
             <span
               key={m.id}
@@ -539,7 +703,7 @@ export function PdfCanvas({
               }}
               className={cn(
                 "absolute rounded-[3px] oni-pdf-hl",
-                !highlightMode && "cursor-pointer"
+                !highlightMode && "pointer-events-auto cursor-pointer"
               )}
               style={{
                 left: m.rect.x1,
