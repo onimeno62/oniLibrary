@@ -1,6 +1,7 @@
 # oniLibrary — Repository Audit, Performance Optimization & Feature Repair
 
 **Branch:** `fix/home-library-reader-performance` (5 stages, one commit per stage)
+**Merged:** PR #7 → main @ `95fc83f` · shipped in **v1.6.0** (versionCode 15)
 **Base:** main @ `3271afd` (v1.5.0 + post-audit phases A/B/C) · **Date:** 2026-10-21
 **Scope:** the repo-audit task — Priority-0 performance, Home (Continue Reading / bottom card /
 Latest Updates), Library (categories, tags, filter preservation), work-detail tag navigation,

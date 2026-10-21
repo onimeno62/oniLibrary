@@ -270,6 +270,11 @@ v1.5.0's release notes are accurate on what shipped. For the *next* release, add
 
 ## 10. Recommended next three phases (prioritized, testable)
 
+> **Status (2026-10-22):** Phases A–C shipped to main (`d81b878` → `3271afd`); the
+> follow-up repo-audit performance/feature repair shipped via PR #7 (`95fc83f`).
+> All of it is included in release **v1.6.0** (versionCode 15). The device-pass
+> gate (D1/D2 on hardware) remains owner-gated.
+
 Constraint compliance: these are *fix-first* phases; no new content sources, no architecture replacement, no release during audit. Each phase lists acceptance criteria (AC) and regression tests (RT). Suggested flow: feature branch → PR (or direct-to-main only with owner's explicit per-session authorization, as last session).
 
 ### Phase A — Correctness & honesty pass (ship-blockers; no new features)

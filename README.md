@@ -40,7 +40,7 @@ shipped as an Android app (WebView shell) and an installable PWA built with Next
 
 1. Grab the latest APK from **[Releases](https://github.com/onimeno62/oniLibrary/releases)** — or from [`download/`](download) in this repo.
 2. On your phone, allow *Install unknown apps* for your browser/file manager (Android will ask once).
-3. Install **`oniLibrary-v1.4.0.apk`** (minSdk 24 → Android 7.0+, target 34).
+3. Install **`oniLibrary-v1.6.0.apk`** (minSdk 24 → Android 7.0+, target 34).
 4. Done — no permissions requested beyond network (used only for optional online sources).
 
 > Upgrades install in place: releases are signed with the same key, versionCode always increases.
@@ -73,7 +73,8 @@ node scripts/verify-apk-assets.cjs       # sanity: every bundled URL resolves
 ```
 
 No Gradle involved — a lean pipeline that produces a ~4.3 MB APK.
-A **GitHub Actions workflow** (`.github/workflows/apk.yml`, manual trigger) builds it in CI too.
+A **GitHub Actions workflow** (`.github/workflows/apk.yml`) builds it in CI on
+every push to `main` too.
 
 ## 🗺️ Project map
 

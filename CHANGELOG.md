@@ -3,6 +3,105 @@
 All notable changes to oniLibrary are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0); versioning is semantic.
 
+## [1.6.0] — 2026-10-22
+
+Measured performance repair + Home/Library/Reader feature pass — everything from the
+post-v1.5.0 acceptance audit (phases A/B/C) plus the repo-audit repair (report:
+`docs/REPO_AUDIT_PERF_REPAIR.md`).
+
+### Performance (P0 — measured, then fixed)
+- **Persist jank eliminated**: every store change used to pay a synchronous
+  `JSON.stringify` + `localStorage.setItem` (measured **85–120 ms** at a 1000-work
+  library — on every reader page flip). Writes now coalesce behind a trailing
+  debounce with guaranteed flush on page hide / tab hide / reader exit
+  (**~93–97% reduction**; one ~28 ms flush per burst). Baseline/after tables:
+  `docs/NFR_BENCHMARKS.md`.
+- Reader keyboard + volume-key listeners bind once via refs instead of
+  re-invoking the native bridge every render; Home shelves memoized.
+
+### Fixed — Home honesty
+- **Continue Reading** resumes from the real saved position (dual-normalized
+  percent, live update on reader exit), survives restart, and degrades safely when
+  a work/chapter was deleted or the position is invalid; meaningful empty state
+  when everything is read. The redundant Discover copy was removed.
+- **Latest Updates** now surfaces the newest *unread* release per work (was the
+  oldest), distinguishes loading/empty/error, and hides itself when there is
+  nothing to show.
+
+### Added — Library & details
+- **Categories are functional**: selecting one filters the library (active pill +
+  ring, honest counts, clearable); manual categories, saved filters and
+  smart-rule state persist across visits.
+- **Tag filtering** from real work metadata (OR semantics, documented in the
+  report), combinable with search and category filters, with single-tag clear and
+  reset-all.
+- Work-detail **tags are clickable** → Library opens pre-filtered (works in
+  English and Persian/RTL).
+
+### Added — Reader
+- **Notes & Highlights menu**: entry points in the reader chrome reusing the
+  existing store (no second subsystem) — jump to any saved highlight or note
+  (same or cross-chapter, including queued PDF focus), inline note editor with
+  debounced autosave. EN/FA + RTL.
+- **Full-screen cover viewer**: opens from any cover tap, fit-contain (never
+  crops), zoom/pan/double-tap, closes via Back/X/backdrop, graceful fallback for
+  missing covers.
+- PDF: **selectable/copyable text layer** (pdf.js 6 TextLayer; rotation/zoom
+  sync; honest absence on image-only pages), natural-fit ORIGINAL, pinch zoom
+  (1–4×, snap), and a 5th reader preset (PDF).
+
+### Fixed — correctness (audit D1–D13)
+- **APK JS dialogs**: `window.confirm`/`alert` now render as native Android
+  dialogs (were silently suppressed — 8 destructive flows were dead);
+  hardware Back closes dialogs before leaving the screen.
+- **Backup privacy**: tracker (AniList) tokens are stripped from `.onibackup`
+  exports and refused on import.
+- **Honest storage card**: real downloaded bytes + system storage estimate +
+  device storage bridge; fake mockup numbers and the no-op "Cache cleared"
+  button removed.
+- Formats screen mirrors importer truth (CBR marked supported); version badges
+  come from a single source with a manifest-lockstep test; wake lock is
+  acquired/released with the reader lifecycle.
+- Webtoon/continuous chapters end with an end card + auto-advance instead of a
+  dead end; ORIGINAL fit no longer distorts images/PDFs.
+- Download pump runs bounded-parallel (`maxConcurrent` is real); library restore
+  purges orphaned blobs and re-audits DONE rows fail-closed; reading-stats
+  window widened 60 → 400 days.
+- **a11y/i18n sweep**: 11 hardcoded-English aria-labels localized, updates
+  toggle labeled as a switch, 44px touch targets, `prefers-reduced-motion`
+  support, `<html dir>` follows the language (RTL verified live).
+
+### Tests
+- 138 → **193 automated tests** (library-contract, persist-safety, restore
+  hygiene, reader contracts, version lockstep, i18n parity); lint +
+  `tsc --noEmit` clean; CI & Build APK green on every phase commit.
+
+## [1.5.0] — 2026-10-20
+
+Discover complete — all six approved plan phases shipped (plan §12); see the
+release notes for the full write-up.
+
+### Added
+- **On-device "Picked for you"** recommendations: deterministic, explainable
+  ranking from on-device reading signals; every card explains itself and can be
+  dismissed (persisted, capped).
+- **Tune your picks** sheet: interests, hidden genres, master personalization
+  switch, reset-picks-data — signals computed only on this device, never
+  uploaded; personalization off ⇒ the honest neutral feed.
+- **Source settings**: catalogs can be disabled without deleting (config,
+  credentials and library items preserved; disabled sources drop out of Discover
+  and global search) with honest status switches on the Servers screen.
+
+### Hardening
+- 44px touch targets across Discover/Search/Source screens, labeled inputs,
+  accessible dialog descriptions, `aria-current` on pager dots; full Persian/RTL
+  sweep re-verified live.
+
+## [1.4.1] — 2026-10-20
+
+- versionCode 13 — Phase 4 durable download queue hardening (covered by the
+  1.4.0 notes above; no separate user-facing changes beyond that release).
+
 ## [1.4.0] — 2026-10-19
 
 Sources & library round — every fix driven by the user's field reports.

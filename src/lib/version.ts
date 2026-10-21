@@ -11,6 +11,6 @@
  * android/app/AndroidManifest.xml (versionName / versionCode). The test
  * fails if they disagree.
  */
-export const APP_VERSION = "1.5.0";
-export const APP_VERSION_CODE = 14;
+export const APP_VERSION = "1.6.0";
+export const APP_VERSION_CODE = 15;
 export const APP_REPO_URL = "https://github.com/onimeno62/oniLibrary";
