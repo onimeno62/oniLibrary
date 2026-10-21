@@ -48,13 +48,17 @@ export function HomeScreen() {
       .sort((a, b) => (a.lastReadAt! < b.lastReadAt! ? 1 : -1));
     for (const w of reading) {
       const cr = continueReading(w);
-      if (cr) return { work: w, ...cr };
+      if (cr) {
+        return {
+          work: w,
+          ...cr,
+          pct: Math.min(99, Math.max(1, Math.round(chapterProgressFraction(cr.chapter) * 100))),
+        };
+      }
     }
     return null;
   }, [publicWorks]);
-  const continuePct = continueItem
-    ? Math.min(99, Math.max(1, Math.round(chapterProgressFraction(continueItem.chapter) * 100)))
-    : 0;
+  const continuePct = continueItem?.pct ?? 0;
 
   /* genuine updates only: newest UNREAD release per work (library-contract);
      the section is hidden entirely when nothing qualifies — no fake rows */

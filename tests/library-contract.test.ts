@@ -184,7 +184,7 @@ describe("savedFilters persistence (audit fix — was missing from partialize)",
     const filter = {
       id: "sf1",
       name: "Reading manga",
-      filter: { type: "MANGA", status: "READING", source: null, downloadedOnly: false, unreadOnly: false, sort: "recent" },
+      filter: { type: "MANGA" as const, status: "READING" as const, source: null, downloadedOnly: false, unreadOnly: false, sort: "latest" as const },
     };
     useApp.setState({ savedFilters: [filter] });
     const options = useApp.persist.getOptions();
