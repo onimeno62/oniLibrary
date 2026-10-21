@@ -42,6 +42,7 @@ import {
   SkipBack,
   SkipForward,
   Square,
+  StickyNote,
   Sun,
   Trophy,
   Volume2,
@@ -50,6 +51,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { MangaPage, hashStr } from "@/lib/manga-page";
+import { HighlightsSheet, NotesSheet } from "@/components/screens/reader-sheets";
 import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav, toFa } from "@/lib/store";
 import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
@@ -603,6 +605,9 @@ export function ReaderScreen({
   const [rotate, setRotate] = useState(0); // 0/90/180/270
   const [autoPlay, setAutoPlay] = useState(false);
   const [chapterSheet, setChapterSheet] = useState(false);
+  /* repo-audit §7: Notes & Highlights sheets (reuse the existing store) */
+  const [hlSheet, setHlSheet] = useState(false);
+  const [notesSheet, setNotesSheet] = useState(false);
   const [settingsSheet, setSettingsSheet] = useState(false);
   const [brightOpen, setBrightOpen] = useState(false);
   const [ttsOpen, setTtsOpen] = useState(false);
@@ -853,6 +858,30 @@ export function ReaderScreen({
     }
      
   }, [highlightId]);
+
+  /* repo-audit §7: consume a queued highlight focus after an in-sheet
+     cross-chapter jump — waits for the PDF document (total) to be ready */
+  const pendingHlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = pendingHlRef.current;
+    if (!id) return;
+    const hl = allHighlights.find((h) => h.id === id);
+    if (!hl) {
+      pendingHlRef.current = null;
+      return;
+    }
+    if (isPdf) {
+      if (total <= 0 || hl.page === undefined) return; // wait for the document
+      pendingHlRef.current = null;
+      const p = Math.max(0, Math.min(total - 1, hl.page - 1));
+      goToPage(p);
+      if (scrollable) setScrollCmd({ page: p });
+      setFocusHlId(id);
+    } else {
+      pendingHlRef.current = null;
+      setFocusHlId(id);
+    }
+  }, [chapterId, total, isPdf, allHighlights, scrollable]);
 
   /* keep the pause ref in sync so the interval closure always sees it */
   useEffect(() => {
@@ -2016,6 +2045,21 @@ export function ReaderScreen({
                 <CheckCircle2 className="h-4 w-4 text-primary" />
                 {chapter.isRead ? t("upd.markUnread") : t("upd.markRead")}
               </DropdownMenuItem>
+              {/* repo-audit §7: Notes & Highlights — functional, existing store */}
+              <DropdownMenuItem
+                onClick={() => setHlSheet(true)}
+                className="gap-2.5 rounded-xl text-[13px] font-semibold"
+              >
+                <Highlighter className="h-4 w-4 text-primary" />
+                {t("rdr.highlights")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setNotesSheet(true)}
+                className="gap-2.5 rounded-xl text-[13px] font-semibold"
+              >
+                <StickyNote className="h-4 w-4 text-primary" />
+                {t("rdr.notes")}
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
                   // Phase 4 (X1): real pipeline for source chapters, honest
@@ -2466,6 +2510,33 @@ export function ReaderScreen({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ============ notes & highlights sheets (repo-audit §7) ============ */}
+      {work && (
+        <HighlightsSheet
+          key={String(hlSheet)}
+          open={hlSheet}
+          onOpenChange={setHlSheet}
+          work={work}
+          chapterId={chapterId}
+          onJump={(hl) => {
+            setHlSheet(false);
+            setFocusHlId(hl.id);
+            if (isPdf && hl.page !== undefined) {
+              const p = Math.max(0, Math.min(total - 1, hl.page - 1));
+              goToPage(p);
+              if (scrollable) setScrollCmd({ page: p });
+            }
+          }}
+          onJumpCrossChapter={(hl) => {
+            setHlSheet(false);
+            pendingHlRef.current = hl.id;
+            if (hl.chapterId !== chapterId) openChapter(hl.chapterId);
+            else setFocusHlId(hl.id);
+          }}
+        />
+      )}
+      {work && <NotesSheet key={String(notesSheet)} open={notesSheet} onOpenChange={setNotesSheet} work={work} />}
 
       {/* ============ pdf full-text search sheet (RDR-015) ============ */}
       <Dialog open={pdfSearchOpen} onOpenChange={closePdfSheet}>
