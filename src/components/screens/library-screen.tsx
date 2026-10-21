@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   SlidersHorizontal,
@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { SectionHeader, WorkCover, ProgressBar, EmptyState } from "@/components/shared";
 import { useApp, useNav, workProgress, workSizeBytes, currentChapter, matchesRule } from "@/lib/store";
+import { filterByTags, filterByCategory, collectTags } from "@/lib/library-contract";
 import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
@@ -90,12 +91,33 @@ export function LibraryScreen() {
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [unreadOnly, setUnreadOnly] = useState(false);
+  /* repo-audit §5.1/§5.2: manual-category + tag filters (both functional) */
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [selection, setSelection] = useState<string[] | null>(null);
   const [newCatOpen, setNewCatOpen] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [saveFilterOpen, setSaveFilterOpen] = useState(false);
   const [filterName, setFilterName] = useState("");
   const [smartRule, setSmartRule] = useState<{ name: string; rule: SmartRule } | null>(null);
+  const libraryPreset = useNav((s) => s.libraryPreset);
+  const clearLibraryPreset = useNav((s) => s.clearLibraryPreset);
+  /* repo-audit §5.3/§6: pre-applied filter handed over from other screens
+     (work-detail tag taps) — applied once when it arrives, then cleared so
+     user changes are never clobbered by the stale preset */
+  useEffect(() => {
+    if (!libraryPreset) return;
+    if (libraryPreset.tag) {
+      setTagFilter([libraryPreset.tag]);
+      setCategoryFilter(null);
+      setSmartRule(null);
+    } else if (libraryPreset.category) {
+      setCategoryFilter(libraryPreset.category);
+      setTagFilter([]);
+      setSmartRule(null);
+    }
+    clearLibraryPreset();
+  }, [libraryPreset, clearLibraryPreset]);
   const [bulkPick, setBulkPick] = useState<null | "category" | "status">(null);
   const savedFilters = useApp((s) => s.savedFilters);
   const density = useApp((s) => s.settings.libraryDensity);
@@ -225,6 +247,10 @@ export function LibraryScreen() {
     if (downloadedOnly) list = list.filter((w) => w.chapters.some((c) => c.download === "DONE"));
     if (unreadOnly) list = list.filter((w) => w.chapters.some((c) => !c.isRead));
     if (smartRule) list = list.filter((w) => matchesRule(w, smartRule.rule));
+    // repo-audit §5.1/§5.2: manual-category join + tag OR-filter compose with
+    // everything above (both no-op when unset, keeping the same array ref)
+    list = filterByCategory(list, workCategories, categoryFilter);
+    list = filterByTags(list, tagFilter);
     switch (sort) {
       case "lastRead":
         list.sort((a, b) => ((a.lastReadAt ?? a.addedAt) < (b.lastReadAt ?? b.addedAt) ? 1 : -1));
@@ -247,7 +273,7 @@ export function LibraryScreen() {
         break;
     }
     return list;
-  }, [publicWorks, query, typeFilter, sort, statusFilter, sourceFilter, langFilter, downloadedOnly, unreadOnly, smartRule]);
+  }, [publicWorks, query, typeFilter, sort, statusFilter, sourceFilter, langFilter, downloadedOnly, unreadOnly, smartRule, workCategories, categoryFilter, tagFilter]);
 
   const catCards = useMemo(() => {
     return categories.map((c) => ({
@@ -263,6 +289,12 @@ export function LibraryScreen() {
             .slice(0, 1),
     }));
   }, [categories, workCategories, publicWorks]);
+
+  /* repo-audit §5.2: real tag vocabulary from the library (most-used first) */
+  const tagOptions = useMemo(() => collectTags(publicWorks).slice(0, 24), [publicWorks]);
+  const toggleTag = (tag: string) =>
+    setTagFilter((cur) => (cur.includes(tag) ? cur.filter((x) => x !== tag) : [...cur, tag]));
+  const activeCategory = categoryFilter ? categories.find((c) => c.id === categoryFilter) ?? null : null;
 
   const toggleSelect = (id: string) => {
     setSelection((sel) =>
@@ -480,14 +512,14 @@ export function LibraryScreen() {
               onClick={() =>
                 c.rule
                   ? setSmartRule({ name: c.name, rule: c.rule })
-                  : push({ kind: "categories" })
+                  : setCategoryFilter((cur) => (cur === c.id ? null : c.id))
               }
               className="w-[104px] shrink-0 text-start"
             >
               <div
                 className={cn(
                   "relative h-[104px] overflow-hidden rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.45)]",
-                  c.smart && "ring-2 ring-primary/50"
+                  (c.smart ? smartRule?.name === c.name : categoryFilter === c.id) && "ring-2 ring-primary/60"
                 )}
               >
                 {c.smart ? (
@@ -528,6 +560,49 @@ export function LibraryScreen() {
           >
             <X className="h-3.5 w-3.5" />
           </button>
+        </div>
+      )}
+
+      {/* active category/tag filter pills (repo-audit §5.1/§5.2) */}
+      {(activeCategory || tagFilter.length > 0) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {activeCategory && (
+            <span className="flex items-center gap-1.5 rounded-full border border-primary/25 bg-coral-soft py-1 ps-3 pe-1.5 text-[12px] font-bold text-primary">
+              <Bookmark className="h-3 w-3 shrink-0" />
+              <span className="max-w-[160px] truncate">{activeCategory.name}</span>
+              <button
+                aria-label={t("a11y.removeFilter")}
+                onClick={() => setCategoryFilter(null)}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-primary/70 transition-colors hover:text-primary"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {tagFilter.map((tag) => (
+            <span
+              key={tag}
+              className="flex items-center gap-1.5 rounded-full border border-primary/25 bg-coral-soft py-1 ps-3 pe-1.5 text-[12px] font-bold text-primary"
+              dir="ltr"
+            >
+              <span className="max-w-[140px] truncate">#{tag}</span>
+              <button
+                aria-label={`${t("a11y.removeFilter")}: ${tag}`}
+                onClick={() => toggleTag(tag)}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-primary/70 transition-colors hover:text-primary"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          {tagFilter.length > 1 && (
+            <button
+              onClick={() => setTagFilter([])}
+              className="rounded-full px-2.5 py-1 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {t("lib.clearTags")}
+            </button>
+          )}
         </div>
       )}
 
@@ -949,6 +1024,32 @@ export function LibraryScreen() {
                 </div>
               )}
             </div>
+
+            {/* repo-audit §5.2: tag filter — real vocabulary, OR semantics */}
+            {tagOptions.length > 0 && (
+              <div className="rounded-2xl bg-secondary/60 px-4 py-3">
+                <p className="text-[13px] font-bold">{t("lib.tagFilter")}</p>
+                <p className="text-[11px] font-semibold text-muted-foreground">{t("lib.tagFilterHint")}</p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {tagOptions.map(({ tag, count }) => (
+                    <button
+                      key={tag}
+                      onClick={() => toggleTag(tag)}
+                      className={cn(
+                        "min-h-[36px] rounded-full px-3 py-1 text-[12px] font-bold transition-colors",
+                        tagFilter.includes(tag)
+                          ? "bg-coral-gradient text-white"
+                          : "bg-card text-muted-foreground hover:text-foreground"
+                      )}
+                      dir="ltr"
+                    >
+                      {tag}
+                      <span className="ms-1 opacity-60">{count}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* save current filters (LIB-011) */}
             <div className="rounded-2xl border border-primary/25 bg-coral-soft/60 p-3.5">
