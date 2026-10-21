@@ -163,3 +163,48 @@ describe("matchesRule: type groups", () => {
     expect(matchesRule(w, { downloaded: true, favorite: true })).toBe(false);
   });
 });
+
+describe("continueReading: safe resume from persisted positions (repo-audit)", () => {
+  it("resumes the in-progress chapter at the stored ratio, clamped to a real page", () => {
+    const w = makeWork({
+      id: "cr1",
+      chapters: [
+        makeChapter({ id: "c1", number: 1, isRead: true }),
+        makeChapter({ id: "c2", number: 2, lastPage: 0.5, pages: 20 }),
+      ],
+    });
+    expect(continueReading(w)).toEqual({ chapter: w.chapters[1], page: 10 });
+  });
+
+  it("legacy absolute lastPage is clamped inside the chapter (no out-of-range resume)", () => {
+    const w = makeWork({
+      id: "cr2",
+      chapters: [makeChapter({ id: "c1", number: 1, lastPage: 9999, pages: 20 })],
+    });
+    const cr = continueReading(w);
+    expect(cr?.page).toBe(19); // pages - 1
+  });
+
+  it("negative/NaN-ish stored positions never produce a negative page", () => {
+    const w = makeWork({
+      id: "cr3",
+      chapters: [makeChapter({ id: "c1", number: 1, lastPage: -3, pages: 20 })],
+    });
+    expect(continueReading(w)?.page).toBe(0);
+  });
+
+  it("skips fully-read chapters and falls back to the last chapter when all are read", () => {
+    const allRead = makeWork({
+      id: "cr4",
+      chapters: [
+        makeChapter({ id: "c1", number: 1, isRead: true }),
+        makeChapter({ id: "c2", number: 2, isRead: true }),
+      ],
+    });
+    expect(continueReading(allRead)?.chapter.id).toBe("c2");
+  });
+
+  it("never fabricates a resume point for chapter-less works", () => {
+    expect(continueReading(makeWork({ id: "cr5", chapters: [] }))).toBeNull();
+  });
+});

@@ -1,7 +1,8 @@
 "use client";
 
 import { create } from "zustand";
-import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { createThrottledPersistStorage } from "./persist-storage";
 import { legacyPinHash } from "./vault-crypto";
 import { translate } from "./i18n";
 import { sanitizeSettingsForImport } from "./backup-contract";
@@ -61,20 +62,34 @@ export type Overlay =
   | { kind: "notifications" }
   | { kind: "duplicates" };
 
+/** Pre-applied Library filter handed over from other screens (details tags,
+ *  category deep-links). Transient — LibraryScreen consumes it and clears. */
+export interface LibraryPreset {
+  tag?: string | null;
+  category?: string | null;
+}
+
 interface NavState {
   tab: Tab;
   stack: Overlay[];
+  /** pending Library filter applied once by LibraryScreen (see openLibraryFiltered) */
+  libraryPreset: LibraryPreset | null;
   setTab: (t: Tab) => void;
   push: (o: Overlay) => void;
   pop: () => void;
   popToTab: () => void;
   openWork: (workId: string) => void;
   openReader: (workId: string, chapterId: string, page?: number) => void;
+  /** jump to the Library tab (dropping any overlay stack) with a pre-applied
+   *  tag/category filter — the work-detail tag tap, category deep-links */
+  openLibraryFiltered: (preset: LibraryPreset) => void;
+  clearLibraryPreset: () => void;
 }
 
 export const useNav = create<NavState>((set) => ({
   tab: "home",
   stack: [],
+  libraryPreset: null,
   setTab: (t) => set({ tab: t, stack: [] }),
   push: (o) => set((s) => ({ stack: [...s.stack, o] })),
   pop: () => set((s) => ({ stack: s.stack.slice(0, -1) })),
@@ -82,9 +97,12 @@ export const useNav = create<NavState>((set) => ({
   openWork: (workId) => set((s) => ({ stack: [...s.stack, { kind: "details", workId }] })),
   openReader: (workId, chapterId, page) =>
     set((s) => ({ stack: [...s.stack, { kind: "reader", workId, chapterId, page }] })),
+  openLibraryFiltered: (preset) => set({ tab: "library", stack: [], libraryPreset: preset }),
+  clearLibraryPreset: () => set({ libraryPreset: null }),
 }));
 
-/* dev-only QA hook: lets browser probes read the overlay stack */
+/* dev-only QA hook: lets browser probes read the overlay stack
+   (never ships to production) */
 if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
   (window as unknown as { __oninav?: unknown }).__oninav = useNav;
 }
@@ -1045,31 +1063,12 @@ export const useApp = create<AppState>()(
     }),
     {
       name: "onilibrary-store-v1",
-      storage: createJSONStorage((): StateStorage => ({
-        /* guarded storage — a corrupted persisted payload or a privacy
-           mode that throws on access must never crash hydration */
-        getItem: (name) => {
-          try {
-            return localStorage.getItem(name);
-          } catch {
-            return null;
-          }
-        },
-        setItem: (name, value) => {
-          try {
-            localStorage.setItem(name, value);
-          } catch {
-            /* quota exceeded / private mode — run memory-only */
-          }
-        },
-        removeItem: (name) => {
-          try {
-            localStorage.removeItem(name);
-          } catch {
-            /* ignore */
-          }
-        },
-      })),
+      /* throttled persist — perf-measured: the previous write-through storage
+         spent ~85-120 ms of synchronous main-thread time (JSON.stringify +
+         localStorage.setItem of a ~3 MB payload) on EVERY store change, i.e.
+         on every reader page flip with a large library. Now: trailing 800 ms
+         coalesced write, flushed on pagehide/visibilitychange/reader exit. */
+      storage: createThrottledPersistStorage<Partial<AppState>>(),
       // migrate older persisted states: new Settings keys must fall back to
       // defaults instead of undefined (e.g. volumeKeyPaging on v1.0.1 stores)
       merge: (persisted, current) => {
@@ -1089,7 +1088,7 @@ export const useApp = create<AppState>()(
           },
         } as AppState;
       },
-      partialize: (s) => ({
+      partialize: (s): Partial<AppState> => ({
         onboarded: s.onboarded,
         works: s.works,
         categories: s.categories,
@@ -1104,6 +1103,9 @@ export const useApp = create<AppState>()(
         bookmarks: s.bookmarks,
         highlights: s.highlights,
         servers: s.servers,
+        /* saved filter chips must survive reload — they were missing here and
+           silently reset on every app restart (audit fix) */
+        savedFilters: s.savedFilters,
         settings: s.settings,
         builtinDisabled: s.builtinDisabled,
         updateCheck: { lastCheck: s.updateCheck.lastCheck, checking: false },
@@ -1115,6 +1117,12 @@ export const useApp = create<AppState>()(
     }
   )
 );
+
+/* dev-only QA hook: browser probes read the persisted app store — declared
+   here because useApp only exists after the persist(...) call above */
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  (window as unknown as { __oniapp?: unknown }).__oniapp = useApp;
+}
 
 /* ---------- helpers ---------- */
 

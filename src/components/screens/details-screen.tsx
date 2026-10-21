@@ -31,6 +31,7 @@ import {
   Globe,
 } from "lucide-react";
 import { WorkCover } from "@/components/shared";
+import { CoverViewer } from "@/components/cover-viewer";
 import { WorkMenu } from "@/components/screens/library-screen";
 import { useApp, useNav, continueReading, timeAgo, workProgress, toFa } from "@/lib/store";
 import { useT } from "@/lib/use-app";
@@ -66,6 +67,9 @@ export function DetailsScreen({ workId }: { workId: string }) {
   const [readerSettings, setReaderSettings] = useState(false);
   const [bookmarksOpen, setBookmarksOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  /* repo-audit §8: full-screen cover viewer */
+  const [coverOpen, setCoverOpen] = useState(false);
+  const openLibraryFiltered = useNav((s) => s.openLibraryFiltered);
   const [ratingOpen, setRatingOpen] = useState(false);
   /* chapter management mode (v1.4.0): multi-select → rename / move / delete */
   const [manageMode, setManageMode] = useState(false);
@@ -257,14 +261,21 @@ export function DetailsScreen({ workId }: { workId: string }) {
         {/* cover + meta */}
         <div className="relative z-10 -mt-24 px-5">
           <div className="flex gap-4">
-            <WorkCover
-              src={work.customCover ?? work.cover}
-              color={work.coverColor}
-              title={work.title}
-              eager
-              className="h-[150px] w-[106px] shrink-0 rounded-2xl border-4 border-background/30 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.8)]"
-              sizes="106px"
-            />
+            <button
+              type="button"
+              onClick={() => setCoverOpen(true)}
+              aria-label={t("det.viewCover")}
+              className="shrink-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <WorkCover
+                src={work.customCover ?? work.cover}
+                color={work.coverColor}
+                title={work.title}
+                eager
+                className="h-[150px] w-[106px] rounded-2xl border-4 border-background/30 shadow-[0_18px_40px_-16px_rgba(0,0,0,0.8)] transition-transform hover:scale-[1.03]"
+                sizes="106px"
+              />
+            </button>
             <div className="min-w-0 flex-1 pt-12">
               <h1 className="text-[21px] font-black leading-tight tracking-tight text-white">{work.title}</h1>
               {work.altTitle && <p className="mt-0.5 truncate text-[12px] font-semibold text-white/60" dir="auto">{work.altTitle}</p>}
@@ -272,12 +283,18 @@ export function DetailsScreen({ workId }: { workId: string }) {
             </div>
           </div>
 
-          {/* tags */}
+          {/* tags — repo-audit §6: tapping a tag opens the Library with that
+              tag already active (OR semantics, clearable there) */}
           <div className="mt-3 flex flex-wrap gap-1.5">
             {work.tags.map((tag) => (
-              <span key={tag} className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-bold text-white/80">
+              <button
+                key={tag}
+                onClick={() => openLibraryFiltered({ tag })}
+                aria-label={`${t("a11y.filterByTag")}: ${tag}`}
+                className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-bold text-white/80 transition-colors hover:border-primary/50 hover:bg-primary/15 hover:text-white"
+              >
                 {tag}
-              </span>
+              </button>
             ))}
             <span className={cn("rounded-full border px-3 py-1 text-[11px] font-bold", st.cls)}>
               {t(st.key)}
@@ -774,6 +791,15 @@ export function DetailsScreen({ workId }: { workId: string }) {
 
       {/* work editor (LIB-010) */}
       <EditWorkDialog workId={work.id} open={editOpen} onOpenChange={setEditOpen} />
+
+      {/* repo-audit §8: full-screen cover viewer */}
+      <CoverViewer
+        open={coverOpen}
+        src={work.customCover ?? work.cover}
+        title={work.title}
+        color={work.coverColor}
+        onClose={() => setCoverOpen(false)}
+      />
     </div>
   );
 }

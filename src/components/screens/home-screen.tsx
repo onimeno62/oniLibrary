@@ -13,7 +13,8 @@ import {
   Flame,
 } from "lucide-react";
 import { SectionHeader, WorkCover } from "@/components/shared";
-import { useApp, useNav, continueReading, timeAgo } from "@/lib/store";
+import { useApp, useNav, continueReading, chapterProgressFraction, timeAgo } from "@/lib/store";
+import { latestUpdatesFeed } from "@/lib/library-contract";
 import { useT } from "@/lib/use-app";
 import type { TranslationKey } from "@/lib/i18n";
 import { useWeeklyStats } from "@/lib/engine";
@@ -32,27 +33,36 @@ export function HomeScreen() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? t("home.morning") : hour < 18 ? t("home.afternoon") : t("home.evening");
 
-  const publicWorks = works.filter((w) => !w.inVault);
+  /* perf: derived shelves are memoized — previously the filter/sort/flatMap
+     chain re-ran on every render of the screen */
+  const publicWorks = useMemo(() => works.filter((w) => !w.inVault), [works]);
 
-  const continueItem = (() => {
+  /* single source of truth: the persisted per-chapter lastPage via
+     continueReading() — same selector the Discover shelf used. The resume
+     tap now passes the real page index (it previously opened page 1) and
+     the rail/percent use the dual lastPage normalization (legacy absolute
+     values showed a fake 99% here). */
+  const continueItem = useMemo(() => {
     const reading = publicWorks
       .filter((w) => w.readingStatus === "READING" && w.lastReadAt)
       .sort((a, b) => (a.lastReadAt! < b.lastReadAt! ? 1 : -1));
     for (const w of reading) {
       const cr = continueReading(w);
-      if (cr) return { work: w, ...cr };
+      if (cr) {
+        return {
+          work: w,
+          ...cr,
+          pct: Math.min(99, Math.max(1, Math.round(chapterProgressFraction(cr.chapter) * 100))),
+        };
+      }
     }
     return null;
-  })();
+  }, [publicWorks]);
+  const continuePct = continueItem?.pct ?? 0;
 
-  const latestUpdates = publicWorks
-    .flatMap((w) => {
-      const ch = w.chapters[0];
-      if (!ch || ch.isRead) return [];
-      return [{ work: w, ch }];
-    })
-    .sort((a, b) => (a.ch.releaseDate < b.ch.releaseDate ? 1 : -1))
-    .slice(0, 8);
+  /* genuine updates only: newest UNREAD release per work (library-contract);
+     the section is hidden entirely when nothing qualifies — no fake rows */
+  const latestUpdates = useMemo(() => latestUpdatesFeed(publicWorks, 8), [publicWorks]);
 
   const recentlyAdded = [...publicWorks].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).slice(0, 8);
 
@@ -114,10 +124,10 @@ export function HomeScreen() {
         </h1>
       </div>
 
-      {/* continue reading hero */}
-      {continueItem && (
+      {/* continue reading hero — primary resume entry (moved from Discover) */}
+      {continueItem ? (
         <button
-          onClick={() => openReader(continueItem.work.id, continueItem.chapter.id)}
+          onClick={() => openReader(continueItem.work.id, continueItem.chapter.id, continueItem.page)}
           className="group relative mt-4 block w-full overflow-hidden rounded-3xl text-start shadow-[0_18px_40px_-18px_rgba(43,36,29,0.5)]"
         >
           <div className="relative h-[150px] w-full">
@@ -134,11 +144,11 @@ export function HomeScreen() {
               <WorkCover title={continueItem.work.title} color={continueItem.work.coverColor} className="h-full w-full" />
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-black/5" />
-            {/* progress rail (chapter completion) */}
+            {/* progress rail — dual lastPage normalization, clamped 1..99 */}
             <div className="absolute inset-x-0 top-0 h-[3px] bg-white/15">
               <div
                 className="h-full bg-coral-gradient shadow-[0_0_8px_rgba(248,105,76,0.8)]"
-                style={{ width: `${Math.round((continueItem.chapter.lastPage ?? 0) * 100)}%` }}
+                style={{ width: `${continuePct}%` }}
               />
             </div>
           </div>
@@ -147,7 +157,7 @@ export function HomeScreen() {
               <p className="text-[17px] font-extrabold text-white drop-shadow">{t("home.continueReading")}</p>
               <p className="mt-0.5 truncate text-[14px] font-bold text-white/95">{continueItem.work.title}</p>
               <p className="text-[12px] font-semibold text-white/80">
-                {t("common.chapter")} {continueItem.chapter.number} · {Math.round((continueItem.chapter.lastPage ?? 0) * 100)}%
+                {t("common.chapter")} {continueItem.chapter.number} · {continuePct}%
               </p>
             </div>
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-coral-gradient text-white shadow-lg transition-transform group-hover:scale-105">
@@ -155,41 +165,55 @@ export function HomeScreen() {
             </span>
           </div>
         </button>
+      ) : (
+        /* meaningful empty state — nothing fabricated, points at Discover */
+        <button
+          onClick={() => setTab("discover")}
+          className="mt-4 flex w-full items-center gap-3 rounded-3xl border border-dashed border-border bg-card/60 p-4 text-start transition-colors hover:bg-card"
+        >
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-coral-soft text-primary">
+            <BookOpen className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[14px] font-extrabold">{t("home.nothingInProgress")}</span>
+            <span className="block text-[12px] font-semibold text-muted-foreground">{t("home.findSomething")}</span>
+          </span>
+          <ChevronRight className={cn("ms-auto h-5 w-5 shrink-0 text-muted-foreground", rtl && "rotate-180")} />
+        </button>
       )}
 
-      {/* latest updates */}
-      <section className="mt-7">
-        <SectionHeader title={t("home.latestUpdates")} onSeeAll={() => setTab("updates")} />
-        <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar" dir="ltr">
-          {latestUpdates.length === 0 && (
-            <p className="py-6 text-[13px] font-semibold text-muted-foreground">{t("upd.empty")}</p>
-          )}
-          {latestUpdates.map(({ work, ch }) => (
-            <button
-              key={work.id}
-              onClick={() => openWork(work.id)}
-              className="group w-[92px] shrink-0 text-start"
-            >
-              <div className="relative">
-                <WorkCover
-                  src={work.cover}
-                  color={work.coverColor}
-                  title={work.title}
-                  eager
-                  className="aspect-[3/4] w-full rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.5)] transition-transform group-hover:-translate-y-0.5"
-                  sizes="92px"
-                />
-                <span className="absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-coral-gradient ring-2 ring-white/90" />
-              </div>
-              <p className="mt-1.5 truncate text-[12px] font-extrabold">{work.title}</p>
-              <p className="text-[11px] font-semibold text-muted-foreground">
-                {t("common.ch")} {ch.number}
-              </p>
-              <p className="text-[10px] font-semibold text-muted-foreground/80">{timeAgo(ch.releaseDate, lang)}</p>
-            </button>
-          ))}
-        </div>
-      </section>
+      {/* latest updates — hidden entirely when there is nothing genuine */}
+      {latestUpdates.length > 0 && (
+        <section className="mt-7">
+          <SectionHeader title={t("home.latestUpdates")} onSeeAll={() => setTab("updates")} />
+          <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar" dir="ltr">
+            {latestUpdates.map(({ work, chapter }) => (
+              <button
+                key={work.id}
+                onClick={() => openWork(work.id)}
+                className="group w-[92px] shrink-0 text-start"
+              >
+                <div className="relative">
+                  <WorkCover
+                    src={work.cover}
+                    color={work.coverColor}
+                    title={work.title}
+                    eager
+                    className="aspect-[3/4] w-full rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.5)] transition-transform group-hover:-translate-y-0.5"
+                    sizes="92px"
+                  />
+                  <span className="absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-coral-gradient ring-2 ring-white/90" />
+                </div>
+                <p className="mt-1.5 truncate text-[12px] font-extrabold">{work.title}</p>
+                <p className="text-[11px] font-semibold text-muted-foreground">
+                  {t("common.ch")} {chapter.number}
+                </p>
+                <p className="text-[10px] font-semibold text-muted-foreground/80">{timeAgo(chapter.releaseDate, lang)}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* recently added */}
       <section className="mt-6">

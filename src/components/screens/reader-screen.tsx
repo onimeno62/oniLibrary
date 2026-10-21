@@ -42,6 +42,7 @@ import {
   SkipBack,
   SkipForward,
   Square,
+  StickyNote,
   Sun,
   Trophy,
   Volume2,
@@ -50,6 +51,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { MangaPage, hashStr } from "@/lib/manga-page";
+import { HighlightsSheet, NotesSheet } from "@/components/screens/reader-sheets";
 import { PdfCanvas } from "@/components/pdf-view";
 import { useApp, useNav, toFa } from "@/lib/store";
 import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
@@ -603,6 +605,9 @@ export function ReaderScreen({
   const [rotate, setRotate] = useState(0); // 0/90/180/270
   const [autoPlay, setAutoPlay] = useState(false);
   const [chapterSheet, setChapterSheet] = useState(false);
+  /* repo-audit §7: Notes & Highlights sheets (reuse the existing store) */
+  const [hlSheet, setHlSheet] = useState(false);
+  const [notesSheet, setNotesSheet] = useState(false);
   const [settingsSheet, setSettingsSheet] = useState(false);
   const [brightOpen, setBrightOpen] = useState(false);
   const [ttsOpen, setTtsOpen] = useState(false);
@@ -854,6 +859,30 @@ export function ReaderScreen({
      
   }, [highlightId]);
 
+  /* repo-audit §7: consume a queued highlight focus after an in-sheet
+     cross-chapter jump — waits for the PDF document (total) to be ready */
+  const pendingHlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = pendingHlRef.current;
+    if (!id) return;
+    const hl = allHighlights.find((h) => h.id === id);
+    if (!hl) {
+      pendingHlRef.current = null;
+      return;
+    }
+    if (isPdf) {
+      if (total <= 0 || hl.page === undefined) return; // wait for the document
+      pendingHlRef.current = null;
+      const p = Math.max(0, Math.min(total - 1, hl.page - 1));
+      goToPage(p);
+      if (scrollable) setScrollCmd({ page: p });
+      setFocusHlId(id);
+    } else {
+      pendingHlRef.current = null;
+      setFocusHlId(id);
+    }
+  }, [chapterId, total, isPdf, allHighlights, scrollable]);
+
   /* keep the pause ref in sync so the interval closure always sees it */
   useEffect(() => {
     sessionPausedRef.current = sessionPaused;
@@ -895,9 +924,14 @@ export function ReaderScreen({
     return () => {
       const st = useApp.getState();
       const ch = st.works.find((x) => x.id === wid)?.chapters.find((c) => c.id === cid);
-      if (!ch || ch.pages <= 0) return;
-      const seenAll = typeof ch.lastPage === "number" && ch.lastPage >= (ch.pages - 1) / ch.pages - 1e-6;
-      if (seenAll) st.markChapterRead(wid, cid, true);
+      if (ch && ch.pages > 0) {
+        const seenAll = typeof ch.lastPage === "number" && ch.lastPage >= (ch.pages - 1) / ch.pages - 1e-6;
+        if (seenAll) st.markChapterRead(wid, cid, true);
+      }
+      /* progress is written through the throttled persist — flush on reader
+         exit so the position survives an immediate app kill (perf: the
+         trailing 800 ms write would otherwise linger unflushed here) */
+      void import("@/lib/persist-storage").then(({ flushPersistNow }) => flushPersistNow());
     };
   }, [workId, chapterId]);
 
@@ -1236,9 +1270,13 @@ export function ReaderScreen({
     return () => mq.removeEventListener?.("change", upd);
   }, []);
 
-  /* ----- keyboard: direction-aware arrows + shortcuts (Escape handled by app shell) ----- */
+  /* ----- keyboard: direction-aware arrows + shortcuts (Escape handled by app shell)
+     Perf: the listener is bound ONCE and dispatches through a ref — the
+     previous keyless effect removed/re-added the window listener on every
+     render (every page flip, every controls toggle) */
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
   useEffect(() => {
-    const fn = (e: KeyboardEvent) => {
+    keyHandlerRef.current = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       const tg = e.target as HTMLElement | null;
       if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.isContentEditable)) return;
@@ -1267,14 +1305,24 @@ export function ReaderScreen({
         setHelpOpen(true);
       }
     };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
   });
+  useEffect(() => {
+    const bound = (e: KeyboardEvent) => keyHandlerRef.current(e);
+    window.addEventListener("keydown", bound);
+    return () => window.removeEventListener("keydown", bound);
+  }, []);
 
   /* ----- Android volume keys → page turns (RDR-010): the native shell
      intercepts VOLUME_UP/DOWN while the reader is open and dispatches
      `oni-volume`; mapping follows the reader convention
-     (Vol↓ = next, Vol↑ = previous), honouring the user setting ----- */
+     (Vol↓ = next, Vol↑ = previous), honouring the user setting.
+     Perf: re-binds only when the setting flips — previously this ran on
+     EVERY render, re-invoking the Java bridge and churning the listener. */
+  const volumeKeyPaging = useApp((s) => s.settings.volumeKeyPaging);
+  const volumeNavRef = useRef<{ prev: () => void; next: () => void }>({ prev: () => undefined, next: () => undefined });
+  useEffect(() => {
+    volumeNavRef.current = { prev, next };
+  });
   useEffect(() => {
     const anyWin = window as unknown as {
       OniAndroid?: { setVolumeKeyMode?: (active: boolean) => void };
@@ -1292,20 +1340,20 @@ export function ReaderScreen({
         /* bridge refused — volume-key paging stays off, reader keeps working */
       }
     };
-    const enabled = Boolean(useApp.getState().settings.volumeKeyPaging);
+    const enabled = Boolean(volumeKeyPaging);
     safeSetMode(enabled);
     if (!enabled) return;
     const fn = (e: Event) => {
       const dir = (e as CustomEvent<{ dir?: "up" | "down" }>).detail?.dir;
-      if (dir === "up") prev();
-      else next();
+      if (dir === "up") volumeNavRef.current.prev();
+      else volumeNavRef.current.next();
     };
     window.addEventListener("oni-volume", fn);
     return () => {
       window.removeEventListener("oni-volume", fn);
       safeSetMode(false);
     };
-  });
+  }, [volumeKeyPaging]);
 
   /* ----- pdf full-text search (RDR-015): debounced committed query ----- */
   useEffect(() => {
@@ -1997,6 +2045,21 @@ export function ReaderScreen({
                 <CheckCircle2 className="h-4 w-4 text-primary" />
                 {chapter.isRead ? t("upd.markUnread") : t("upd.markRead")}
               </DropdownMenuItem>
+              {/* repo-audit §7: Notes & Highlights — functional, existing store */}
+              <DropdownMenuItem
+                onClick={() => setHlSheet(true)}
+                className="gap-2.5 rounded-xl text-[13px] font-semibold"
+              >
+                <Highlighter className="h-4 w-4 text-primary" />
+                {t("rdr.highlights")}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setNotesSheet(true)}
+                className="gap-2.5 rounded-xl text-[13px] font-semibold"
+              >
+                <StickyNote className="h-4 w-4 text-primary" />
+                {t("rdr.notes")}
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => {
                   // Phase 4 (X1): real pipeline for source chapters, honest
@@ -2447,6 +2510,33 @@ export function ReaderScreen({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ============ notes & highlights sheets (repo-audit §7) ============ */}
+      {work && (
+        <HighlightsSheet
+          key={String(hlSheet)}
+          open={hlSheet}
+          onOpenChange={setHlSheet}
+          work={work}
+          chapterId={chapterId}
+          onJump={(hl) => {
+            setHlSheet(false);
+            setFocusHlId(hl.id);
+            if (isPdf && hl.page !== undefined) {
+              const p = Math.max(0, Math.min(total - 1, hl.page - 1));
+              goToPage(p);
+              if (scrollable) setScrollCmd({ page: p });
+            }
+          }}
+          onJumpCrossChapter={(hl) => {
+            setHlSheet(false);
+            pendingHlRef.current = hl.id;
+            if (hl.chapterId !== chapterId) openChapter(hl.chapterId);
+            else setFocusHlId(hl.id);
+          }}
+        />
+      )}
+      {work && <NotesSheet key={String(notesSheet)} open={notesSheet} onOpenChange={setNotesSheet} work={work} />}
 
       {/* ============ pdf full-text search sheet (RDR-015) ============ */}
       <Dialog open={pdfSearchOpen} onOpenChange={closePdfSheet}>
