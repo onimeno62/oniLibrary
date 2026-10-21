@@ -7,12 +7,12 @@ import { SectionHeader, WorkCover } from "@/components/shared";
 import { MangaDexCard, FreeCatalogList, MdCover } from "@/components/sources/free-catalogs";
 import { MdFilterSheet } from "@/components/sources/md-filter-sheet";
 import { RecShelf } from "@/components/sources/rec-shelf";
-import { useApp, useNav, continueReading, chapterProgressFraction } from "@/lib/store";
+import { useApp, useNav } from "@/lib/store";
 import { useT, useMedia } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { mdLatest, type MdManga } from "@/lib/mangadex";
 import { MANGADEX_ID } from "@/lib/builtin-sources";
-import type { Chapter, Work } from "@/lib/types";
+import type { Work } from "@/lib/types";
 
 type Cat = "ALL" | "MANGA" | "COMICS" | "BOOKS";
 type Chip = Cat | "MORE";
@@ -32,7 +32,6 @@ export function DiscoverScreen() {
   const push = useNav((s) => s.push);
   const setTab = useNav((s) => s.setTab);
   const openWork = useNav((s) => s.openWork);
-  const openReader = useNav((s) => s.openReader);
   const [cat, setCat] = useState<Cat>("ALL");
 
   /* promo carousel (mockup: "Discover More" banner with page dots) */
@@ -87,27 +86,13 @@ export function DiscoverScreen() {
     return () => clearInterval(id);
   }, [reduceMotion]);
 
-  /* ----- real library shelves (v1.2.2 — no more fake catalogs) ----- */
+  /* ----- real library shelves (v1.2.2 — no more fake catalogs) -----
+     (continue-reading moved to Home as the single resume entry point —
+     repo-audit task §4.4; Home's hero is the only Continue Reading now) */
   const visibleWorks = useMemo(() => works.filter((w) => !w.inVault).filter((w) => matchesCat(w, cat)), [works, cat]);
 
   /* plan §10 (Phase 5): disabled catalogs stay configured but hidden */
   const activeServers = useMemo(() => servers.filter((s) => s.enabled !== false), [servers]);
-
-  const continueShelf = useMemo(() => {
-    return visibleWorks
-      .filter((w) => w.readingStatus === "READING")
-      .map((w) => ({ work: w, cr: continueReading(w) }))
-      .filter((x): x is { work: Work; cr: { chapter: Chapter; page: number } } => x.cr !== null)
-      .map(({ work, cr }) => ({
-        work,
-        chapterId: cr.chapter.id,
-        page: cr.page,
-        // dual lastPage interpretation (ratio now / absolute legacy) — same
-        // normalization as workProgress(); legacy records showed a fake 99%
-        pct: Math.min(99, Math.max(1, Math.round(chapterProgressFraction(cr.chapter) * 100))),
-      }))
-      .slice(0, 10);
-  }, [visibleWorks]);
 
   const recentShelf = useMemo(
     () => [...visibleWorks].sort((a, b) => (a.addedAt < b.addedAt ? 1 : -1)).slice(0, 10),
@@ -265,35 +250,6 @@ export function DiscoverScreen() {
           );
         })}
       </div>
-
-      {/* ====== from your library: continue reading ====== */}
-      {continueShelf.length > 0 && (
-        <section className="mt-6">
-          <SectionHeader title={t("disc.continueShelf")} onSeeAll={() => setTab("library")} />
-          <div className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 no-scrollbar">
-            {continueShelf.map(({ work, chapterId, page, pct }) => (
-              <button
-                key={work.id}
-                onClick={() => openReader(work.id, chapterId, page)}
-                className="group w-[96px] shrink-0 text-start"
-              >
-                <WorkCover
-                  src={work.cover}
-                  color={work.coverColor}
-                  title={work.title}
-                  className="aspect-[3/4] w-full rounded-2xl shadow-[0_10px_22px_-12px_rgba(43,36,29,0.5)]"
-                  sizes="96px"
-                />
-                <p className="mt-1.5 truncate text-[12px] font-extrabold">{work.title}</p>
-                <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-secondary">
-                  <div className="h-full rounded-full bg-coral-gradient" style={{ width: `${pct}%` }} />
-                </div>
-                <p className="mt-0.5 text-[10px] font-bold text-muted-foreground">{pct}%</p>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* ====== on-device picks (plan §9, Phase 5) — explainable + controllable ====== */}
       <RecShelf />
