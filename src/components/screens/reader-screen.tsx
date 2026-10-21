@@ -895,9 +895,14 @@ export function ReaderScreen({
     return () => {
       const st = useApp.getState();
       const ch = st.works.find((x) => x.id === wid)?.chapters.find((c) => c.id === cid);
-      if (!ch || ch.pages <= 0) return;
-      const seenAll = typeof ch.lastPage === "number" && ch.lastPage >= (ch.pages - 1) / ch.pages - 1e-6;
-      if (seenAll) st.markChapterRead(wid, cid, true);
+      if (ch && ch.pages > 0) {
+        const seenAll = typeof ch.lastPage === "number" && ch.lastPage >= (ch.pages - 1) / ch.pages - 1e-6;
+        if (seenAll) st.markChapterRead(wid, cid, true);
+      }
+      /* progress is written through the throttled persist — flush on reader
+         exit so the position survives an immediate app kill (perf: the
+         trailing 800 ms write would otherwise linger unflushed here) */
+      void import("@/lib/persist-storage").then(({ flushPersistNow }) => flushPersistNow());
     };
   }, [workId, chapterId]);
 
@@ -1236,9 +1241,13 @@ export function ReaderScreen({
     return () => mq.removeEventListener?.("change", upd);
   }, []);
 
-  /* ----- keyboard: direction-aware arrows + shortcuts (Escape handled by app shell) ----- */
+  /* ----- keyboard: direction-aware arrows + shortcuts (Escape handled by app shell)
+     Perf: the listener is bound ONCE and dispatches through a ref — the
+     previous keyless effect removed/re-added the window listener on every
+     render (every page flip, every controls toggle) */
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => undefined);
   useEffect(() => {
-    const fn = (e: KeyboardEvent) => {
+    keyHandlerRef.current = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       const tg = e.target as HTMLElement | null;
       if (tg && (tg.tagName === "INPUT" || tg.tagName === "TEXTAREA" || tg.isContentEditable)) return;
@@ -1267,14 +1276,24 @@ export function ReaderScreen({
         setHelpOpen(true);
       }
     };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
   });
+  useEffect(() => {
+    const bound = (e: KeyboardEvent) => keyHandlerRef.current(e);
+    window.addEventListener("keydown", bound);
+    return () => window.removeEventListener("keydown", bound);
+  }, []);
 
   /* ----- Android volume keys → page turns (RDR-010): the native shell
      intercepts VOLUME_UP/DOWN while the reader is open and dispatches
      `oni-volume`; mapping follows the reader convention
-     (Vol↓ = next, Vol↑ = previous), honouring the user setting ----- */
+     (Vol↓ = next, Vol↑ = previous), honouring the user setting.
+     Perf: re-binds only when the setting flips — previously this ran on
+     EVERY render, re-invoking the Java bridge and churning the listener. */
+  const volumeKeyPaging = useApp((s) => s.settings.volumeKeyPaging);
+  const volumeNavRef = useRef<{ prev: () => void; next: () => void }>({ prev: () => undefined, next: () => undefined });
+  useEffect(() => {
+    volumeNavRef.current = { prev, next };
+  });
   useEffect(() => {
     const anyWin = window as unknown as {
       OniAndroid?: { setVolumeKeyMode?: (active: boolean) => void };
@@ -1292,20 +1311,20 @@ export function ReaderScreen({
         /* bridge refused — volume-key paging stays off, reader keeps working */
       }
     };
-    const enabled = Boolean(useApp.getState().settings.volumeKeyPaging);
+    const enabled = Boolean(volumeKeyPaging);
     safeSetMode(enabled);
     if (!enabled) return;
     const fn = (e: Event) => {
       const dir = (e as CustomEvent<{ dir?: "up" | "down" }>).detail?.dir;
-      if (dir === "up") prev();
-      else next();
+      if (dir === "up") volumeNavRef.current.prev();
+      else volumeNavRef.current.next();
     };
     window.addEventListener("oni-volume", fn);
     return () => {
       window.removeEventListener("oni-volume", fn);
       safeSetMode(false);
     };
-  });
+  }, [volumeKeyPaging]);
 
   /* ----- pdf full-text search (RDR-015): debounced committed query ----- */
   useEffect(() => {
