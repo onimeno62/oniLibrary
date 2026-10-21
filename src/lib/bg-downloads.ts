@@ -9,8 +9,8 @@
  * after a restart every ACTIVE/QUEUED row sat forever). This version is
  * a real queue:
  *
- *  - enqueue only persists QUEUED rows; a single sequential pump drives
- *    them (concurrency capped by settings.maxConcurrent);
+ *  - enqueue only persists QUEUED rows; a bounded-parallel pump drives
+ *    them (up to settings.maxConcurrent rows at once — audit D10);
  *  - `initBgDownloads()` runs at app start: stale ACTIVE rows are
  *    re-queued (or honestly parked) and the pump resumes them —
  *    selected content survives restart (the Phase 4 gate);
@@ -37,7 +37,7 @@ import {
   chapterKeyIndex,
   dedupeEnqueueJobs,
   honestTelemetry,
-  pickNextDownload,
+  pickNextDownloads,
   resumeStaleRows,
   verifyChapterDownload,
   windowedSpeed,
@@ -179,11 +179,27 @@ export function enqueueMangaDexChapterDownloads(work: Work, jobs: MdChapterJob[]
 
 let pumping = false;
 let inited = false;
+/** rows currently running inside this pump generation (audit D10: the
+    concurrency bookkeeping is live-promise-based, not store-guessing) */
+const inflight = new Set<Promise<void>>();
+
+/** launch one row without awaiting it; the pump tracks it for capacity */
+function launch(row: DownloadItem): void {
+  const p = runRow(row)
+    .catch(() => undefined) // a throwing row must never crash the pump
+    .finally(() => {
+      inflight.delete(p);
+    });
+  inflight.add(p);
+}
 
 /**
- * Drive QUEUED rows sequentially. Idempotent: while a pump loop is
- * alive, extra calls are no-ops — the loop re-reads the store after
- * every row, so newly enqueued work is always picked up.
+ * Drive QUEUED rows with bounded parallelism (audit D10): up to
+ * settings.maxConcurrent rows run at once (1–5 — previously the pump was
+ * strictly sequential and the setting was inert). Idempotent: while a pump
+ * loop is alive, extra calls are no-ops — the loop re-reads the store and
+ * its live in-flight set continuously, so newly enqueued work and capacity
+ * freed by finished rows are both picked up.
  */
 export function pumpBgDownloads(): void {
   if (pumping) return;
@@ -191,14 +207,31 @@ export function pumpBgDownloads(): void {
   void (async () => {
     try {
       for (;;) {
+        const st = useApp.getState();
+        const queued = st.downloads.filter((d) => d.status === "QUEUED");
+        if (queued.length === 0 && inflight.size === 0) break; // queue fully drained
         if (downloadsBlocked()) {
-          await wait(1500); // connectivity/Wi-Fi policy may change any moment
+          // connectivity/Wi-Fi policy may change any moment; ACTIVE rows
+          // run their own honest wait loops, QUEUED ones wait here
+          await wait(1500);
           continue;
         }
-        const st = useApp.getState();
-        const row = pickNextDownload(st.downloads, st.settings.maxConcurrent);
-        if (!row) break;
-        await runRow(row);
+        const capacity = Math.max(0, st.settings.maxConcurrent - inflight.size);
+        if (capacity === 0) {
+          await wait(250); // saturated — wait for a row to settle
+          continue;
+        }
+        const rows = pickNextDownloads(st.downloads, capacity);
+        if (rows.length === 0) {
+          if (inflight.size === 0) break;
+          await wait(250); // rows in flight, none startable yet
+          continue;
+        }
+        rows.forEach(launch);
+      }
+      // drain whatever is still running before handing the pump back
+      while (inflight.size > 0) {
+        await Promise.allSettled([...inflight]);
       }
     } finally {
       pumping = false;

@@ -24,7 +24,7 @@ export function BottomNav() {
 
   return (
     <nav
-      aria-label="Primary"
+      aria-label={t("a11y.primaryNav")}
       className="relative z-30 border-t border-border/70 bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
     >
       <div className="mx-auto flex max-w-lg items-stretch justify-around px-2 pt-1.5 pb-1">

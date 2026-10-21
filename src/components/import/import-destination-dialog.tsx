@@ -213,7 +213,7 @@ export function ImportDestinationDialog({
                 className="w-full bg-transparent text-[13px] font-semibold outline-none placeholder:text-muted-foreground"
               />
               {query && (
-                <button onClick={() => setQuery("")} aria-label="Clear" className="text-muted-foreground hover:text-foreground">
+                <button onClick={() => setQuery("")} aria-label={t("a11y.clear")} className="text-muted-foreground hover:text-foreground">
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}

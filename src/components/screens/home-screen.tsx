@@ -15,6 +15,7 @@ import {
 import { SectionHeader, WorkCover } from "@/components/shared";
 import { useApp, useNav, continueReading, timeAgo } from "@/lib/store";
 import { useT } from "@/lib/use-app";
+import type { TranslationKey } from "@/lib/i18n";
 import { useWeeklyStats } from "@/lib/engine";
 import { cn } from "@/lib/utils";
 
@@ -227,7 +228,7 @@ export function HomeScreen() {
             {streak > 1 && (
               <span className="flex items-center gap-1 rounded-full bg-coral-soft px-2 py-0.5 text-[10px] font-black text-primary">
                 <Flame className="h-3 w-3" />
-                {streak} {lang === "fa" ? "روز" : "days"}
+                {t("home.streakDays", { n: streak })}
               </span>
             )}
             <ChevronRight className="ms-auto h-5 w-5 text-muted-foreground rtl:rotate-180" />
@@ -239,7 +240,7 @@ export function HomeScreen() {
               <StatCell icon={<CheckCircle2 className="h-3.5 w-3.5" />} value={String(stats.finished)} label={t("home.finished")} />
             </div>
             {dailyGoalMin > 0 && (
-              <GoalRing done={todayMinutes} total={dailyGoalMin} />
+              <GoalRing done={todayMinutes} total={dailyGoalMin} t={t} />
             )}
           </div>
         </button>
@@ -261,13 +262,24 @@ function StatCell({ icon, value, label }: { icon: React.ReactNode; value: string
 }
 
 /** small progress ring for the daily reading goal */
-function GoalRing({ done, total }: { done: number; total: number }) {
+function GoalRing({
+  done,
+  total,
+  t,
+}: {
+  done: number;
+  total: number;
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string;
+}) {
   const pct = total > 0 ? Math.min(1, done / total) : 0;
   const R = 17;
   const C = 2 * Math.PI * R;
   const reached = pct >= 1;
   return (
-    <div className="flex w-[52px] shrink-0 flex-col items-center gap-1" aria-label={`Daily goal ${Math.round(pct * 100)}%`}>
+    <div
+      className="flex w-[52px] shrink-0 flex-col items-center gap-1"
+      aria-label={t("a11y.dailyGoal", { percent: Math.round(pct * 100) })}
+    >
       <div className="relative h-11 w-11">
         <svg viewBox="0 0 44 44" className="h-11 w-11 -rotate-90">
           <circle cx="22" cy="22" r={R} fill="none" strokeWidth="5" className="stroke-border" />

@@ -642,3 +642,16 @@ mark.oni-hl-fresh {
 }
 
 /* round-11 rebuild marker */
+
+/* ACC-004: honor the OS reduced-motion request — kill animations,
+   transitions and smooth scrolling app-wide (audit D12). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

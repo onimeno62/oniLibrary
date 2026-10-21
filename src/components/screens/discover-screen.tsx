@@ -8,7 +8,7 @@ import { MangaDexCard, FreeCatalogList, MdCover } from "@/components/sources/fre
 import { MdFilterSheet } from "@/components/sources/md-filter-sheet";
 import { RecShelf } from "@/components/sources/rec-shelf";
 import { useApp, useNav, continueReading, chapterProgressFraction } from "@/lib/store";
-import { useT } from "@/lib/use-app";
+import { useT, useMedia } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { mdLatest, type MdManga } from "@/lib/mangadex";
 import { MANGADEX_ID } from "@/lib/builtin-sources";
@@ -38,6 +38,9 @@ export function DiscoverScreen() {
   /* promo carousel (mockup: "Discover More" banner with page dots) */
   const bannerRef = useRef<HTMLDivElement>(null);
   const [bannerIdx, setBannerIdx] = useState(0);
+  /* ACC-004: the 5 s auto-advance is motion — never run it when the user
+     asks the OS for reduced motion (live media-query, updates on change) */
+  const reduceMotion = useMedia("(prefers-reduced-motion: reduce)");
   const bannerPausedUntil = useRef(0);
   const bannerSlides: { img: string; title: string; body: string; cta: string; go: () => void }[] = [
     {
@@ -73,6 +76,7 @@ export function DiscoverScreen() {
     el?.scrollTo({ left: i * (el?.clientWidth ?? 0), behavior: "smooth" });
   };
   useEffect(() => {
+    if (reduceMotion) return;
     const id = setInterval(() => {
       if (Date.now() < bannerPausedUntil.current) return;
       const el = bannerRef.current;
@@ -81,7 +85,7 @@ export function DiscoverScreen() {
       el.scrollTo({ left: next * el.clientWidth, behavior: "smooth" });
     }, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [reduceMotion]);
 
   /* ----- real library shelves (v1.2.2 — no more fake catalogs) ----- */
   const visibleWorks = useMemo(() => works.filter((w) => !w.inVault).filter((w) => matchesCat(w, cat)), [works, cat]);

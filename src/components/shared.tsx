@@ -230,14 +230,14 @@ export function OverlayHeader({
   onBack?: () => void;
   className?: string;
 }) {
-  const { rtl } = useT();
+  const { t, rtl } = useT();
   const pop = useNav((s) => s.pop);
   const Back = rtl ? ChevronRight : ChevronLeft;
   return (
     <div className={cn("flex items-center gap-2 px-4 pt-3 pb-2", className)}>
       <button
         onClick={onBack ?? pop}
-        aria-label="Back"
+        aria-label={t("a11y.back")}
         className="flex h-10 w-10 items-center justify-center rounded-full text-foreground transition-colors hover:bg-secondary"
       >
         <Back className="h-6 w-6" />

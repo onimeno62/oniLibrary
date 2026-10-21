@@ -243,7 +243,10 @@ export interface LibraryFilterSnapshot {
   source: string | null;
   downloadedOnly: boolean;
   unreadOnly: boolean;
-  sort: "lastRead" | "title" | "added" | "progress" | "latest";
+  sort: "lastRead" | "title" | "added" | "progress" | "latest" | "size";
+  /** Phase C (LIB-005): content-language filter. Old persisted snapshots
+   *  predate this field — treat missing as null (no language filter). */
+  lang?: string | null;
 }
 
 export interface SavedFilter {

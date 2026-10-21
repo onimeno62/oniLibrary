@@ -396,14 +396,14 @@ function ActiveRow({
       <button
         onClick={paused ? unpause : hold}
         aria-label={paused ? t("dl.resume") : t("dl.pause")}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-primary"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground transition-colors hover:bg-accent hover:text-primary"
       >
         {paused ? <Play className="h-4 w-4 fill-current" /> : <Pause className="h-4 w-4 fill-current" />}
       </button>
       <button
         onClick={stop}
         aria-label={t("dl.cancelDl")}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
       >
         <X className="h-4 w-4" />
       </button>
@@ -476,7 +476,7 @@ function DoneRow({
         <button
           onClick={primary}
           aria-label={t("dl.retry")}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary text-foreground hover:bg-accent"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-secondary text-foreground hover:bg-accent"
         >
           <RotateCcw className="h-4 w-4" />
         </button>
@@ -484,7 +484,7 @@ function DoneRow({
         <button
           onClick={onRead}
           aria-label={t("common.open")}
-          className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 transition-colors hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-400"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 transition-colors hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-400"
         >
           <Check className="h-4 w-4" strokeWidth={3} />
         </button>

@@ -27,9 +27,11 @@ import {
   FileArchive,
   FileText,
   BookOpen,
+  Download,
 } from "lucide-react";
 import { SectionHeader, WorkCover, ProgressBar, EmptyState } from "@/components/shared";
-import { useApp, useNav, workProgress, currentChapter, matchesRule } from "@/lib/store";
+import { useApp, useNav, workProgress, workSizeBytes, currentChapter, matchesRule } from "@/lib/store";
+import { enqueueMangaDexChapterDownloads } from "@/lib/bg-downloads";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import {
@@ -64,7 +66,7 @@ import type { Work, ReadingStatus, LibraryFilterSnapshot, SmartRule } from "@/li
 import type { TranslationKey } from "@/lib/i18n";
 
 type TypeFilter = "ALL" | "MANGA" | "COMIC" | "BOOK" | "PDF";
-type SortKey = "lastRead" | "title" | "added" | "progress" | "latest";
+type SortKey = "lastRead" | "title" | "added" | "progress" | "latest" | "size";
 
 export function LibraryScreen() {
   const { t } = useT();
@@ -82,6 +84,9 @@ export function LibraryScreen() {
   const [view, setView] = useState<"grid" | "list">("grid");
   const [showFilters, setShowFilters] = useState(false);
   const [statusFilter, setStatusFilter] = useState<ReadingStatus | null>(null);
+  // Phase C (LIB-005): content-language filter — options derive from what
+  // the library actually contains (honest; empty libraries show no options)
+  const [langFilter, setLangFilter] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -115,6 +120,7 @@ export function LibraryScreen() {
     downloadedOnly,
     unreadOnly,
     sort,
+    lang: langFilter,
   });
 
   const applySnapshot = (f: LibraryFilterSnapshot) => {
@@ -124,10 +130,11 @@ export function LibraryScreen() {
     setDownloadedOnly(f.downloadedOnly);
     setUnreadOnly(f.unreadOnly);
     setSort(f.sort);
+    setLangFilter(f.lang ?? null); // pre-Phase-C snapshots have no lang
   };
 
   const anyFilterActive =
-    typeFilter !== "ALL" || statusFilter !== null || sourceFilter !== null || downloadedOnly || unreadOnly;
+    typeFilter !== "ALL" || statusFilter !== null || sourceFilter !== null || langFilter !== null || downloadedOnly || unreadOnly;
 
   /** current filters equal to a saved filter? (highlight chip) */
   const sameFilter = (a: LibraryFilterSnapshot, b: LibraryFilterSnapshot) =>
@@ -136,11 +143,64 @@ export function LibraryScreen() {
     a.source === b.source &&
     a.downloadedOnly === b.downloadedOnly &&
     a.unreadOnly === b.unreadOnly &&
-    a.sort === b.sort;
+    a.sort === b.sort &&
+    (a.lang ?? null) === (b.lang ?? null);
 
   // highlight follows live state (also when the user tweaks chips manually)
   const liveSnapshot = snapshotFilters();
   const activeSaved = savedFilters.find((f) => sameFilter(f.filter, liveSnapshot)) ?? null;
+
+  /** Phase C (LIB-007): bulk download — queue the next unread, not-yet-
+      downloaded chapter of every selected source work. Honest summary:
+      works with nothing downloadable are counted, never silently ignored. */
+  const bulkDownload = (ids: string[]) => {
+    const st = useApp.getState();
+    let queued = 0;
+    let skipped = 0;
+    for (const id of ids) {
+      const w = st.works.find((x) => x.id === id);
+      if (!w || w.inVault || w.sourceRef?.sourceId !== "mangadex") {
+        skipped++;
+        continue;
+      }
+      const asc = [...w.chapters].sort((a, b) => a.number - b.number);
+      const target = asc.find((c) => !c.isRead && c.download !== "DONE" && c.sourceChapterId);
+      if (!target) {
+        skipped++;
+        continue;
+      }
+      const idx = w.chapters.findIndex((c) => c.id === target.id);
+      const n = enqueueMangaDexChapterDownloads(w, [
+        {
+          chapterIndex: idx,
+          md: {
+            id: target.sourceChapterId!,
+            number: target.number,
+            title: target.title,
+            pages: target.pages,
+            publishedAt: target.releaseDate,
+          },
+        },
+      ]);
+      if (n > 0) queued += n;
+      else skipped++;
+    }
+    setSelection(null);
+    if (queued > 0) {
+      toast({
+        title: t("lib.bulkDownloadToast", { n: queued }),
+        ...(skipped > 0 ? { description: t("lib.bulkDownloadSkipped", { n: skipped }) } : {}),
+      });
+    } else {
+      toast({ title: t("lib.bulkDownloadNone") });
+    }
+  };
+
+  // Phase C (LIB-005): distinct content languages actually present
+  const availableLangs = useMemo(() => {
+    const set = new Set(works.map((w) => (w.language || "unknown")).filter(Boolean));
+    return [...set].sort();
+  }, [works]);
 
   const publicWorks = useMemo(() => works.filter((w) => !w.inVault), [works]);
 
@@ -161,6 +221,7 @@ export function LibraryScreen() {
     if (typeFilter === "PDF") list = list.filter((w) => w.type === "PDF");
     if (statusFilter) list = list.filter((w) => w.readingStatus === statusFilter);
     if (sourceFilter) list = list.filter((w) => w.source === sourceFilter);
+    if (langFilter) list = list.filter((w) => (w.language || "unknown") === langFilter); // Phase C (LIB-005)
     if (downloadedOnly) list = list.filter((w) => w.chapters.some((c) => c.download === "DONE"));
     if (unreadOnly) list = list.filter((w) => w.chapters.some((c) => !c.isRead));
     if (smartRule) list = list.filter((w) => matchesRule(w, smartRule.rule));
@@ -180,9 +241,13 @@ export function LibraryScreen() {
       case "latest":
         list.sort((a, b) => ((b.chapters[0]?.number ?? 0) - (a.chapters[0]?.number ?? 0)));
         break;
+      case "size":
+        // Phase C (LIB-004): file-size sort — largest first; unknown sizes (0) last
+        list.sort((a, b) => workSizeBytes(b) - workSizeBytes(a));
+        break;
     }
     return list;
-  }, [publicWorks, query, typeFilter, sort, statusFilter, sourceFilter, downloadedOnly, unreadOnly, smartRule]);
+  }, [publicWorks, query, typeFilter, sort, statusFilter, sourceFilter, langFilter, downloadedOnly, unreadOnly, smartRule]);
 
   const catCards = useMemo(() => {
     return categories.map((c) => ({
@@ -459,7 +524,7 @@ export function LibraryScreen() {
           <button
             aria-label={t("lib.clearFilters")}
             onClick={() => setSmartRule(null)}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-primary/70 transition-colors hover:text-primary"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-primary/70 transition-colors hover:text-primary"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -484,6 +549,7 @@ export function LibraryScreen() {
                     ["added", "lib.dateAdded"],
                     ["progress", "lib.progress"],
                     ["latest", "lib.latestChapter"],
+                    ["size", "lib.size"],
                   ] as [SortKey, TranslationKey][]
                 ).map(([k, label]) => (
                   <DropdownMenuItem key={k} onClick={() => setSort(k)} className="gap-2 rounded-xl text-[13px] font-semibold">
@@ -496,15 +562,15 @@ export function LibraryScreen() {
             <div className="flex items-center rounded-full bg-card p-0.5 shadow-[0_4px_12px_-8px_rgba(43,36,29,0.3)]">
               <button
                 onClick={() => setView("grid")}
-                aria-label="Grid view"
-                className={cn("flex h-7 w-7 items-center justify-center rounded-full", view === "grid" ? "bg-coral-gradient text-white" : "text-muted-foreground")}
+                aria-label={t("a11y.gridView")}
+                className={cn("flex h-11 w-11 items-center justify-center rounded-full", view === "grid" ? "bg-coral-gradient text-white" : "text-muted-foreground")}
               >
                 <LayoutGrid className="h-3.5 w-3.5" />
               </button>
               <button
                 onClick={() => setView("list")}
-                aria-label="List view"
-                className={cn("flex h-7 w-7 items-center justify-center rounded-full", view === "list" ? "bg-coral-gradient text-white" : "text-muted-foreground")}
+                aria-label={t("a11y.listView")}
+                className={cn("flex h-11 w-11 items-center justify-center rounded-full", view === "list" ? "bg-coral-gradient text-white" : "text-muted-foreground")}
               >
                 <List className="h-3.5 w-3.5" />
               </button>
@@ -651,6 +717,14 @@ export function LibraryScreen() {
                 selection.forEach((id) => setVaultFlag(id, true));
                 toast({ title: t("vlt.title") });
                 setSelection(null);
+              }}
+            />
+            <SelAction
+              icon={<Download className="h-5 w-5 text-primary" />}
+              label={t("lib.bulkDownload")}
+              onClick={() => {
+                if (selection.length === 0) return;
+                bulkDownload(selection);
               }}
             />
             <SelAction
@@ -844,6 +918,36 @@ export function LibraryScreen() {
                 <span className="text-[13px] font-bold">{t("lib.filterUnread")}</span>
                 <Checkbox checked={unreadOnly} onCheckedChange={(v) => setUnreadOnly(!!v)} className="data-[state=checked]:bg-primary data-[state=checked]:border-primary" />
               </label>
+              {/* Phase C (LIB-005): content-language filter — honest options */}
+              {availableLangs.length > 0 && (
+                <div className="rounded-2xl bg-secondary/60 px-4 py-3">
+                  <p className="text-[13px] font-bold">{t("lib.language")}</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <button
+                      onClick={() => setLangFilter(null)}
+                      className={cn(
+                        "min-h-[36px] rounded-full px-3 py-1 text-[12px] font-bold transition-colors",
+                        langFilter === null ? "bg-coral-gradient text-white" : "bg-card text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {t("lib.langAll")}
+                    </button>
+                    {availableLangs.map((l) => (
+                      <button
+                        key={l}
+                        onClick={() => setLangFilter(l)}
+                        className={cn(
+                          "min-h-[36px] rounded-full px-3 py-1 text-[12px] font-bold transition-colors",
+                          langFilter === l ? "bg-coral-gradient text-white" : "bg-card text-muted-foreground hover:text-foreground"
+                        )}
+                        dir="ltr"
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* save current filters (LIB-011) */}
@@ -877,6 +981,7 @@ export function LibraryScreen() {
               onClick={() => {
                 setStatusFilter(null);
                 setSourceFilter(null);
+                setLangFilter(null);
                 setDownloadedOnly(false);
                 setUnreadOnly(false);
               }}
@@ -973,6 +1078,8 @@ function sortLabel(sort: SortKey, t: (k: TranslationKey, v?: Record<string, stri
       return t("lib.progress");
     case "latest":
       return t("lib.latestChapter");
+    case "size":
+      return t("lib.size");
   }
 }
 

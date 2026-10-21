@@ -20,6 +20,7 @@ import {
   dedupeEnqueueJobs,
   honestTelemetry,
   pickNextDownload,
+  pickNextDownloads,
   resumeStaleRows,
   verifyChapterDownload,
   windowedSpeed,
@@ -232,5 +233,49 @@ describe("addMangaDexToLibrary: deterministic local id (M1/T6)", () => {
     const w = await addMangaDexToLibrary(manga, [chapter, { ...chapter, id: "ch-uuid-2", number: 2 }]);
     expect(w.chapters.every((c) => c.download === "NONE")).toBe(true);
     expect(w.chapters.every((c) => c.localPages === undefined)).toBe(true);
+  });
+});
+
+describe("pickNextDownloads: bounded-parallel scheduler (audit D10)", () => {
+  it("returns up to `capacity` QUEUED rows in FIFO order", () => {
+    const rows = [
+      row({ id: "a", startedAt: "2026-01-01T00:00:00.000Z" }),
+      row({ id: "b", startedAt: "2026-01-02T00:00:00.000Z" }),
+      row({ id: "c", startedAt: "2026-01-03T00:00:00.000Z" }),
+    ];
+    expect(pickNextDownloads(rows, 2).map((r) => r.id)).toEqual(["a", "b"]);
+    expect(pickNextDownloads(rows, 3).map((r) => r.id)).toEqual(["a", "b", "c"]);
+    expect(pickNextDownloads(rows, 10).map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("never returns non-QUEUED rows (ACTIVE/PAUSED/DONE/ERROR stay put)", () => {
+    const rows = [
+      row({ id: "live", status: "ACTIVE" }),
+      row({ id: "hold", status: "PAUSED" }),
+      row({ id: "gone", status: "DONE" }),
+      row({ id: "bad", status: "ERROR" }),
+      row({ id: "next", startedAt: "2026-01-05T00:00:00.000Z" }),
+    ];
+    expect(pickNextDownloads(rows, 4).map((r) => r.id)).toEqual(["next"]);
+  });
+
+  it("returns [] for zero/negative capacity", () => {
+    expect(pickNextDownloads([row({ id: "a" })], 0)).toEqual([]);
+    expect(pickNextDownloads([row({ id: "a" })], -1)).toEqual([]);
+  });
+
+  it("stable tie-break by id when startedAt is equal", () => {
+    const rows = [row({ id: "zz" }), row({ id: "aa" })];
+    expect(pickNextDownloads(rows, 2).map((r) => r.id)).toEqual(["aa", "zz"]);
+  });
+
+  it("the legacy single picker keeps its cap-aware semantics", () => {
+    const rows = [
+      row({ id: "a", status: "ACTIVE" }),
+      row({ id: "b", status: "ACTIVE" }),
+      row({ id: "c", status: "QUEUED" }),
+    ];
+    expect(pickNextDownload(rows, 2)).toBeNull();
+    expect(pickNextDownload(rows, 3)?.id).toBe("c");
   });
 });

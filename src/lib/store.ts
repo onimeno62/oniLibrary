@@ -5,6 +5,7 @@ import { persist, createJSONStorage, type StateStorage } from "zustand/middlewar
 import { legacyPinHash } from "./vault-crypto";
 import { translate } from "./i18n";
 import { sanitizeSettingsForImport } from "./backup-contract";
+import { orphanedWorkIds, auditRestoredDownloadRows } from "./restore-contract";
 import {
   DEFAULT_SETTINGS,
   SEED_WORKS,
@@ -33,6 +34,7 @@ import type {
   SmartRule,
   MdFeedFilters,
 } from "./types";
+import { type DownloadErrorKind } from "./download-contract";
 
 /* ============================================================
    Navigation store (transient — not persisted)
@@ -955,6 +957,17 @@ export const useApp = create<AppState>()(
                   return rest as ServerEntry;
                 })
               : null;
+          const restoredDownloads = isArr(d.downloads)
+            ? (d.downloads as DownloadItem[])
+            : useApp.getState().downloads;
+          // audit D11: purge blobs of works the restore removed, and
+          // re-audit restored DONE rows against the real blob store —
+          // page files were never part of the backup payload
+          const preSetWorks = works ?? useApp.getState().works;
+          const orphans = orphanedWorkIds(
+            useApp.getState().works.map((w) => w.id),
+            preSetWorks.map((w) => w.id)
+          );
           set((s) => ({
             works: works ?? s.works,
             categories: isArr(d.categories) ? (d.categories as Category[]) : s.categories,
@@ -970,7 +983,7 @@ export const useApp = create<AppState>()(
             history: pickArr(d.history, s.history),
             savedFilters: pickArr(d.savedFilters, s.savedFilters),
             // v3 backups: the download queue restores alongside chapter flags
-            downloads: isArr(d.downloads) ? (d.downloads as DownloadItem[]) : s.downloads,
+            downloads: restoredDownloads,
             servers: serversIn ?? s.servers,
             // sources: merge per-id enabled/pinned flags onto current set
             sources: isArr(d.sources)
@@ -985,6 +998,45 @@ export const useApp = create<AppState>()(
               : s.sources,
             lastBackup: s.lastBackup,
           }));
+          // post-restore hygiene (best-effort, never blocks the restore):
+          // 1. orphaned blobs of removed works leave the device
+          if (orphans.length > 0) {
+            void (async () => {
+              try {
+                const { deleteWorkFiles } = await import("./local-files");
+                for (const id of orphans) await deleteWorkFiles(id).catch(() => undefined);
+              } catch {
+                /* module unavailable (tests) — nothing to purge */
+              }
+            })();
+          }
+          // 2. hollow DONE rows become honest ERROR/missing rows
+          void (async () => {
+            try {
+              const { getFile } = await import("./local-files");
+              const { ok, broken } = await auditRestoredDownloadRows(
+                restoredDownloads,
+                preSetWorks,
+                async (key) => {
+                  try {
+                    return !!(await getFile(key));
+                  } catch {
+                    return false;
+                  }
+                }
+              );
+              void ok;
+              broken.forEach((rowId) => {
+                useApp.getState().patchDownload(rowId, {
+                  status: "ERROR",
+                  speedMbps: 0,
+                  error: "missing" satisfies DownloadErrorKind,
+                });
+              });
+            } catch {
+              /* module unavailable (tests) — rows keep their restored state */
+            }
+          })();
           return true;
         } catch {
           return false;
@@ -1129,6 +1181,13 @@ export function workProgress(w: Work): number {
   const current = w.chapters.find((c) => !c.isRead && typeof c.lastPage === "number");
   const frac = current ? chapterProgressFraction(current) : 0;
   return Math.min(100, Math.round(((read + frac) / w.chapters.length) * 100));
+}
+
+/** Phase C (LIB-004): real on-device size of a work — picked-file bytes for
+ *  local imports, downloaded chapter sizes for source works. 0 = unknown. */
+export function workSizeBytes(w: Work): number {
+  if (w.sourceMeta?.sizeBytes) return w.sourceMeta.sizeBytes;
+  return w.chapters.reduce((a, c) => a + (c.sizeMb > 0 ? c.sizeMb : 0), 0) * 1024 * 1024;
 }
 
 export function currentChapter(w: Work): Chapter | undefined {

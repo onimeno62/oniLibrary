@@ -191,9 +191,10 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", fn);
   }, [stack.length, pop]);
 
-  // persist language on <html> for a11y + expose overlay depth for Android back button
+  // persist language + direction on <html> for a11y (BIL-004/ACC) + expose overlay depth for Android back button
   useEffect(() => {
     document.documentElement.lang = lang;
+    document.documentElement.dir = lang === "fa" ? "rtl" : "ltr";
     const bridge = (window as unknown as { __oniOverlayDepth?: number; OniAndroid?: { setOverlayDepth: (d: number) => void } });
     bridge.__oniOverlayDepth = stack.length;
     try {

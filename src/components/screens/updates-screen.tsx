@@ -138,11 +138,14 @@ export function UpdatesScreen() {
 }
 
 function AutoToggle() {
+  const { t } = useT();
   const auto = useApp((s) => s.settings.autoUpdateCheck);
   const set = useApp((s) => s.setSettings);
   return (
     <input
       type="checkbox"
+      role="switch"
+      aria-label={t("upd.autoCheck")}
       checked={auto}
       onChange={(e) => set({ autoUpdateCheck: e.target.checked })}
       className="h-5 w-9 appearance-none rounded-full bg-secondary transition-colors before:block before:h-4 before:w-4 before:translate-x-0.5 before:translate-y-0.5 before:rounded-full before:bg-white before:shadow before:transition-transform checked:bg-primary checked:before:translate-x-[18px]"

@@ -189,6 +189,7 @@ function Keypad({
   onDelete: () => void;
   disabled?: boolean;
 }) {
+  const { t } = useT();
   const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
   return (
     <div className="grid w-[248px] grid-cols-3 gap-2.5">
@@ -216,7 +217,7 @@ function Keypad({
         type="button"
         disabled={disabled}
         onClick={onDelete}
-        aria-label="Delete"
+        aria-label={t("a11y.deleteKey")}
         className="flex h-14 items-center justify-center rounded-2xl text-muted-foreground transition-transform active:scale-90 disabled:opacity-40"
       >
         <Delete className="h-5 w-5" />

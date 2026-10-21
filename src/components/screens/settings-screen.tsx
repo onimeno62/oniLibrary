@@ -471,7 +471,7 @@ export function SettingsScreen() {
               onClick={() => setSettings({ maxConcurrent: Math.max(1, settings.maxConcurrent - 1) })}
               disabled={settings.maxConcurrent <= 1}
               aria-label="-"
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-transform active:scale-90 disabled:opacity-40"
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-transform active:scale-90 disabled:opacity-40"
             >
               <Minus className="h-4 w-4" />
             </button>
@@ -481,7 +481,7 @@ export function SettingsScreen() {
               onClick={() => setSettings({ maxConcurrent: Math.min(5, settings.maxConcurrent + 1) })}
               disabled={settings.maxConcurrent >= 5}
               aria-label="+"
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-coral-gradient text-white transition-transform active:scale-90 disabled:opacity-40"
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-coral-gradient text-white transition-transform active:scale-90 disabled:opacity-40"
             >
               <Plus className="h-4 w-4" />
             </button>

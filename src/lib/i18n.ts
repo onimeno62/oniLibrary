@@ -49,6 +49,15 @@ const en = {
   "common.unknown": "Unknown",
   "common.downloaded": "Downloaded",
 
+  // a11y (screen-reader labels — audit D12)
+  "a11y.back": "Back",
+  "a11y.primaryNav": "Primary navigation",
+  "a11y.gridView": "Grid view",
+  "a11y.listView": "List view",
+  "a11y.deleteKey": "Delete",
+  "a11y.clear": "Clear",
+  "a11y.dailyGoal": "Daily goal {percent}%",
+
   // onboarding
   "onb.welcome": "Welcome to",
   "onb.chooseLang": "Choose your language",
@@ -69,6 +78,7 @@ const en = {
   "home.thisWeek": "This week",
   "home.chaptersRead": "Chapters read",
   "home.finished": "Finished",
+  "home.streakDays": "{n} days",
   "home.notifications": "Notifications",
 
   // library
@@ -82,6 +92,12 @@ const en = {
   "lib.progress": "Progress",
   "lib.latestChapter": "Latest Chapter",
   "lib.size": "File size",
+  "lib.language": "Language",
+  "lib.langAll": "All languages",
+  "lib.bulkDownload": "Download next unread",
+  "lib.bulkDownloadToast": "Queued {n} chapter(s) for download",
+  "lib.bulkDownloadSkipped": "Skipped {n} work(s) — nothing downloadable",
+  "lib.bulkDownloadNone": "Nothing to download in the selection",
   "lib.newCategory": "New category",
   "lib.categoryName": "Category name",
   "lib.create": "Create",
@@ -967,6 +983,15 @@ const fa: Record<TranslationKey, string> = {
   "common.unknown": "نامشخص",
   "common.downloaded": "دانلود شده",
 
+  // a11y (برچسب‌های صفحه‌خوان — D12)
+  "a11y.back": "بازگشت",
+  "a11y.primaryNav": "ناوبری اصلی",
+  "a11y.gridView": "نمای شبکه‌ای",
+  "a11y.listView": "نمای فهرستی",
+  "a11y.deleteKey": "حذف",
+  "a11y.clear": "پاک‌کردن",
+  "a11y.dailyGoal": "هدف روزانه {percent}٪",
+
   // onboarding
   "onb.welcome": "خوش آمدید به",
   "onb.chooseLang": "زبان خود را انتخاب کنید",
@@ -987,6 +1012,7 @@ const fa: Record<TranslationKey, string> = {
   "home.thisWeek": "این هفته",
   "home.chaptersRead": "فصل خوانده‌شده",
   "home.finished": "پایان‌یافته",
+  "home.streakDays": "{n} روز",
   "home.notifications": "اعلان‌ها",
 
   // library
@@ -1000,6 +1026,12 @@ const fa: Record<TranslationKey, string> = {
   "lib.progress": "پیشرفت",
   "lib.latestChapter": "جدیدترین فصل",
   "lib.size": "حجم فایل",
+  "lib.language": "زبان",
+  "lib.langAll": "همه زبان‌ها",
+  "lib.bulkDownload": "دانلود بعدی نخوانده",
+  "lib.bulkDownloadToast": "{n} فصل برای دانلود صف شد",
+  "lib.bulkDownloadSkipped": "{n} اثر رد شد — چیزی برای دانلود نبود",
+  "lib.bulkDownloadNone": "در انتخاب‌شده‌ها چیزی برای دانلود نیست",
   "lib.newCategory": "دسته‌بندی جدید",
   "lib.categoryName": "نام دسته‌بندی",
   "lib.create": "ایجاد",

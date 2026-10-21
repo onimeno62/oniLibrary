@@ -178,13 +178,24 @@ export function pickNextDownload(
 ): DownloadItem | null {
   const cap = Math.max(1, maxConcurrent);
   const active = rows.filter((d) => d.status === "ACTIVE").length;
-  if (active >= cap) return null;
-  return (
-    rows
-      .filter((d) => d.status === "QUEUED")
-      .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id))[0] ??
-    null
-  );
+  return pickNextDownloads(rows, cap - active)[0] ?? null;
+}
+
+/**
+ * Phase C (audit D10): pick up to `capacity` QUEUED rows in FIFO order —
+ * the pump launches them in parallel, so `settings.maxConcurrent` (1–5)
+ * finally means what it says. `capacity` must already account for rows
+ * that are ACTIVE in the live pump (the caller owns that arithmetic).
+ */
+export function pickNextDownloads(
+  rows: readonly DownloadItem[],
+  capacity: number
+): DownloadItem[] {
+  if (capacity <= 0) return [];
+  return rows
+    .filter((d) => d.status === "QUEUED")
+    .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id))
+    .slice(0, Math.floor(capacity));
 }
 
 /** typed row errors surfaced by the pump (mapped to i18n in the UI) */
