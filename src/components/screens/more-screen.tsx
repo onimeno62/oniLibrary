@@ -20,6 +20,7 @@ import { OniLogo } from "@/components/oni-logo";
 import { useApp, useNav, toFa } from "@/lib/store";
 import { duplicateWorkCount } from "@/lib/duplicates";
 import { useT } from "@/lib/use-app";
+import { APP_VERSION } from "@/lib/version";
 import { toast } from "@/hooks/use-toast";
 import { Flame } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -183,9 +184,9 @@ export function MoreScreen() {
       <footer className="mt-auto flex flex-col items-center gap-1.5 pt-8 pb-1">
         <div className="flex items-center gap-2 text-muted-foreground">
           <OniLogo size={20} />
-          <p className="text-[11px] font-bold">
-            oniLibrary v1.0.0
-            <span className="sr-only"> — {t("more.version")} 1.0.0</span>
+          <p className="text-[11px] font-bold" dir="ltr">
+            oniLibrary v{APP_VERSION}
+            <span className="sr-only"> — {t("more.version")} {APP_VERSION}</span>
           </p>
         </div>
       </footer>

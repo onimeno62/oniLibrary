@@ -1,24 +1,35 @@
 "use client";
 
-import { FileText, BookOpen, FileArchive, Image, FolderOpen } from "lucide-react";
+import { FileText, BookOpen, FileArchive, Image, FolderOpen, FileWarning } from "lucide-react";
 import { OverlayHeader } from "@/components/shared";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n";
 
 /* ============================================================
-   FormatsScreen — per-format support status in this build
+   FormatsScreen — per-format support status in this build.
+   Audit D5: this list MUST mirror the importer's real behavior
+   (src/lib/importer.ts). CBR/RAR is genuinely supported via WASM
+   unrar (unrar.ts) — the old "Planned" badge was wrong. Rows carry
+   optional notes for honest caveats, and genuinely unsupported
+   formats are listed as such instead of being omitted.
    ============================================================ */
 
 type BadgeKind = "full" | "demo" | "no";
 
-const ROWS: { key: TranslationKey; Icon: typeof FileText; badge: BadgeKind }[] = [
+const ROWS: {
+  key: TranslationKey;
+  Icon: typeof FileText;
+  badge: BadgeKind;
+  note?: TranslationKey;
+}[] = [
   { key: "fmt.PDF", Icon: FileText, badge: "full" },
   { key: "fmt.EPUB", Icon: BookOpen, badge: "full" },
   { key: "fmt.CBZ", Icon: FileArchive, badge: "full" },
-  { key: "fmt.CBR", Icon: FileArchive, badge: "no" },
+  { key: "fmt.CBR", Icon: FileArchive, badge: "full", note: "fmt.cbrNote" },
   { key: "fmt.images", Icon: Image, badge: "full" },
-  { key: "fmt.folder", Icon: FolderOpen, badge: "demo" },
+  { key: "fmt.folder", Icon: FolderOpen, badge: "full" },
+  { key: "fmt.unsupported7z", Icon: FileWarning, badge: "no", note: "fmt.unsupportedNote" },
 ];
 
 function StatusBadge({ kind, label }: { kind: BadgeKind; label: string }) {
@@ -44,19 +55,22 @@ export function FormatsScreen() {
       <OverlayHeader title={t("fmt.title")} subtitle={t("more.formatsHint")} />
 
       <div className="mt-2 space-y-2.5">
-        {ROWS.map(({ key, Icon, badge }) => (
+        {ROWS.map(({ key, Icon, badge, note }) => (
           <article
             key={key}
-            className="flex items-center gap-3 rounded-3xl border border-border bg-card p-4"
+            className="rounded-3xl border border-border bg-card p-4"
           >
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-coral-soft text-primary">
-              <Icon className="h-5.5 w-5.5" />
-            </span>
-            <p className="min-w-0 flex-1 truncate text-[14px] font-extrabold">{t(key)}</p>
-            <StatusBadge
-              kind={badge}
-              label={badge === "full" ? t("fmt.full") : badge === "demo" ? t("fmt.demo") : t("fmt.no")}
-            />
+            <div className="flex items-center gap-3">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-coral-soft text-primary">
+                <Icon className="h-5.5 w-5.5" />
+              </span>
+              <p className="min-w-0 flex-1 truncate text-[14px] font-extrabold">{t(key)}</p>
+              <StatusBadge
+                kind={badge}
+                label={badge === "full" ? t("fmt.full") : badge === "demo" ? t("fmt.demo") : t("fmt.unsupported")}
+              />
+            </div>
+            {note && <p className="mt-2 ps-1 text-[12px] font-semibold leading-snug text-muted-foreground">{t(note)}</p>}
           </article>
         ))}
       </div>

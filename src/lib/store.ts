@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
 import { legacyPinHash } from "./vault-crypto";
 import { translate } from "./i18n";
+import { sanitizeSettingsForImport } from "./backup-contract";
 import {
   DEFAULT_SETTINGS,
   SEED_WORKS,
@@ -707,7 +708,7 @@ export const useApp = create<AppState>()(
           } else {
             sessions.push({ date: today, minutes: after, chapters });
           }
-          if (sessions.length > 60) sessions.splice(0, sessions.length - 60);
+          if (sessions.length > 400) sessions.splice(0, sessions.length - 400); // audit D13: 400-day window (was 60) so yearly stats (TRK-004) are possible; daily rows are tiny
 
           // daily-goal celebration (TRK-004/005): fire once when the ring completes
           const goal = s.settings.dailyGoalMin;
@@ -729,7 +730,7 @@ export const useApp = create<AppState>()(
           return { sessions };
         }),
       /* heatmap day editing (round 11): clamp at 0 so a day can be corrected
-         both ways without going negative; keeps the same 60-day window rule */
+         both ways without going negative; keeps the same 400-day window rule (audit D13) */
       adjustDay: (date, delta) =>
         set((s) => {
           const sessions = [...s.sessions];
@@ -742,7 +743,7 @@ export const useApp = create<AppState>()(
           } else {
             return {}; // nothing to reduce on an empty day
           }
-          if (sessions.length > 60) sessions.splice(0, sessions.length - 60);
+          if (sessions.length > 400) sessions.splice(0, sessions.length - 400); // audit D13: 400-day window (was 60) so yearly stats (TRK-004) are possible; daily rows are tiny
           return { sessions };
         }),
       pushHistory: (workId, chapterId, page) =>
@@ -961,13 +962,7 @@ export const useApp = create<AppState>()(
               d.workCategories && typeof d.workCategories === "object"
                 ? (d.workCategories as Record<string, string[]>)
                 : s.workCategories,
-            settings: {
-              ...s.settings,
-              ...((d.settings as Settings) ?? {}),
-              // privacy/integrity: the PIN stays device-local and cannot be
-              // replaced through a backup file (known-hash attack)
-              vaultPinHash: s.settings.vaultPinHash,
-            },
+            settings: sanitizeSettingsForImport(d.settings as Settings, s.settings),
             sessions: pickArr(d.sessions, s.sessions),
             bookmarks: pickArr(d.bookmarks, s.bookmarks),
             highlights: pickArr(d.highlights, s.highlights),

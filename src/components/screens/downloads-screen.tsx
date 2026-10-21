@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Search,
   MoreVertical,
@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { WorkCover, EmptyState, ProgressBar } from "@/components/shared";
 import { useApp, useNav } from "@/lib/store";
-import { STORAGE } from "@/lib/seed";
+import { oniBridge } from "@/lib/android-bridge";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -87,8 +87,46 @@ export function DownloadsScreen() {
   const failedShown = filter === "ALL" ? failed : shown.filter((d) => d.status === "ERROR");
 
   const downloadedMb = done.reduce((a, d) => a + d.downloadedMb, 0);
-  const totalUsedGb = STORAGE.usedOtherGb + STORAGE.downloadsGb + downloadedMb / 1024;
-  const usedPct = Math.round((totalUsedGb / STORAGE.totalGb) * 100);
+
+  // Audit D4 (DWN-010): honest storage numbers. The old card summed mockup
+  // constants from seed.ts and shipped a no-op "Clear cache" button. Now:
+  // - "Downloaded content" = real bytes of DONE rows
+  // - "App data" = navigator.storage.estimate() usage (browser-measured)
+  // - "Free on device" = StatFs via the OniAndroid bridge (APK only)
+  // Unknown values render as "—" instead of being fabricated.
+  const [st, setSt] = useState<{ appMb: number | null; freeGb: number | null; totalGb: number | null }>({
+    appMb: null,
+    freeGb: null,
+    totalGb: null,
+  });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const est = await navigator.storage?.estimate?.();
+        if (alive && est && typeof est.usage === "number") {
+          setSt((s) => ({ ...s, appMb: Math.round(est.usage as number / (1024 * 1024)) }));
+        }
+      } catch {
+        /* estimate unavailable — the row stays honest "—" */
+      }
+      try {
+        const raw = oniBridge()?.deviceStorage?.();
+        if (alive && typeof raw === "string") {
+          const [total, free] = raw.split("|").map(Number);
+          if (Number.isFinite(total) && Number.isFinite(free)) {
+            setSt((s) => ({ ...s, freeGb: free / 1024 ** 3, totalGb: total / 1024 ** 3 }));
+          }
+        }
+      } catch {
+        /* bridge unavailable (web build) — row stays hidden */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const lowStorage = st.freeGb !== null && st.freeGb < 1;
 
   return (
     <div className="min-h-full px-5 pb-8">
@@ -199,7 +237,8 @@ export function DownloadsScreen() {
         </section>
       )}
 
-      {/* storage */}
+      {/* storage — honest numbers only (audit D4): no mockup constants,
+          no "other apps" guesswork, no fake cache-clear action */}
       <section className="mt-6">
         <div className="rounded-3xl border border-border bg-card p-4 shadow-[0_10px_26px_-18px_rgba(43,36,29,0.4)]">
           <div className="flex items-center gap-2.5">
@@ -207,33 +246,47 @@ export function DownloadsScreen() {
               <Database className="h-5 w-5" />
             </span>
             <p className="text-[14px] font-extrabold">{t("dl.storageUsage")}</p>
-            <span className="ms-auto text-[11px] font-bold text-muted-foreground">{usedPct}%</span>
           </div>
-          {/* mockup: "X GB / Y GB" + linear bar */}
           <div className="mt-2 flex items-baseline gap-1.5 ps-0.5" dir="ltr">
-            <span className="text-[20px] font-black leading-none">{totalUsedGb.toFixed(1)} GB</span>
-            <span className="text-[12px] font-bold text-muted-foreground">/ {STORAGE.totalGb} GB</span>
+            <span className="text-[20px] font-black leading-none">
+              {st.freeGb !== null ? `${st.freeGb.toFixed(1)} GB` : st.appMb !== null ? `${(st.appMb / 1024).toFixed(2)} GB` : "—"}
+            </span>
+            <span className="text-[12px] font-bold text-muted-foreground">
+              {st.freeGb !== null && st.totalGb !== null ? `/ ${st.totalGb.toFixed(0)} GB` : ""}
+            </span>
           </div>
-          <ProgressBar value={usedPct} className="mt-2.5 h-[5px]" />
+          <p className="mt-1 text-[11px] font-semibold leading-snug text-muted-foreground">
+            {st.freeGb !== null ? t("dl.deviceFree") : t("dl.appData")}
+          </p>
           <div className="mt-3 space-y-1.5">
-            <LegendRow color="#f8694c" label={t("dl.title")} value={`${(downloadedMb / 1024).toFixed(1)} GB`} />
-            <LegendRow color="#a0917f" label={t("dl.otherApps")} value={`${STORAGE.usedOtherGb.toFixed(1)} GB`} />
             <LegendRow
-              color="var(--secondary)"
-              label={t("dl.freeSpace")}
-              value={`${Math.max(0, STORAGE.totalGb - totalUsedGb).toFixed(1)} GB`}
+              color="#f8694c"
+              label={t("dl.downloaded")}
+              value={downloadedMb > 0 ? `${(downloadedMb / 1024).toFixed(2)} GB` : "0 MB"}
             />
+            <LegendRow
+              color="#a0917f"
+              label={t("dl.appData")}
+              value={st.appMb !== null ? `${(st.appMb / 1024).toFixed(2)} GB` : "—"}
+            />
+            {st.freeGb !== null && (
+              <LegendRow
+                color="var(--secondary)"
+                label={t("dl.deviceFree")}
+                value={`${st.freeGb.toFixed(1)} GB`}
+              />
+            )}
           </div>
+          <p className="mt-2.5 text-[11px] font-semibold leading-snug text-muted-foreground">{t("dl.storageNote")}</p>
+          {lowStorage && (
+            <div className="mt-2.5 flex items-center gap-2 rounded-2xl bg-amber-500/10 px-3.5 py-2.5 text-[12px] font-bold text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {t("dl.storageWarn")}
+            </div>
+          )}
           <div className="mt-3 rounded-2xl bg-secondary/50 px-3.5 py-2.5">
             <WifiSwitch />
           </div>
-          <button
-            onClick={() => toast({ title: t("dl.cacheCleared"), description: `${STORAGE.cacheMb} MB` })}
-            className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-full bg-coral-soft py-2.5 text-[13px] font-extrabold text-primary transition-opacity hover:opacity-85"
-          >
-            <Trash2 className="h-4 w-4" />
-            {t("dl.clearCache")} · {STORAGE.cacheMb} MB
-          </button>
         </div>
       </section>
     </div>

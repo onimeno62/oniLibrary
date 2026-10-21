@@ -3,7 +3,7 @@
 - **Date:** 2026-10-22 · **Audited state:** `main` @ `fc1c7d2` (= tag `v1.5.0` + APK-tracking commit) · **Release:** v1.5.0 (versionCode 14)
 - **Method:** full code inspection with `file:line` evidence (two parallel deep-audit passes, consolidated here), automated checks re-run, live browser verification of golden paths (Chromium via agent-browser against the dev server), release/pipeline verification via GitHub API.
 - **Honesty note:** **no real Android device or emulator was available in this environment.** Everything marked *device-pending* below is unverified on-device by definition. APK-level behavior derived from shell source code is labeled *code-level, near-certain* where execution was not possible. No device test is claimed anywhere in this report.
-- **Companion evidence:** detailed per-area reports in `tool-results/audit-2a.md` (reader/content pipeline) and `tool-results/audit-2b.md` (UI/i18n/Android shell) — kept in-repo for traceability.
+- **Companion evidence:** detailed per-area findings were consolidated into §4 and §6 of this document (raw session reports were environment-local artifacts and are not part of the repo).
 - **Baseline PRD:** `docs/PRD.md` (requirement IDs cited as `XXX-NNN`). Prior gate reports: `docs/DISCOVER_PHASE1_AUDIT.md`, `docs/DISCOVER_RELEASE_VALIDATION.md`.
 
 ---

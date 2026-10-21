@@ -28,6 +28,7 @@ import {
 import { OverlayHeader } from "@/components/shared";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/use-app";
+import { APP_REPO_URL, APP_VERSION, APP_VERSION_CODE } from "@/lib/version";
 import { anilistWhoAmI, syncAllToTracker } from "@/lib/tracker";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -642,12 +643,12 @@ export function SettingsScreen() {
             <p className="text-[14px] font-bold">oniLibrary</p>
             <p className="text-[11px] font-semibold text-muted-foreground">{t("about.tagline")}</p>
           </div>
-          <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-black text-primary">
-            v1.1.1 (4)
+          <span className="rounded-full bg-secondary px-2.5 py-1 text-[11px] font-black text-primary" dir="ltr">
+            v{APP_VERSION} ({APP_VERSION_CODE})
           </span>
         </div>
         <a
-          href="https://github.com/onimeno62/oniLibrary_zai_2"
+          href={APP_REPO_URL}
           target="_blank"
           rel="noreferrer"
           className="mt-1 flex items-center gap-3 border-t border-border py-2.5"

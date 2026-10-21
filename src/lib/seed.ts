@@ -912,11 +912,6 @@ export const DEFAULT_SETTINGS: Settings = {
   },
 };
 
-/* ---------- storage usage (mockup: 12.6 GB / 64 GB = 20%) ---------- */
-
-export const STORAGE = {
-  totalGb: 64,
-  usedOtherGb: 44.9, // system + other apps
-  downloadsGb: 12.6,
-  cacheMb: 284,
-};
+/* Storage usage mockup constants REMOVED (audit D4 / DWN-010): the
+   Downloads screen now measures real values (downloaded bytes,
+   navigator.storage.estimate, OniAndroid.deviceStorage StatFs bridge). */

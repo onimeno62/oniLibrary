@@ -15,6 +15,7 @@ import { OverlayHeader } from "@/components/shared";
 import { useApp } from "@/lib/store";
 import { timeAgo } from "@/lib/store";
 import { downloadFile, nativeExport, toCsv } from "@/lib/export-file";
+import { sanitizeSettingsForBackup } from "@/lib/backup-contract";
 import { useT } from "@/lib/use-app";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -152,9 +153,10 @@ export function BackupScreen() {
   };
 
   const createBackup = () => {
-    // privacy: the Vault PIN record and stored catalog credentials never
-    // leave the device — they are stripped from the payload
-    const { vaultPinHash: _pin, ...settingsExport } = settings;
+    // privacy: the Vault PIN record, stored catalog credentials and the
+    // tracker token never leave the device — they are stripped from the
+    // payload (see lib/backup-contract.ts)
+    const settingsExport = sanitizeSettingsForBackup(settings);
     const payload = {
       app: "oniLibrary",
       version: 3,

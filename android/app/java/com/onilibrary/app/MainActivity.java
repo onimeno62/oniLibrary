@@ -2,6 +2,7 @@ package com.onilibrary.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -26,6 +27,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsResult;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -269,6 +271,47 @@ public class MainActivity extends Activity {
                     return true;
                 }
                 return true;
+            }
+
+            /** window.alert() — message + single OK button */
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                return showJsDialog(message, false, result);
+            }
+
+            /** window.confirm() — OK confirms; Cancel / back gesture cancels */
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                return showJsDialog(message, true, result);
+            }
+
+            /**
+             * window.alert/confirm as a native AlertDialog. The default
+             * WebChromeClient silently cancels both, which left every
+             * window.confirm()-guarded flow (delete work, clear history, …)
+             * dead inside the APK. Callbacks arrive on the UI thread (the
+             * WebView is created on it), so no extra handler is needed.
+             */
+            private boolean showJsDialog(String message, boolean confirm, JsResult result) {
+                if (isFinishing() || isDestroyed()) {
+                    result.cancel();
+                    return true;
+                }
+                try {
+                    AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this)
+                            .setMessage(message == null ? "" : message)
+                            .setPositiveButton(android.R.string.ok, (dialog, which) -> result.confirm())
+                            .setOnCancelListener(dialog -> result.cancel());
+                    if (confirm) {
+                        builder.setNegativeButton(android.R.string.cancel,
+                                (dialog, which) -> result.cancel());
+                    }
+                    builder.show();
+                } catch (Exception e) {
+                    // activity torn down mid-show etc. — cancel so JS never hangs
+                    result.cancel();
+                }
+                return true; // handled — suppress the default (silent cancel)
             }
         });
 
@@ -777,6 +820,22 @@ public class MainActivity extends Activity {
             }
         }
 
+        /** Audit D4 / DWN-010: real device storage for the honest storage
+            card — "totalBytes|freeBytes" of the volume holding app data
+            (StatFs), or null when unavailable. Replaces the retired mockup
+            constants; the web build falls back to navigator.storage.estimate(). */
+        @JavascriptInterface
+        public String deviceStorage() {
+            try {
+                android.os.StatFs stat = new android.os.StatFs(getDataDir().getPath());
+                long total = stat.getTotalBytes();
+                long free = stat.getAvailableBytes();
+                return total + "|" + free;
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
         /* ------------------------- in-app file picker ----------------------- */
 
         /**
@@ -965,9 +1024,14 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (overlayDepth > 0) {
-            // pop the SPA overlay stack
+            // pop the SPA overlay stack. Dispatch on DOCUMENT, not window:
+            // Radix dialogs listen for Escape on document (capture phase) and
+            // an event dispatched on window never reaches document — with a
+            // dialog open, Back used to do nothing. bubbles:true still lets
+            // the event reach the app-shell window listener (bubble phase)
+            // AFTER the dialog had its chance to consume it.
             webView.evaluateJavascript(
-                "window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))", null);
+                "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))", null);
         } else if (webView.canGoBack()) {
             webView.goBack();
         } else {

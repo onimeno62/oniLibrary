@@ -59,6 +59,7 @@ import type { EpubSearchHit } from "@/lib/importer";
 import { useT } from "@/lib/use-app";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useKeepAwake } from "@/hooks/use-keep-awake";
 import { Slider } from "@/components/ui/slider";
 import { EpubBookView } from "@/components/screens/epub-view";
 import {
@@ -634,7 +635,9 @@ export function ReaderScreen({
   const rafRef = useRef(0);
   const lastTapRef = useRef(0);
   const pendingNavRef = useRef(0);
-  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+  // audit D7: keep-awake lifecycle is owned by the hook (acquire on mount /
+  // re-enable, release on exit, re-acquire after OS auto-release)
+  useKeepAwake(readerDefaults.keepAwake);
 
   /* ----- derived ----- */
   const total = Math.max(0, chapter?.pages ?? 0);
@@ -1474,25 +1477,10 @@ export function ReaderScreen({
 
   /* ----- keep awake (RDR-009) ----- */
   const applyKeepAwake = (v: boolean) => {
+    // audit D7: the hook below owns the whole lock lifecycle keyed on the
+    // setting — acquiring on mount/re-enable, releasing on exit, and
+    // re-acquiring after OS auto-release. The toggle only flips the setting.
     setReaderDefaults({ keepAwake: v });
-    try {
-      const nav = navigator as Navigator & {
-        wakeLock?: { request: (type: string) => Promise<{ release: () => Promise<void> }> };
-      };
-      if (v) {
-        nav.wakeLock
-          ?.request("screen")
-          .then((s) => {
-            wakeLockRef.current = s;
-          })
-          .catch(() => undefined);
-      } else {
-        void wakeLockRef.current?.release().catch(() => undefined);
-        wakeLockRef.current = null;
-      }
-    } catch {
-      /* wakeLock unsupported — ignore */
-    }
   };
 
   /* ----- presets (RDR-014): documented combos ----- */

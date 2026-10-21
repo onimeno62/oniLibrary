@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeEach } from "bun:test";
 import { useApp } from "../src/lib/store";
+import { sanitizeSettingsForBackup } from "../src/lib/backup-contract";
 import { makeChapter, makeWork } from "./helpers";
 
 const S = () => useApp.getState();
@@ -138,5 +139,57 @@ describe("deleteWorks: orphan purge", () => {
     expect(S().workCategories).not.toHaveProperty("w-kill");
     // the deleted work's notification is purged; the global one survives
     expect(S().notifications.map((n) => n.id)).toEqual(["n-2"]);
+  });
+});
+
+describe("backup credential stripping (audit D3)", () => {
+  it("sanitizeSettingsForBackup removes the PIN record and the tracker token", () => {
+    const settings = {
+      ...S().settings,
+      vaultPinHash: "v2:salt:hash",
+      tracker: { provider: "anilist" as const, token: "ani-secret-token", autoSync: true, lastSyncAt: null },
+    };
+    const out = sanitizeSettingsForBackup(settings);
+    // the PIN record is fully absent from the exported shape (not just empty)
+    expect("vaultPinHash" in out).toBe(false);
+    expect(out.tracker.token).toBe("");
+    expect(out.tracker.provider).toBe("anilist");
+    expect(out.tracker.autoSync).toBe(true);
+    // the input object is not mutated
+    expect(settings.tracker.token).toBe("ani-secret-token");
+  });
+
+  it("importBackup refuses to inject a tracker token from a (hostile or legacy) payload", () => {
+    useApp.setState({
+      settings: {
+        ...S().settings,
+        tracker: { provider: "none", token: "", autoSync: false, lastSyncAt: null },
+      },
+    });
+    const ok = S().importBackup({
+      app: "oniLibrary",
+      settings: {
+        tracker: { provider: "anilist", token: "injected-token", autoSync: true, lastSyncAt: null },
+      },
+    } as never);
+    expect(ok).toBe(true);
+    expect(S().settings.tracker.token).toBe("");
+    expect(S().settings.tracker.provider).toBe("anilist"); // harmless prefs still merge
+    expect(S().settings.tracker.autoSync).toBe(true);
+  });
+
+  it("importBackup keeps the device-local PIN and strips tokens even when settings are absent", () => {
+    useApp.setState({
+      settings: {
+        ...S().settings,
+        vaultPinHash: "v2:device:hash",
+        tracker: { provider: "none", token: "", autoSync: false, lastSyncAt: null },
+      },
+    });
+    const ok = S().importBackup({ app: "oniLibrary", settings: { userName: "Restored" } } as never);
+    expect(ok).toBe(true);
+    expect(S().settings.userName).toBe("Restored");
+    expect(S().settings.vaultPinHash).toBe("v2:device:hash");
+    expect(S().settings.tracker.token).toBe("");
   });
 });

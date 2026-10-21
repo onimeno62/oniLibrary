@@ -4,8 +4,9 @@ import { useEffect, useMemo } from "react";
 import { useApp, useNav, workProgress, currentChapter } from "@/lib/store";
 
 /**
- * Global client engine:
- *  - ticks the download simulation
+ * Global client engine (audit D13: removed the stale "download simulation"
+ * line — the simulated ticker was deleted in v1.4.0; the download pump is
+ * real and event-driven):
  *  - auto-locks the Vault when the document is hidden
  *  (reading time is logged by the reader's own 60s interval, which also
  *   respects the focus-timer pause — a second rough logger here would
