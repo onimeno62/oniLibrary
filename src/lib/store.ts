@@ -101,7 +101,8 @@ export const useNav = create<NavState>((set) => ({
   clearLibraryPreset: () => set({ libraryPreset: null }),
 }));
 
-/* dev-only QA hook: lets browser probes read the overlay stack */
+/* dev-only QA hook: lets browser probes read the overlay stack
+   (never ships to production) */
 if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
   (window as unknown as { __oninav?: unknown }).__oninav = useNav;
 }
@@ -1116,6 +1117,12 @@ export const useApp = create<AppState>()(
     }
   )
 );
+
+/* dev-only QA hook: browser probes read the persisted app store — declared
+   here because useApp only exists after the persist(...) call above */
+if (typeof window !== "undefined" && process.env.NODE_ENV !== "production") {
+  (window as unknown as { __oniapp?: unknown }).__oniapp = useApp;
+}
 
 /* ---------- helpers ---------- */
 
